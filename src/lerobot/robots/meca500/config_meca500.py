@@ -8,16 +8,10 @@ from lerobot.robots import RobotConfig
 @dataclass
 class Meca500Config(RobotConfig):
     # Standard field for connecting to the robot (e.g., /dev/ttyUSB0)
-    port: str
+    #port: str
 
     ip_address: str = "192.168.0.100"
 
-    disable_torque_on_disconnect: bool = True
-
-    # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
-    # Set this to a positive scalar to have the same value for all motors, or a dictionary that maps motor
-    # names to the max_relative_target value for that motor.
-    max_relative_target: float | dict[str, float] | None = None
 
     # Standard camera configuration
     cameras: dict[str, CameraConfig] = field(
@@ -31,7 +25,8 @@ class Meca500Config(RobotConfig):
         }
     )
 
-    # Set to `True` for backward compatibility with previous policies/dataset
-    use_degrees: bool = False
+    max_relative_target: float | dict[str, float] | None = None
+
+    default_joint_vel: float = 25.0
 
 

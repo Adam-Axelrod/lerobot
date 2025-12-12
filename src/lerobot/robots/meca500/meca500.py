@@ -1,5 +1,5 @@
 # My imports
-import mecademicpy.robot as meca_robot
+import mecademicpy.robot as mdr
 
 
 # Hugging Face imports
@@ -31,13 +31,9 @@ class Meca500(Robot):
     def __init__(self, config: Meca500Config):
         super().__init__(config)
         self.config = config
-
-        self.bus = meca_robot.Robot(ip_address=self.config.ip_address)
-        logger.info(f"Connecting to Meca500 at {self.config.ip_address}...")
-        calibration = self.calibration
-
-
+        self.robot = mdr.Robot()
         self.cameras = make_cameras_from_configs(config.cameras)
+        self._connected = False
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -68,75 +64,57 @@ class Meca500(Robot):
     
     @property
     def is_connected(self) -> bool:
-        return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
+        return self._connected and all(cam.is_connected for cam in self.cameras.values())
 
     def connect(self, calibrate: bool = True) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
-        self.bus.connect()
-        if not self.is_calibrated and calibrate:
-            logger.info(
-                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
-            )
-            self.calibrate()
+        logger.info(f"Connecting to Meca500 at {self.config.ip_address}...")
+        try:
+            self.robot.Connect(
+                address=self.config.ip_address,
+                enable_synchronous_mode=False,
+                monitor_mode=False
+                )
+        except Exception as e:
+            raise DeviceNotConnectedError(f"Failed to connect to Meca500 at {self.config.ip_address}: {e}")
+        
+        logger.info("Activating and Homing Meca500...")
+        try:
+            self.robot.ActivateAndHome()
+            self.robot.WaitHomed()
+        except Exception as e:
+            raise DeviceNotConnectedError(f"Failed to activate and home Meca500: {e}")
+        
+        self.configure()
 
         for cam in self.cameras.values():
             cam.connect()
 
-        self.configure()
-        logger.info(f"{self} connected.")
+        self._connected = True
+        logger.info(f"{self} connected and homed.")
 
     @property
     def is_calibrated(self) -> bool:
-        return self.bus.is_calibrated
+        if not self.is_connected:
+            return False
+        return True  # If its homed, its calibrated
     
     def calibrate(self) -> None:
-        if self.calibration:
-            user_input = input(
-                f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
-            )
-            if user_input.strip().lower() != "c":
-                logger.info(f"Writing calibration file associated with the id {self.id} to the motors")
-                self.bus.write_calibration(self.calibration)
-                return
-        logger.info(f"\nRunning calibration of {self}")
-        self.bus.disable_torque()
-        for motor in self.bus.motors:
-            self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+        # For Meca500, calibration is "Homing"
+        if self.is_connected:
+            logger.info("Homing robot...")
+            self.robot.Home()
+            self.robot.WaitHomed(timeout=60)
 
-        input(f"Move {self} to the middle of its range of motion and press ENTER....")
-        homing_offsets = self.bus.set_half_turn_homings()
-
-        print(
-            "Move all joints sequentially through their entire ranges "
-            "of motion.\nRecording positions. Press ENTER to stop..."
-        )
-        range_mins, range_maxes = self.bus.record_ranges_of_motion()
-
-        self.calibration = {}
-        for motor, m in self.bus.motors.items():
-            self.calibration[motor] = MotorCalibration(
-                id=m.id,
-                drive_mode=0,
-                homing_offset=homing_offsets[motor],
-                range_min=range_mins[motor],
-                range_max=range_maxes[motor],
-            )
-
-        self.bus.write_calibration(self.calibration)
-        self._save_calibration()
-        print("Calibration saved to", self.calibration_fpath)
-    
     def configure(self) -> None:
-        with self.bus.torque_disabled():
-            self.bus.configure_motors()
-            for motor in self.bus.motors:
-                self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
-                self.bus.write("P_Coefficient", motor, 16)
-                self.bus.write("I_Coefficient", motor, 0)
-                self.bus.write("D_Coefficient", motor, 32)
+        self.robot.SetBlending(100)
 
+        if self.config.default_joint_vel:
+            self.robot.SetJointVel(self.config.default_joint_vel)
+
+        self.robot.SetRealTimeMonitoring('all')
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
@@ -144,8 +122,23 @@ class Meca500(Robot):
         
         # Read arm position
         start = time.perf_counter()
-        obs_dict = self.bus.sync_read("Present_Position")
-        obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
+
+        try:
+            joints = self.robot.GetRtTargetJointPos(synchronous_update=True)
+        except Exception as e:
+            logger.error(f"Failed to read robot state: {e}")
+            # Fallback or re-raise depending on strictness required
+            raise e
+
+        obs_dict = {
+            "joint_1.pos": joints[0],
+            "joint_2.pos": joints[1],
+            "joint_3.pos": joints[2],
+            "joint_4.pos": joints[3],
+            "joint_5.pos": joints[4],
+            "joint_6.pos": joints[5],
+        }
+
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
         
@@ -167,22 +160,40 @@ class Meca500(Robot):
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
         if self.config.max_relative_target is not None:
-            present_pos = self.bus.sync_read("Present_Position")
+            present_pos = self.robot.GetRtTargetJointPos(synchronous_update=True)
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
         # Send goal position to the arm
-        self.bus.sync_write("Goal_Position", goal_pos)
-        return {f"{motor}.pos": val for motor, val in goal_pos.items()}
+        target_joints = [
+            action["joint_1.pos"],
+            action["joint_2.pos"],
+            action["joint_3.pos"],
+            action["joint_4.pos"],
+            action["joint_5.pos"],
+            action["joint_6.pos"],
+        ]
+        self.robot.MoveJoints(*target_joints)
+        return action
     
-    def disconnect(self):
+    def disconnect(self) -> None:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
+        elif self.robot.IsConnected():
+            logger.info("Disconnecting Meca500...")
+            # Ideally stop motion before disconnecting
+            try:
+                self.robot.PauseMotion()
+                self.robot.DeactivateRobot()
+                self.robot.Disconnect()
+            except Exception as e:
+                logger.warning(f"Error during disconnect sequence: {e}")
+
         
-        self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
             cam.disconnect()
         
+        self._connected = False
         logger.info(f"{self} disconnected.")
     
 

@@ -95,7 +95,7 @@ class SO101Follower(Robot):
             logger.info(
                 "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
             )
-            self.calibrate()
+            self.calirate()
 
         for cam in self.cameras.values():
             cam.connect()
