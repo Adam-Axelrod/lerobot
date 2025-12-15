@@ -1,13 +1,14 @@
-import logging
-import time
-import threading
+# My imports
+import mecademicpy.robot as mdr
+import bota_driver
 import numpy as np
 import json
+import threading
+
+# Hugging Face imports
+import logging
+import time
 from typing import Optional, Dict, Any
-
-import bota_driver
-import mecademicpy.robot as mdr
-
 
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
@@ -29,7 +30,7 @@ class meca500Bota(Teleoperator):
 
         self._running = False
         self._thread = None
-        self.connected = False
+        self._connected = False
 
         self.wrench_filter = np.zeros(6)
 
@@ -53,7 +54,7 @@ class meca500Bota(Teleoperator):
 
     @property
     def is_connected(self) -> bool:
-        return self.connected
+        return self._connected
     
     def read_json(self, path: str) -> Dict[str, Any]:
         with open(path, "r", encoding="utf-8") as fh:
@@ -88,7 +89,7 @@ class meca500Bota(Teleoperator):
         except Exception as e:
             raise DeviceNotConnectedError(f"Failed to connect to Meca500 at {self.config.meca_address}: {e}")
 
-        self.connected = True
+        self._connected = True
         self._running = True
         self._thread = threading.Thread(target=self._guidance_loop, daemon=True)
         self._thread.start()
@@ -97,7 +98,6 @@ class meca500Bota(Teleoperator):
         logger.info(f"{self} connected.")
 
     def _guidance_loop(self):
-        
         while self._running:
             # Read sensor
             frame_data = self.sensor.read_frame()
