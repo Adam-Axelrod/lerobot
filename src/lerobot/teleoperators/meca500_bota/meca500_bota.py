@@ -124,9 +124,9 @@ class meca500Leader(Teleoperator):
 
                 # Send Velocity to Robot
                 # MoveLinVelWRF expects: x, y, z, wx, wy, wz
-                self.robot.MoveLinVelWRF(
-                    twist[0], -twist[1], -twist[2], 
-                    twist[3], -twist[4], -twist[5]
+                self.robot.MoveLinVelTrf(
+                    -twist[0], -twist[1], twist[2], 
+                    -twist[3], -twist[4], twist[5]
                 )
             
             time.sleep(0.002) # ~500Hz loop
@@ -169,9 +169,10 @@ class meca500Leader(Teleoperator):
 
         
         if self.robot.IsConnected():
-            self.robot.MoveLinVelWRF(0,0,0,0,0,0) # Stop
             self.robot.Disconnect()
-        
+            self.robot.WaitDisconnected()
+            logger.info("Meca500 disconnected.")
+
         if self.sensor:
             self.sensor.deactivate()
             self.sensor.shutdown()
