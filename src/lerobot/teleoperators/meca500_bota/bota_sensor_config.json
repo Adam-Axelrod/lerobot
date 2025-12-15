@@ -1,0 +1,25 @@
+{
+    "driver_config": {
+        "product_name": "BFT-MIPS-SER-CG",
+        "serial_number": "SN001000",
+        "communication_interface_name": "Bota_Binary_gen0",
+        "communication_interface_params": {
+            "com_port": "COM4",
+            "baudrate": 460800
+        },
+        "sensor_operation_params": {
+            "sinc_length": 64,
+            "wrench_offset": {
+                "fx": 0.0,
+                "fy": 0.0,
+                "fz": 0.0,
+                "tx": 0.0,
+                "ty": 0.0,
+                "tz": 0.0
+            }
+        },
+        "driver_operation_params": {
+            "runtime_verbosity": false
+        }
+    }
+}

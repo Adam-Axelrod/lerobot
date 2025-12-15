@@ -15,13 +15,6 @@ from ..utils import ensure_safe_goal_position
 
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
-#remove these
-from lerobot.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.motors.feetech import (
-    FeetechMotorsBus,
-    OperatingMode,
-)
-
 logger = logging.getLogger(__name__)
 
 class Meca500(Robot):
@@ -75,19 +68,19 @@ class Meca500(Robot):
             self.robot.Connect(
                 address=self.config.ip_address,
                 enable_synchronous_mode=False,
-                monitor_mode=False
+                monitor_mode=self.config.monitor_mode
                 )
         except Exception as e:
             raise DeviceNotConnectedError(f"Failed to connect to Meca500 at {self.config.ip_address}: {e}")
         
-        logger.info("Activating and Homing Meca500...")
-        try:
-            self.robot.ActivateAndHome()
-            self.robot.WaitHomed()
-        except Exception as e:
-            raise DeviceNotConnectedError(f"Failed to activate and home Meca500: {e}")
-        
-        self.configure()
+        if not self.config.monitor_mode:
+            logger.info("Activating and Homing Meca500...")
+            try:
+                self.robot.ActivateAndHome()
+                self.robot.WaitHomed()
+                self.configure()
+            except Exception as e:
+                raise DeviceNotConnectedError(f"Failed to activate and home Meca500: {e}")
 
         for cam in self.cameras.values():
             cam.connect()
@@ -124,7 +117,7 @@ class Meca500(Robot):
         start = time.perf_counter()
 
         try:
-            joints = self.robot.GetRtTargetJointPos(synchronous_update=True)
+            joints = self.robot.GetRtTargetJointPos(synchronous_update=True).data
         except Exception as e:
             logger.error(f"Failed to read robot state: {e}")
             # Fallback or re-raise depending on strictness required
@@ -150,46 +143,73 @@ class Meca500(Robot):
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
             
         return obs_dict
+    
+    def _get_motion_queue_count(self) -> int:
+        """Helper to query the robot for the number of pending motion commands."""
+        # 2080 is the code for MX_ST_GET_CMD_PENDING_COUNT
+        try:
+            response = self.robot.SendCustomCommand("GetCmdPendingCount", expected_responses=[2080], timeout=0.5)
+            # The data field of the message contains the count as a string/int
+            return int(response.data)
+        except Exception as e:
+            logger.warning(f"Failed to get queue count: {e}")
+            return 100 # Return high number to prevent spamming if check fails
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        # Write to hardware
+        
+        if self.config.monitor_mode:
+            # In monitor mode, we do not send any commands
+            return action
+        
+        # 1. Manage the Motion Queue
+        # We only send a new command if the robot is running low on commands.
+        # This prevents filling the buffer (and creating massive latency).
+        # A buffer of 1 or 2 is usually sufficient for smooth motion with blending.
+        queue_count = self._get_motion_queue_count()
+        if queue_count > 1:
+            # Skip sending this action frame to let the robot catch up
+            return action
+        
+
+        # 2. Parse Actions
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
         
-        # Cap goal position when too far away from present position.
-        # /!\ Slower fps expected due to reading from the follower.
+        # 3. Safety Cap (Optional)
         if self.config.max_relative_target is not None:
-            present_pos = self.robot.GetRtTargetJointPos(synchronous_update=True)
-            goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
+            present_pos_list = self.robot.GetRtTargetJointPos(synchronous_update=True).data
+            present_pos = {f"joint_{i+1}": p for i, p in enumerate(present_pos_list)}
+            
+            goal_present_pos = {key: (goal_pos[key], present_pos[key]) for key in goal_pos}
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
-        # Send goal position to the arm
-        target_joints = [
-            action["joint_1.pos"],
-            action["joint_2.pos"],
-            action["joint_3.pos"],
-            action["joint_4.pos"],
-            action["joint_5.pos"],
-            action["joint_6.pos"],
-        ]
-        self.robot.MoveJoints(*target_joints)
+        # 4. Send Command
+        # Note: Meca500 MoveJoints takes args, not a list
+        self.robot.MoveJoints(
+            goal_pos["joint_1"],
+            goal_pos["joint_2"],
+            goal_pos["joint_3"],
+            goal_pos["joint_4"],
+            goal_pos["joint_5"],
+            goal_pos["joint_6"]
+        )
         return action
     
     def disconnect(self) -> None:
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-        elif self.robot.IsConnected():
-            logger.info("Disconnecting Meca500...")
-            # Ideally stop motion before disconnecting
-            try:
+            return
+            
+        logger.info("Disconnecting Meca500...")
+        try:
+            if self.robot.IsConnected():
                 self.robot.PauseMotion()
+                self.robot.ClearMotion()
                 self.robot.DeactivateRobot()
                 self.robot.Disconnect()
-            except Exception as e:
-                logger.warning(f"Error during disconnect sequence: {e}")
+        except Exception as e:
+            logger.warning(f"Error during disconnect sequence: {e}")
 
-        
         for cam in self.cameras.values():
             cam.disconnect()
         
