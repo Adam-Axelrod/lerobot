@@ -18,10 +18,10 @@ class Meca500Config(RobotConfig):
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {  # <--- Add lambda: here
             "cam_1": OpenCVCameraConfig(
-                index_or_path=0,
+                index_or_path=1,
                 fps=30,
-                width=480,
-                height=640,
+                width=640,
+                height=480,
             ),
         }
     )
