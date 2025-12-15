@@ -12,7 +12,7 @@ class Meca500Config(RobotConfig):
 
     ip_address: str = "192.168.0.100"
     
-    monitor_mode: bool = False
+    monitor_mode: bool = True
 
     # Standard camera configuration
     cameras: dict[str, CameraConfig] = field(

@@ -188,7 +188,6 @@ class Meca500(Robot):
         return action
     
     def disconnect(self) -> None:
-        return
         if not self.is_connected:
             return
             
