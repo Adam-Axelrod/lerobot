@@ -12,11 +12,11 @@ class Meca500Config(RobotConfig):
 
     ip_address: str = "192.168.0.100"
     
-    monitor_mode: bool = False
+    monitor_mode: bool = True
 
     # Standard camera configuration
     cameras: dict[str, CameraConfig] = field(
-        default_factory={
+        default_factory=lambda: {  # <--- Add lambda: here
             "cam_1": OpenCVCameraConfig(
                 index_or_path=0,
                 fps=30,

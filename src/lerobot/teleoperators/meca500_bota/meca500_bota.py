@@ -17,7 +17,7 @@ from .config_meca500_bota import meca500BotaConfig
 logger = logging.getLogger(__name__)
 
 
-class meca500_bota(Teleoperator):
+class meca500Bota(Teleoperator):
     config_class = meca500BotaConfig
     name = "meca500_bota"
 
@@ -103,8 +103,8 @@ class meca500_bota(Teleoperator):
             frame_data = self.sensor.read_frame()
             if frame_data: # and frame_data.status == bota_driver.Status.VALID:
                 wrench = np.array([
-                    frame_data.forces[0], frame_data.forces[1], frame_data.forces[2],
-                    frame_data.torques[0], frame_data.torques[1], frame_data.torques[2]
+                    frame_data.force[0], frame_data.force[1], frame_data.force[2],
+                    frame_data.torque[0], frame_data.torque[1], frame_data.torque[2]
                 ])
                 
                 # Filter
