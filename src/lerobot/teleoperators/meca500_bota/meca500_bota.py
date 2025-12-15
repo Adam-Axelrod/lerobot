@@ -17,7 +17,7 @@ from .config_meca500_bota import meca500BotaConfig
 logger = logging.getLogger(__name__)
 
 
-class meca500Leader(Teleoperator):
+class meca500_bota(Teleoperator):
     config_class = meca500BotaConfig
     name = "meca500_bota"
 
@@ -30,6 +30,8 @@ class meca500Leader(Teleoperator):
         self._running = False
         self._thread = None
         self.connected = False
+
+        self.wrench_filter = np.zeros(6)
 
 
     @property
@@ -53,7 +55,7 @@ class meca500Leader(Teleoperator):
     def is_connected(self) -> bool:
         return self.connected
     
-    def read_json(path: str) -> Dict[str, Any]:
+    def read_json(self, path: str) -> Dict[str, Any]:
         with open(path, "r", encoding="utf-8") as fh:
             return json.load(fh)
 
@@ -63,8 +65,8 @@ class meca500Leader(Teleoperator):
         
         try:
             logger.info(f"Connecting to Bota Sensor")
-            config_content = self.read_json(self.json_path)
-            self.sensor = bota_driver.BotaDriver(self.json_path)
+            config_content = self.read_json(self.config.json_path)
+            self.sensor = bota_driver.BotaDriver(self.config.json_path)
             # Transition driver from UNCONFIGURED to INACTIVE state
             if not self.sensor.configure():
                 raise RuntimeError("Failed to configure driver")
@@ -106,24 +108,24 @@ class meca500Leader(Teleoperator):
                 ])
                 
                 # Filter
-                self.config.wrench_filter = (1 - self.config.alpha) * self.config.wrench_filter + self.config.alpha * wrench
+                self.wrench_filter = (1 - self.config.alpha) * self.wrench_filter + self.config.alpha * wrench
                 
                 # Logic from your script (simplified for brevity)
-                normF = np.linalg.norm(self.config.wrench_filter[:3])
-                normM = np.linalg.norm(self.config.wrench_filter[3:])
+                normF = np.linalg.norm(self.wrench_filter[:3])
+                normM = np.linalg.norm(self.wrench_filter[3:])
                 
                 twist = np.zeros(6)
                 
                 # Translation
                 if normF > self.config.f_threshold_high:
-                     twist[:3] = self.config.gain_tr * self.config.wrench_filter[:3]
+                     twist[:3] = self.config.gain_tr * self.wrench_filter[:3]
                 
                 # Rotation
                 if normM > self.config.m_threshold_high:
-                     twist[3:] = self.config.gain_rot * self.config.wrench_filter[3:]
+                     twist[3:] = self.config.gain_rot * self.wrench_filter[3:]
 
                 # Send Velocity to Robot
-                # MoveLinVelWRF expects: x, y, z, wx, wy, wz
+                # MoveLinVelTrf expects: x, y, z, wx, wy, wz
                 self.robot.MoveLinVelTrf(
                     -twist[0], -twist[1], twist[2], 
                     -twist[3], -twist[4], twist[5]

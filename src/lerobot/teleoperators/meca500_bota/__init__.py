@@ -1,2 +1,2 @@
-from .config_meca500_bota import meca500LeaderConfig
-from .meca500_bota import meca500Leader
+from .config_meca500_bota import meca500BotaConfig
+from .meca500_bota import meca500_bota

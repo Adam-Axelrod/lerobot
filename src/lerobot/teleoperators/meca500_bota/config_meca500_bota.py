@@ -22,7 +22,6 @@ class meca500BotaConfig(TeleoperatorConfig):
     m_threshold_high = 0.05
     m_threshold_low = 0.01
     
-    wrench_filter = np.zeros(6)
     alpha = 0.1 #  0.1 Simple low pass filter factor
     
     
