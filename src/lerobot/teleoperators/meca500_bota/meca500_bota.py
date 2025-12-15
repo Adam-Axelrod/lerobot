@@ -150,7 +150,7 @@ class meca500Bota(Teleoperator):
         pass
 
     def get_action(self) -> dict[str, float]:
-        joints = self.robot.GetRtTargetJointPos(synchronous_update=True).data
+        joints = self.robot.GetJoints()
         return {
             "joint_1.pos": joints[0],
             "joint_2.pos": joints[1],

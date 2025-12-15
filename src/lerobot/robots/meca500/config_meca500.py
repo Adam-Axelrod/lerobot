@@ -20,8 +20,8 @@ class Meca500Config(RobotConfig):
             "cam_1": OpenCVCameraConfig(
                 index_or_path=0,
                 fps=30,
-                width=480,
-                height=640,
+                width=640,
+                height=480,
             ),
         }
     )

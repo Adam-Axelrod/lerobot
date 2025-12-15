@@ -72,15 +72,6 @@ class Meca500(Robot):
                 )
         except Exception as e:
             raise DeviceNotConnectedError(f"Failed to connect to Meca500 at {self.config.ip_address}: {e}")
-        
-        if not self.config.monitor_mode:
-            logger.info("Activating and Homing Meca500...")
-            try:
-                self.robot.ActivateAndHome()
-                self.robot.WaitHomed()
-                self.configure()
-            except Exception as e:
-                raise DeviceNotConnectedError(f"Failed to activate and home Meca500: {e}")
 
         for cam in self.cameras.values():
             cam.connect()
@@ -117,7 +108,7 @@ class Meca500(Robot):
         start = time.perf_counter()
 
         try:
-            joints = self.robot.GetRtTargetJointPos(synchronous_update=True).data
+            joints = self.robot.GetJoints()
         except Exception as e:
             logger.error(f"Failed to read robot state: {e}")
             # Fallback or re-raise depending on strictness required
@@ -197,6 +188,7 @@ class Meca500(Robot):
         return action
     
     def disconnect(self) -> None:
+        return
         if not self.is_connected:
             return
             

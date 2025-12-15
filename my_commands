@@ -1,0 +1,3 @@
+lerobot-teleoperate `
+    --robot.type=meca500 `
+    --teleop.type=meca500_bota
