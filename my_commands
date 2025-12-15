@@ -1,3 +1,9 @@
 lerobot-teleoperate `
     --robot.type=meca500 `
     --teleop.type=meca500_bota
+
+lerobot-record `
+    --robot.type=meca500 `
+    --teleop.type=meca500_bota `
+    --dataset.single_task="first test" `
+    --dataset.repo_id=AdamAxelrod/first_test
