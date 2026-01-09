@@ -218,7 +218,10 @@ def say(text: str, blocking: bool = False):
         raise RuntimeError("Unsupported operating system for text-to-speech.")
 
     if blocking:
-        subprocess.run(cmd, check=True)
+        try:
+            subprocess.run(cmd, check=True)
+        except subprocess.CalledProcessError as e:
+            logging.warning(f"Failed to play sound: {e}")
     else:
         subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW if system == "Windows" else 0)
 

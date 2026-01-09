@@ -5,5 +5,11 @@ lerobot-teleoperate `
 lerobot-record `
     --robot.type=meca500 `
     --teleop.type=meca500_bota `
-    --dataset.single_task="first test" `
-    --dataset.repo_id=AdamAxelrod/first_test
+    --dataset.single_task="fifth test" `
+    --dataset.repo_id=AdamAxelrod/fifth_test
+
+lerobot-replay `
+    --robot.type=meca500 `
+    --robot.monitor_mode=False `
+    --dataset.repo_id=AdamAxelrod/fifth_test `
+    --dataset.episode=0
