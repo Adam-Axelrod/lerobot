@@ -17,13 +17,20 @@ class Meca500Config(RobotConfig):
     # Standard camera configuration
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {  # <--- Add lambda: here
-            "cam_1": OpenCVCameraConfig(
-                index_or_path=1,
+            "overhead_cam": OpenCVCameraConfig(
+                index_or_path=0,
+                fps=30,
+                width=640,
+                height=480,
+            ),
+             "wrist_cam": OpenCVCameraConfig(
+                index_or_path=2,
                 fps=30,
                 width=640,
                 height=480,
             ),
         }
+        
     )
 
     max_relative_target: float | dict[str, float] | None = None
