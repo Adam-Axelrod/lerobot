@@ -40,15 +40,15 @@ hf upload AdamAxelrod/act_experiment020000 `
 lerobot-record  `
   --robot.type=meca500 `
   --robot.monitor_mode=False `
-  --display_data=true `
-  --dataset.repo_id=AdamAxelrod/eval_meca5026 `
-  --dataset.single_task="target_test4" `
-  --policy.path=AdamAxelrod/act_experiment020000
-
-lerobot-record  `
-  --robot.type=meca500 `
-  --robot.monitor_mode=False `
   --policy.path=outputs/train/act_experiment/checkpoints/020000/pretrained_model `
   --dataset.repo_id=AdamAxelrod/eval_meca5023 `
   --dataset.single_task="target_test4" `
   --display_data=false
+
+lerobot-record  `
+  --robot.type=meca500 `
+  --robot.monitor_mode=False `
+  --display_data=true `
+  --dataset.repo_id=AdamAxelrod/eval_meca5049 `
+  --dataset.single_task="target_test4" `
+  --policy.path=AdamAxelrod/act_experiment020000
