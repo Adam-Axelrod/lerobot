@@ -38,7 +38,7 @@ class Meca500Config(RobotConfig):
 
     json_path: str = "bota_sensor_config.json"
     sensor_type: str = "Bota_Binary_gen0"
-    sensor_port: str = "COM4" # Or /dev/ttyUSB0 if on Mac
+    sensor_port: str = "COM3" # Or /dev/ttyUSB0 if on Mac
 
     # Hand guidance parameters (Ported from hand_guidance.py)
     gain_tr: int = 10 #10

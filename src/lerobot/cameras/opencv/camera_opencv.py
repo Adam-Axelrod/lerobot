@@ -207,6 +207,12 @@ class OpenCVCamera(Camera):
             self._validate_fourcc()
         if self.videocapture is None:
             raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
+        
+        # self.videocapture.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+        # self.videocapture.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)  # 0.25 to turn off auto exposure in OpenCV
+        # self.videocapture.set(cv2.CAP_PROP_FOCUS, 100)
+        # self.videocapture.set(cv2.CAP_PROP_EXPOSURE, -6)
+
 
         default_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
         default_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))

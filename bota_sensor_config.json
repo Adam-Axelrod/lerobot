@@ -4,7 +4,7 @@
         "serial_number": "SN001000",
         "communication_interface_name": "Bota_Binary_gen0",
         "communication_interface_params": {
-            "com_port": "COM4",
+            "com_port": "COM3",
             "baudrate": 460800
         },
         "sensor_operation_params": {

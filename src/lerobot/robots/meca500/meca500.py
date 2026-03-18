@@ -1,5 +1,6 @@
 # My imports
 import mecademicpy.robot as mdr
+import numpy as np
 
 
 # Hugging Face imports
@@ -57,7 +58,9 @@ class Meca500(Robot):
     
     @property
     def is_connected(self) -> bool:
-        return self._connected and all(cam.is_connected for cam in self.cameras.values())
+        # Robot-level connectivity should succeed even if one or more optional cameras
+        # fail to initialize (e.g., missing wrist camera on this setup).
+        return self._connected
 
     def connect(self, calibrate: bool = True) -> None:
         if self.is_connected:
@@ -77,10 +80,23 @@ class Meca500(Robot):
         except Exception as e:
             raise DeviceNotConnectedError(f"Failed to connect to Meca500 at {self.config.ip_address}: {e}")
 
-        for cam in self.cameras.values():
-            cam.connect()
+        failed_cams: list[str] = []
+        for cam_name, cam in self.cameras.items():
+            try:
+                cam.connect()
+                logger.info(f"Camera '{cam_name}' connected successfully.")
+            except ConnectionError as e:
+                logger.warning(
+                    f"Failed to connect camera '{cam_name}' (configured as {cam}): {e}. "
+                    "This camera will be skipped. Run 'lerobot-find-cameras opencv' to inspect available cameras."
+                )
+                failed_cams.append(cam_name)
 
         self._connected = True
+
+        if failed_cams:
+            logger.warning(f"Meca500 connected with {len(failed_cams)} unavailable camera(s): {failed_cams}")
+
         logger.info(f"{self} connected and homed.")
 
     @property
@@ -133,7 +149,17 @@ class Meca500(Robot):
         # Read cameras
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
-            obs_dict[cam_key] = cam.async_read()
+
+            if cam.is_connected:
+                obs_dict[cam_key] = cam.async_read()
+            else:
+                logger.warning(
+                    f"Camera '{cam_key}' is not connected. Returning a blank frame for observation feature consistency."
+                )
+                blank_height = int(cam.height or getattr(cam, "capture_height", None) or 1)
+                blank_width = int(cam.width or getattr(cam, "capture_width", None) or 1)
+                obs_dict[cam_key] = np.zeros((blank_height, blank_width, 3), dtype=np.uint8)
+
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
             

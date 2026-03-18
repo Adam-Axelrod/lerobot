@@ -6,8 +6,10 @@ lerobot-teleoperate `
 lerobot-record `
     --robot.type=meca500 `
     --teleop.type=meca500_bota `
-    --dataset.single_task="target_test4" `
-    --dataset.repo_id=AdamAxelrod/target_test4
+    --dataset.single_task="dish_red_dot" `
+    --dataset.repo_id=AdamAxelrod/dish_red_dot_final `
+    --display_data=true `
+    --dataset.num_episodes=100
 
 lerobot-replay `
     --robot.type=meca500 `
