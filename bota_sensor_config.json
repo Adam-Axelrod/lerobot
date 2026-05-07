@@ -1,15 +1,24 @@
 {
     "driver_config": {
-        "product_name": "BFT-MIPS-SER-CG",
+        "product_name": "BFT-MIPS-ENET-CG",
         "serial_number": "SN001000",
-        "communication_interface_name": "Bota_Binary_gen0",
+        "communication_interface_name": "Bota_Binary",
         "communication_interface_params": {
-            "com_port": "COM3",
-            "baudrate": 460800
+            "com_port": "COM5",
+            "baudrate": 2000000
         },
         "sensor_operation_params": {
-            "sinc_length": 64,
+            "app_mode": 2,
+            "app_submode": 10,
             "wrench_offset": {
+                "fx": 0.0,
+                "fy": 0.0,
+                "fz": 0.0,
+                "tx": 0.0,
+                "ty": 0.0,
+                "tz": 0.0
+            },
+            "temperature_coefficients": {
                 "fx": 0.0,
                 "fy": 0.0,
                 "fz": 0.0,

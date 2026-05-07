@@ -11,8 +11,8 @@ class meca500BotaConfig(TeleoperatorConfig):
     meca_address: str = "192.168.0.100"
 
     json_path: str = "bota_sensor_config.json"
-    sensor_type: str = "Bota_Binary_gen0"
-    sensor_port: str = "COM4" # Or /dev/ttyUSB0 if on Mac
+    sensor_type: str = "Bota_Binary"
+    sensor_port: str = "COM5" # Or /dev/ttyUSB0 if on Mac
 
     # Hand guidance parameters (Ported from hand_guidance.py)
     gain_tr: int = 10 #10
