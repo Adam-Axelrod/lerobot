@@ -74,4 +74,4 @@ function Start-Training {
 }
 
 # . .\train.ps1
-# Start-Training -Dataset "red_dot" -Steps 50000 -BatchSize 32
+# Start-Training -Dataset "red_dot_black_pointer" -Steps 50000 -BatchSize 32

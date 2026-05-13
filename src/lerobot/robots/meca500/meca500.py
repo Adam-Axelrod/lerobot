@@ -224,10 +224,20 @@ class Meca500(Robot):
         logger.info("Disconnecting Meca500...")
         try:
             if self.robot.IsConnected():
-                self.robot.PauseMotion()
-                self.robot.ClearMotion()
-                self.robot.DeactivateRobot()
+                # In monitor_mode the wrapper holds an observation-only socket;
+                # control commands (PauseMotion/ClearMotion/DeactivateRobot)
+                # would raise and trigger mecademicpy's disconnect_on_exception.
+                # The teleop owns the control connection and has already
+                # deactivated the arm by the time we get here.
+                if not self.config.monitor_mode:
+                    self.robot.PauseMotion()
+                    self.robot.WaitMotionPaused(timeout=5)
+                    self.robot.ClearMotion()
+                    self.robot.WaitMotionCleared(timeout=5)
+                    self.robot.DeactivateRobot()
+                    self.robot.WaitDeactivated(timeout=10)
                 self.robot.Disconnect()
+                self.robot.WaitDisconnected(timeout=5)
         except Exception as e:
             logger.warning(f"Error during disconnect sequence: {e}")
 
