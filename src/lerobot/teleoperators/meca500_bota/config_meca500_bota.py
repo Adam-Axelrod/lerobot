@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ..config import TeleoperatorConfig
 import numpy as np
@@ -21,7 +21,9 @@ class meca500BotaConfig(TeleoperatorConfig):
     f_threshold_low: float = 0.1
     m_threshold_high: float = 0.05
     m_threshold_low: float = 0.01
-    
+
     alpha: float = 0.1 #  0.1 Simple low pass filter factor
-    
-    
+
+    # Target pose used by go_home() (invoked between episodes by record_reset.py).
+    home_joints: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 90.0, 0.0])
+    home_timeout_s: float = 30.0
