@@ -1,7 +1,7 @@
 lerobot-teleoperate `
     --robot.type=meca500 `
     --display_data=true `
-    --teleop.type=meca500_bota
+    --teleop.type=meca500_spacemouse
 
 lerobot-record `
     --robot.type=meca500 `

@@ -20,10 +20,10 @@ from lerobot.utils.import_utils import register_third_party_plugins
 
 # ----------------------------- CONFIG -----------------------------
 USER = "AdamAxelrod"
-NAME = "red_dot_black_pointer"
-TASK = "reach_red_dot"
+NAME = "purple_dot_black_pointer"
+TASK = "reach_purple_dot"
 
-NUM_EPISODES = 50
+NUM_EPISODES = 100
 FPS = 30
 EPISODE_TIME_S = 60
 RESET_TIME_S = 60

@@ -20,3 +20,4 @@ from .utils import TeleopEvents, make_teleoperator_from_config
 
 from . import meca500_bota
 from . import meca500_home
+from . import meca500_spacemouse

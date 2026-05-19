@@ -1,7 +1,7 @@
 """Record a dataset and auto-home the Meca500 between episodes.
 
 Same flow as `lerobot-record`, plus a one-shot `MoveJoints(HOME_JOINTS)` over
-the bota teleop's control socket after each demo (and on rerecord). Skipped
+the selected teleop's control socket after each demo (and on rerecord). Skipped
 after the final episode. Edit the CONFIG block below, then `python record_reset.py`.
 """
 
@@ -24,6 +24,7 @@ from lerobot.robots.meca500.config_meca500 import Meca500Config
 from lerobot.scripts.lerobot_record import DatasetRecordConfig, RecordConfig, record_loop
 from lerobot.teleoperators import make_teleoperator_from_config
 from lerobot.teleoperators.meca500_bota.config_meca500_bota import meca500BotaConfig
+from lerobot.teleoperators.meca500_spacemouse.config_meca500_spacemouse import meca500SpacemouseConfig
 from lerobot.utils.control_utils import (
     init_keyboard_listener,
     is_headless,
@@ -36,12 +37,16 @@ from lerobot.utils.utils import init_logging, log_say
 from lerobot.utils.visualization_utils import init_rerun
 
 # ============================== CONFIG ==============================
+# Teleoperator: "bota" (force-sensor hand-guidance) or "spacemouse" (3DConnexion)
+TELEOP = "spacemouse"
+
 # Dataset
-REPO_ID = "AdamAxelrod/meca500_demo"
-SINGLE_TASK = "Pick the block and place it in the box."
-NUM_EPISODES = 10
+USER = "AdamAxelrod"
+NAME = "space_mouse_puple_dot"
+SINGLE_TASK = "reach_purple_dot"
+NUM_EPISODES = 100
 EPISODE_TIME_S = 60          # seconds per demo
-RESET_TIME_S = 10            # manual environment-reset window after auto-home
+RESET_TIME_S = 60            # manual environment-reset window after auto-home
 FPS = 30
 PUSH_TO_HUB = True
 PRIVATE = False
@@ -60,12 +65,20 @@ HOME_TIMEOUT_S = 30.0
 
 def build_config() -> RecordConfig:
     robot_cfg = Meca500Config()  # defaults: monitor_mode=True + overhead/wrist cams
-    teleop_cfg = meca500BotaConfig(
-        home_joints=HOME_JOINTS,
-        home_timeout_s=HOME_TIMEOUT_S,
-    )
+    if TELEOP == "bota":
+        teleop_cfg = meca500BotaConfig(
+            home_joints=HOME_JOINTS,
+            home_timeout_s=HOME_TIMEOUT_S,
+        )
+    elif TELEOP == "spacemouse":
+        teleop_cfg = meca500SpacemouseConfig(
+            home_joints=HOME_JOINTS,
+            home_timeout_s=HOME_TIMEOUT_S,
+        )
+    else:
+        raise ValueError(f"Unknown TELEOP: {TELEOP!r}. Expected 'bota' or 'spacemouse'.")
     dataset_cfg = DatasetRecordConfig(
-        repo_id=REPO_ID,
+        repo_id = f"{USER}/{NAME}",
         single_task=SINGLE_TASK,
         num_episodes=NUM_EPISODES,
         episode_time_s=EPISODE_TIME_S,
