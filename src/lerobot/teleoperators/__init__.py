@@ -18,4 +18,7 @@ from .config import TeleoperatorConfig
 from .teleoperator import Teleoperator
 from .utils import TeleopEvents, make_teleoperator_from_config
 
-from . import meca500_bota
+try:
+    from . import meca500_bota
+except ModuleNotFoundError:
+    pass

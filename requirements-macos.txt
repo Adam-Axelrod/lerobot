@@ -147,7 +147,7 @@ dynamixel-sdk==3.8.4
     # via lerobot
 easydict==1.13
     # via libero
-egl-probe @ git+https://github.com/huggingface/egl_probe.git
+# egl-probe @ git+https://github.com/huggingface/egl_probe.git  # Linux-only, skip on macOS
     # via
     #   libero
     #   robomimic
