@@ -7,13 +7,20 @@ subset is reproducible and the same indices can be re-used across runs).
 Equivalent to:
     lerobot-train --dataset.repo_id=<USER>/<DATASET> \
         --dataset.episodes="[i1,i2,...,iN]" --policy.type=act \
-        --output_dir=outputs/train/<DATASET>_<N>demos --policy.device=cuda ...
+        --output_dir=outputs/train/<DATASET>_<N>demos --policy.device=<auto> ...
+
+Device selection (automatic):
+  cuda  — Nvidia GPU (Windows/Linux PC)
+  mps   — Apple Silicon GPU (MacBook)
+  cpu   — fallback
 """
 
 import os
 import random
 import sys
 from pathlib import Path
+
+import torch
 
 os.environ.setdefault(
     "PYTHONWARNINGS", "ignore::UserWarning:torchvision.io._video_deprecation_warning"
@@ -30,7 +37,7 @@ from lerobot.utils.import_utils import register_third_party_plugins  # noqa: E40
 USER = "AdamAxelrod"
 DATASET = "space_mouse_puple_dot"
 
-NUM_DEMOS = 50
+NUM_DEMOS = 25
 SEED = 42  # change to draw a different subset; same seed => same episodes
 
 STEPS = 50_000
@@ -41,10 +48,18 @@ SAVE_FREQ = 5_000
 CHUNK_SIZE = 50
 N_ACTION_STEPS = CHUNK_SIZE
 
-USE_AMP = True
 ENABLE_WANDB = True
 PUSH_TO_HUB = True
 # ------------------------------------------------------------------
+
+
+def _select_device() -> str:
+    """Return the best available device: cuda > mps > cpu."""
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
 
 def _autosuffix(base: Path) -> Path:
@@ -74,14 +89,17 @@ def main() -> None:
     run_name = f"{DATASET}_{NUM_DEMOS}demos_seed{SEED}"
     model_repo = f"{USER}/{DATASET}_{NUM_DEMOS}demos_model"
 
+    device = _select_device()
+    use_amp = device == "cuda"  # AMP only supported on CUDA
+
     episodes = _sample_episodes(repo_id, NUM_DEMOS, SEED)
 
     output_dir = _autosuffix(Path("outputs/train") / run_name)
     run_tag = output_dir.name
 
     policy = ACTConfig(
-        device="cuda",
-        use_amp=USE_AMP,
+        device=device,
+        use_amp=use_amp,
         chunk_size=CHUNK_SIZE,
         n_action_steps=N_ACTION_STEPS,
         push_to_hub=PUSH_TO_HUB,
@@ -101,6 +119,7 @@ def main() -> None:
         wandb=WandBConfig(enable=ENABLE_WANDB),
     )
 
+    print(f"Device:     {device} (use_amp={use_amp})", flush=True)
     print(f"Dataset:    {repo_id}", flush=True)
     print(f"Subset:     {NUM_DEMOS} episodes (seed={SEED})", flush=True)
     print(f"Episodes:   {episodes}", flush=True)
