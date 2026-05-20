@@ -1,29 +1,27 @@
-"""Train a policy on a recorded dataset.
+"""Train a policy on a random subset of episodes from a recorded dataset.
 
-Workflow: edit the CONFIG block below, then `python train.py`.
-Ctrl-C to stop, edit, up-arrow, run again. Output dir is auto-suffixed so
-re-runs do not collide; the corresponding `training_log_<runtag>.txt`
-captures stdout+stderr.
+Workflow: edit the CONFIG block below, then `python train_subset.py`. Same as
+`train.py` but samples NUM_DEMOS episodes from the dataset (seeded, so the
+subset is reproducible and the same indices can be re-used across runs).
 
 Equivalent to:
-    lerobot-train --dataset.repo_id=<USER>/<DATASET> --policy.type=act \
-        --output_dir=outputs/train/<RUN> --policy.device=cuda \
-        --policy.use_amp=true --batch_size=32 --num_workers=4 --steps=50000 \
-        --save_freq=5000 --policy.push_to_hub=true \
-        --policy.repo_id=<USER>/<DATASET>_model --wandb.enable=true
+    lerobot-train --dataset.repo_id=<USER>/<DATASET> \
+        --dataset.episodes="[i1,i2,...,iN]" --policy.type=act \
+        --output_dir=outputs/train/<DATASET>_<N>demos --policy.device=cuda ...
 """
 
 import os
+import random
 import sys
 from pathlib import Path
 
-# Silence the torchvision video-decoding deprecation warning before lerobot imports.
 os.environ.setdefault(
     "PYTHONWARNINGS", "ignore::UserWarning:torchvision.io._video_deprecation_warning"
 )
 
 from lerobot.configs.default import DatasetConfig, WandBConfig  # noqa: E402
 from lerobot.configs.train import TrainPipelineConfig  # noqa: E402
+from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata  # noqa: E402
 from lerobot.policies.act.configuration_act import ACTConfig  # noqa: E402
 from lerobot.scripts.lerobot_train import train  # noqa: E402
 from lerobot.utils.import_utils import register_third_party_plugins  # noqa: E402
@@ -31,7 +29,9 @@ from lerobot.utils.import_utils import register_third_party_plugins  # noqa: E40
 # ----------------------------- CONFIG -----------------------------
 USER = "AdamAxelrod"
 DATASET = "space_mouse_puple_dot"
-RUN = DATASET  # output dir name under outputs/train/
+
+NUM_DEMOS = 50
+SEED = 42  # change to draw a different subset; same seed => same episodes
 
 STEPS = 50_000
 BATCH_SIZE = 32
@@ -39,7 +39,7 @@ NUM_WORKERS = 4
 SAVE_FREQ = 5_000
 
 CHUNK_SIZE = 50
-N_ACTION_STEPS = CHUNK_SIZE  # full-chunk inference (original ACT behavior)
+N_ACTION_STEPS = CHUNK_SIZE
 
 USE_AMP = True
 ENABLE_WANDB = True
@@ -48,7 +48,6 @@ PUSH_TO_HUB = True
 
 
 def _autosuffix(base: Path) -> Path:
-    """Match the .ps1 behavior: outputs/train/red_dot, red_dot_2, red_dot_3, ..."""
     if not base.exists():
         return base
     i = 2
@@ -59,13 +58,25 @@ def _autosuffix(base: Path) -> Path:
         i += 1
 
 
+def _sample_episodes(repo_id: str, n: int, seed: int) -> list[int]:
+    meta = LeRobotDatasetMetadata(repo_id)
+    total = meta.total_episodes
+    if n > total:
+        raise ValueError(f"NUM_DEMOS={n} exceeds dataset's {total} episodes ({repo_id}).")
+    rng = random.Random(seed)
+    return sorted(rng.sample(range(total), n))
+
+
 def main() -> None:
     register_third_party_plugins()
 
     repo_id = f"{USER}/{DATASET}"
-    model_repo = f"{USER}/{DATASET}_model"
+    run_name = f"{DATASET}_{NUM_DEMOS}demos_seed{SEED}"
+    model_repo = f"{USER}/{DATASET}_{NUM_DEMOS}demos_model"
 
-    output_dir = _autosuffix(Path("outputs/train") / RUN)
+    episodes = _sample_episodes(repo_id, NUM_DEMOS, SEED)
+
+    output_dir = _autosuffix(Path("outputs/train") / run_name)
     run_tag = output_dir.name
 
     policy = ACTConfig(
@@ -78,7 +89,7 @@ def main() -> None:
     )
 
     cfg = TrainPipelineConfig(
-        dataset=DatasetConfig(repo_id=repo_id),
+        dataset=DatasetConfig(repo_id=repo_id, episodes=episodes),
         policy=policy,
         output_dir=output_dir,
         job_name=run_tag,
@@ -91,6 +102,8 @@ def main() -> None:
     )
 
     print(f"Dataset:    {repo_id}", flush=True)
+    print(f"Subset:     {NUM_DEMOS} episodes (seed={SEED})", flush=True)
+    print(f"Episodes:   {episodes}", flush=True)
     print(f"Output dir: {output_dir}", flush=True)
     print(f"Run tag:    {run_tag}", flush=True)
     print(f"Policy:     act (chunk_size={CHUNK_SIZE}, n_action_steps={N_ACTION_STEPS})", flush=True)
@@ -98,8 +111,6 @@ def main() -> None:
     print(f"Steps:      {STEPS} (save every {SAVE_FREQ})", flush=True)
     print("", flush=True)
 
-    # Strip CLI args so @parser.wrap() and TrainPipelineConfig.validate() see a
-    # clean argv — otherwise stray flags from the parent shell would be re-parsed.
     sys.argv = [sys.argv[0]]
     train(cfg)
 

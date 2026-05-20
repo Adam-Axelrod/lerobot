@@ -10,7 +10,8 @@ class meca500SpacemouseConfig(TeleoperatorConfig):
     meca_address: str = "192.168.0.100"
 
     # Velocity gains. SpaceMouse axes are normalised to [-1, 1].
-    # MoveLinVelTrf takes mm/s for translation and deg/s for rotation.
+    # MoveLinVelWrf takes mm/s for translation and deg/s for rotation,
+    # expressed in the Meca world (base) frame.
     gain_tr: float = 50.0
     gain_rot: float = 30.0
 
@@ -21,9 +22,9 @@ class meca500SpacemouseConfig(TeleoperatorConfig):
     # Low-pass filter factor applied to the raw 6D input (0..1, higher = less smoothing).
     alpha: float = 0.3
 
-    # Per-axis sign flips to align 3DConnexion device frame with the Meca tool frame.
+    # Per-axis sign flips to align 3DConnexion device frame with the Meca world frame.
     # Order: [x, y, z, roll, pitch, yaw]. Tune by jogging each axis individually.
-    axis_signs: list[float] = field(default_factory=lambda: [1.0, -1.0, -1.0, -1.0, -1.0, 1.0])
+    axis_signs: list[float] = field(default_factory=lambda: [-1.0, -1.0, 1.0, 1.0, -1.0, -1.0])
 
     # Internal control loop period (seconds). 5 ms ≈ 200 Hz is plenty for a SpaceMouse.
     loop_dt: float = 0.005

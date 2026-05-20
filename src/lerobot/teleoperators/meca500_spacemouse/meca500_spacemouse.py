@@ -96,8 +96,9 @@ class meca500Spacemouse(Teleoperator):
     def _read_twist(self) -> np.ndarray:
         # SpaceMouseDevice.read() returns a SpaceMouseState with fields
         # t, x, y, z, roll, pitch, yaw, buttons. Axis values are in [-1, 1].
-        # SpaceMouse roll/pitch are swapped relative to the Meca tool frame's
-        # wx/wy, so feed pitch -> wx and roll -> wy (verified empirically).
+        # SpaceMouse roll/pitch are swapped relative to the Meca's wx/wy,
+        # so feed pitch -> wx and roll -> wy. Re-verify empirically after the
+        # Trf -> Wrf switch; axis_signs in the config may also need re-tuning.
         state = self._sm_device.read()
         if state is None:
             return np.zeros(6)
@@ -127,7 +128,7 @@ class meca500Spacemouse(Teleoperator):
             vx, vy, vz = gain_tr * twist[:3]
             wx, wy, wz = gain_rot * twist[3:]
 
-            self.robot.MoveLinVelTrf(vx, vy, vz, wx, wy, wz)
+            self.robot.MoveLinVelWrf(vx, vy, vz, wx, wy, wz)
 
             time.sleep(self.config.loop_dt)
 
@@ -171,7 +172,7 @@ class meca500Spacemouse(Teleoperator):
         self._homing.set()
         try:
             time.sleep(0.02)
-            self.robot.MoveLinVelTrf(0, 0, 0, 0, 0, 0)
+            self.robot.MoveLinVelWrf(0, 0, 0, 0, 0, 0)
             self.robot.MoveJoints(*home)
             self.robot.WaitIdle(timeout=self.config.home_timeout_s)
             logger.info("Home reached.")
