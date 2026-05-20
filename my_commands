@@ -10,43 +10,66 @@ lerobot-train \
 lerobot-teleoperate `
     --robot.type=meca500 `
     --display_data=true `
-    --teleop.type=meca500_bota
+    --teleop.type=meca500_spacemouse
 
 lerobot-record `
     --robot.type=meca500 `
     --teleop.type=meca500_bota `
-    --dataset.single_task="dish_red_dot" `
-    --dataset.repo_id=AdamAxelrod/dish_red_dot_final `
+    --dataset.single_task="reach_red_dot" `
+    --dataset.repo_id=AdamAxelrod/dish_red_dot_new `
     --display_data=true `
-    --dataset.num_episodes=100
+    --dataset.num_episodes=50
 
 lerobot-replay `
     --robot.type=meca500 `
     --robot.monitor_mode=False `
-    --dataset.repo_id=AdamAxelrod/target_test4 `
-    --dataset.episode=2
-
+    --dataset.repo_id=AdamAxelrod/dish_red_dot_new `
+    --dataset.episode=20
+  
 lerobot-train `
-    --dataset.repo_id=AdamAxelrod/target_test4 `
-    --policy.type=act `
-    --output_dir=outputs/train/act_experiment `
-    --policy.device=cuda `
-    --policy.repo_id=AdamAxelrod/my_first_act_model `
-    --wandb.enable=true
-
-lerobot-train `
-  --resume=true `
-  --config_path=outputs\train\act_experiment\checkpoints\020000\pretrained_model\train_config.json `
-  --output_dir=outputs\train\act_experiment `
-  --dataset.repo_id=AdamAxelrod/target_test4 `
+  --dataset.repo_id=AdamAxelrod/dish_red_dot_new `
   --policy.type=act `
+  --output_dir=outputs\train\dish_red_dot_new_4 `
   --policy.device=cuda `
-  --policy.repo_id=AdamAxelrod/my_first_act_model `
-  --wandb.enable=true
+  --policy.repo_id=AdamAxelrod/dish_red_dot_new_model `
+  --wandb.enable=true `
+  --policy.push_to_hub=true `
+  --save_checkpoint=true `
+  --save_freq=5000 `
+  --job_name=dish_red_dot_new `
+  --batch_size=32 `
+  --policy.use_amp=true `
+  --num_workers=4 `
+  --steps=50000
+
+lerobot-train `
+    --dataset.repo_id=AdamAxelrod/dish_red_dot_final `
+    --policy.type=diffusion `
+    --output_dir=outputs/train/dish_red_dot_diffusion `
+    --policy.device=cuda `
+    --policy.repo_id=AdamAxelrod/dish_red_dot_act_100 `
+    --wandb.enable=true `
+    --save_checkpoint=true `
+    --save_freq=5000 `
+    --job_name=dish_red_dot_diffusion `
+    --policy.push_to_hub=true `
+    --batch_size=64 `
+    --steps=100000
 
 CKPT=020000
 hf upload AdamAxelrod/act_experiment020000 `
   outputs/train/act_experiment/checkpoints/020000/pretrained_model
+
+lerobot-record `
+  --robot.type=meca500 `
+  --robot.monitor_mode=False `
+  --display_data=true `
+  --dataset.repo_id=AdamAxelrod/eval_dish_red_dot `
+  --dataset.single_task="dish_red_dot" `
+  --dataset.push_to_hub=false `
+  --policy.path=outputs\train\dish_red_dot_new_4\checkpoints\005000\pretrained_model `
+  --resume=true
+
 
 lerobot-record  `
   --robot.type=meca500 `
@@ -60,6 +83,29 @@ lerobot-record  `
   --robot.type=meca500 `
   --robot.monitor_mode=False `
   --display_data=true `
-  --dataset.repo_id=AdamAxelrod/eval_meca5049 `
-  --dataset.single_task="target_test4" `
-  --policy.path=AdamAxelrod/act_experiment020000
+  --dataset.repo_id=AdamAxelrod/eval_red_dot_model_26 `
+  --dataset.single_task="reach_red_dot" `
+  --teleop.type=meca500_home `
+  --teleop.home=[0,0,0,0,90,0] `
+  --policy.path=AdamAxelrod/red_dot_model
+
+lerobot-record  `
+  --robot.type=meca500 `
+  --robot.monitor_mode=False `
+  --display_data=true `
+  --dataset.repo_id=AdamAxelrod/eval_red_dot_30 `
+  --dataset.single_task="dish_red_dot_final" `
+  --policy.path=outputs/train/dish_red_dot_act_100/checkpoints/010000/pretrained_model
+
+
+lerobot-record  `
+  --robot.type=meca500 `
+  --robot.monitor_mode=False `
+  --display_data=true `
+  --dataset.repo_id=AdamAxelrod/eval_diffusion_4 `
+  --dataset.single_task="dish_red_dot_final" `
+  --policy.path=AdamAxelrod/dish_red_dot_diffusion_model
+
+hf auth whoami
+hf upload AdamAxelrod/dish_red_dot_model outputs/train/dish_red_dot_act_100/checkpoints/last/pretrained_model
+hf upload AdamAxelrod/dish_red_dot_diffusion_model outputs/train/dish_red_dot_diffusion/checkpoints/last/pretrained_model

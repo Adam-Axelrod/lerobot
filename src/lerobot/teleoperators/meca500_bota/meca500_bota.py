@@ -31,6 +31,10 @@ class meca500Bota(Teleoperator):
         self._running = False
         self._thread = None
         self._connected = False
+        # Set while a one-shot homing move is in progress; the guidance loop
+        # parks itself so its 500 Hz MoveLinVelTrf stream doesn't fight the
+        # MoveJoints command queued from go_home().
+        self._homing = threading.Event()
 
         self.wrench_filter = np.zeros(6)
 
@@ -99,6 +103,9 @@ class meca500Bota(Teleoperator):
 
     def _guidance_loop(self):
         while self._running:
+            if self._homing.is_set():
+                time.sleep(0.01)
+                continue
             # Read sensor
             frame_data = self.sensor.read_frame()
             if frame_data: # and frame_data.status == bota_driver.Status.VALID:
@@ -163,18 +170,69 @@ class meca500Bota(Teleoperator):
     def send_feedback(self, feedback: dict[str, float]) -> None:
         pass
 
+    def go_home(self) -> None:
+        """Drive the arm to ``config.home_joints`` over this teleop's control socket."""
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+        if len(self.config.home_joints) != 6:
+            raise ValueError(
+                f"home_joints must have 6 values, got {len(self.config.home_joints)}: {self.config.home_joints}"
+            )
+
+        home = [float(j) for j in self.config.home_joints]
+        logger.info(f"Auto-homing Meca500 to {home}")
+        self._homing.set()
+        try:
+            # Let the guidance loop park, then brake any in-flight velocity.
+            time.sleep(0.02)
+            self.robot.MoveLinVelTrf(0, 0, 0, 0, 0, 0)
+            self.robot.MoveJoints(*home)
+            self.robot.WaitIdle(timeout=self.config.home_timeout_s)
+            logger.info("Home reached.")
+        except Exception as e:
+            logger.warning(f"Auto-home failed: {e}")
+        finally:
+            # Reset the low-pass filter so stale demo-time wrench doesn't
+            # kick the arm the moment guidance resumes.
+            self.wrench_filter = np.zeros(6)
+            self._homing.clear()
+
     def disconnect(self) -> None:
+        # 1. Stop the guidance thread first so no more MoveLinVelTrf commands
+        #    are queued while we tear the connection down.
         self._running = False
         if self._thread:
             self._thread.join(timeout=1.0)
             self._thread = None
 
-        
+        # 2. Bring the Meca500 to a safe state before dropping the TCP control
+        #    link. Calling Disconnect() while the robot is active and has motion
+        #    queued triggers the controller's "Control connection dropped"
+        #    safety stop, which the user then has to clear from the portal.
         if self.robot.IsConnected():
-            self.robot.Disconnect()
-            self.robot.WaitDisconnected()
-            logger.info("Meca500 disconnected.")
+            try:
+                self.robot.PauseMotion()
+                self.robot.WaitMotionPaused(timeout=5)
+                self.robot.ClearMotion()
+                self.robot.WaitMotionCleared(timeout=5)
+                self.robot.DeactivateRobot()
+                self.robot.WaitDeactivated(timeout=10)
+            except Exception as e:
+                logger.warning(f"Meca500 graceful stop failed, disconnecting anyway: {e}")
+            try:
+                self.robot.Disconnect()
+                self.robot.WaitDisconnected(timeout=5)
+                logger.info("Meca500 disconnected.")
+            except Exception as e:
+                logger.warning(f"Meca500 Disconnect failed: {e}")
 
+        # 3. Tear down the Bota sensor regardless of Meca500 outcome.
         if self.sensor:
-            self.sensor.deactivate()
-            self.sensor.shutdown()
+            try:
+                self.sensor.deactivate()
+                self.sensor.shutdown()
+            except Exception as e:
+                logger.warning(f"Bota sensor shutdown failed: {e}")
+            self.sensor = None
+
+        self._connected = False
