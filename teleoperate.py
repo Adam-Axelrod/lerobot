@@ -16,7 +16,7 @@ from lerobot.utils.import_utils import register_third_party_plugins
 
 # ----------------------------- CONFIG -----------------------------
 TELEOP = "spacemouse"  # "bota" or "spacemouse"
-DISPLAY_DATA = True
+DISPLAY_DATA = False
 FPS = 60
 # ------------------------------------------------------------------
 

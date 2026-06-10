@@ -738,13 +738,13 @@ class MotorsBus(abc.ABC):
         elif not isinstance(motors, list):
             raise TypeError(motors)
 
-        start_positions = self.sync_read("Present_Position", motors, normalize=False)
+        start_positions = self.sync_read("Present_Position", motors, normalize=False, num_retry=3)
         mins = start_positions.copy()
         maxes = start_positions.copy()
 
         user_pressed_enter = False
         while not user_pressed_enter:
-            positions = self.sync_read("Present_Position", motors, normalize=False)
+            positions = self.sync_read("Present_Position", motors, normalize=False, num_retry=3)
             mins = {motor: min(positions[motor], min_) for motor, min_ in mins.items()}
             maxes = {motor: max(positions[motor], max_) for motor, max_ in maxes.items()}
 

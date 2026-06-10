@@ -28,6 +28,8 @@ from lerobot.policies.act.configuration_act import ACTConfig  # noqa: E402
 from lerobot.scripts.lerobot_train import train  # noqa: E402
 from lerobot.utils.import_utils import register_third_party_plugins  # noqa: E402
 
+from train_logging import setup_split_logging  # noqa: E402
+
 # ----------------------------- CONFIG -----------------------------
 USER = "AdamAxelrod"
 DATASET = "space_mouse_puple_dot"
@@ -60,6 +62,7 @@ def _autosuffix(base: Path) -> Path:
 
 
 def main() -> None:
+    setup_split_logging()  # INFO -> train_log.txt, ERROR -> train_error.txt
     register_third_party_plugins()
 
     repo_id = f"{USER}/{DATASET}"

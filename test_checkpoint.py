@@ -26,9 +26,10 @@ from lerobot.utils.import_utils import register_third_party_plugins
 
 # ----------------------------- CONFIG -----------------------------
 USER = "AdamAxelrod"
-RUN = "red_dot_black_pointer"
-CKPT = "005000"  # zero-padded step number, matches outputs/train/<RUN>/checkpoints/<CKPT>/
-TASK = "reach_red_dot"
+#RUN = "space_mouse_puple_dot_75demos_seed42_3"
+RUN = "space_mouse_puple_dot"
+CKPT = "025000"  # zero-padded step number, matches outputs/train/<RUN>/checkpoints/<CKPT>/
+TASK = "reach_purple_dot"
 
 # ACT inference mode (see note in inference.ps1):
 #   None             → full-chunk inference (fast, wobbles at chunk boundaries)

@@ -22,7 +22,7 @@ from lerobot.utils.import_utils import register_third_party_plugins
 
 # ----------------------------- CONFIG -----------------------------
 USER = "AdamAxelrod"
-RUN = "space_mouse_puple_dot"
+RUN = "space_mouse_puple_dot_50demos"
 TASK = "reach_purple_dot"
 
 # ACT inference mode (see note in inference.ps1):
@@ -34,7 +34,7 @@ HOME_JOINTS = [0.0, 0.0, 0.0, 0.0, 90.0, 0.0]
 NUM_EPISODES = 10
 EPISODE_TIME_S = 30
 RESET_TIME_S = 10
-DISPLAY_DATA = False
+DISPLAY_DATA = True
 # ------------------------------------------------------------------
 
 

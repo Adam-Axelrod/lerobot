@@ -33,11 +33,13 @@ from lerobot.policies.act.configuration_act import ACTConfig  # noqa: E402
 from lerobot.scripts.lerobot_train import train  # noqa: E402
 from lerobot.utils.import_utils import register_third_party_plugins  # noqa: E402
 
+from train_logging import setup_split_logging  # noqa: E402
+
 # ----------------------------- CONFIG -----------------------------
 USER = "AdamAxelrod"
 DATASET = "space_mouse_puple_dot"
 
-NUM_DEMOS = 25
+NUM_DEMOS = 100
 SEED = 42  # change to draw a different subset; same seed => same episodes
 
 STEPS = 50_000
@@ -83,11 +85,11 @@ def _sample_episodes(repo_id: str, n: int, seed: int) -> list[int]:
 
 
 def main() -> None:
+    setup_split_logging()  # INFO -> train_log.txt, ERROR -> train_error.txt
     register_third_party_plugins()
 
     repo_id = f"{USER}/{DATASET}"
     run_name = f"{DATASET}_{NUM_DEMOS}demos_seed{SEED}"
-    model_repo = f"{USER}/{DATASET}_{NUM_DEMOS}demos_model"
 
     device = _select_device()
     use_amp = device == "cuda"  # AMP only supported on CUDA
@@ -96,6 +98,11 @@ def main() -> None:
 
     output_dir = _autosuffix(Path("outputs/train") / run_name)
     run_tag = output_dir.name
+
+    # Hub repo matches the local output folder name (== wandb run name) so the
+    # Hub model, the outputs/ dir, and the wandb run all share one identifier
+    # and runs don't silently overwrite an existing same-name model on the Hub.
+    model_repo = f"{USER}/{run_tag}"
 
     policy = ACTConfig(
         device=device,
@@ -125,6 +132,7 @@ def main() -> None:
     print(f"Episodes:   {episodes}", flush=True)
     print(f"Output dir: {output_dir}", flush=True)
     print(f"Run tag:    {run_tag}", flush=True)
+    print(f"Hub repo:   {model_repo if PUSH_TO_HUB else '(push disabled)'}", flush=True)
     print(f"Policy:     act (chunk_size={CHUNK_SIZE}, n_action_steps={N_ACTION_STEPS})", flush=True)
     print(f"Batch x WK: {BATCH_SIZE} x {NUM_WORKERS}", flush=True)
     print(f"Steps:      {STEPS} (save every {SAVE_FREQ})", flush=True)
