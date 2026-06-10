@@ -1,4 +1,6 @@
-This file provides guidance to AI agents when working with code in this repository.
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 > **User-facing help → [`AGENT_GUIDE.md`](./AGENT_GUIDE.md)** (SO-101 setup, recording, picking a policy, training duration, eval — with copy-pasteable commands).
 
@@ -22,21 +24,67 @@ git lfs install && git lfs pull             # Test artifacts
 ## Key Commands
 
 ```bash
-uv run pytest tests -svv --maxfail=10                 # All tests
-DEVICE=cuda make test-end-to-end                      # All E2E tests
-pre-commit run --all-files                           # Lint + format (ruff, typos, bandit, etc.)
+uv run pytest tests -svv --maxfail=10                                          # All tests
+uv run pytest tests/datasets/test_lerobot_dataset.py::test_init_loads_data -svv  # Single test
+DEVICE=cuda make test-end-to-end                                               # All E2E tests
+pre-commit run --all-files                                                     # Lint + format (ruff, typos, bandit, etc.)
 ```
 
 ## Architecture (`src/lerobot/`)
 
-- **`scripts/`** — CLI entry points (`lerobot-train`, `lerobot-eval`, `lerobot-record`, etc.), mapped in `pyproject.toml [project.scripts]`.
-- **`configs/`** — Dataclass configs parsed by draccus. `train.py` has `TrainPipelineConfig` (top-level). `policies.py` has `PreTrainedConfig` base. Polymorphism via `draccus.ChoiceRegistry` with `@register_subclass("name")` decorators.
-- **`policies/`** — Each policy in its own subdir. All inherit `PreTrainedPolicy` (`nn.Module` + `HubMixin`) from `pretrained.py`. Factory with lazy imports in `factory.py`.
+### Core abstractions
+
+- **`configs/`** — Dataclass configs parsed by draccus. `train.py` has `TrainPipelineConfig` (top-level for IL). `policies.py` has `PreTrainedConfig` base. Polymorphism via `draccus.ChoiceRegistry` with `@register_subclass("name")` decorators.
+- **`policies/`** — Each policy in its own subdir (act, diffusion, pi0, pi05, smolvla, wall_x, sac, …). All inherit `PreTrainedPolicy` (`nn.Module` + `HubMixin`) from `pretrained.py`. Factory with lazy imports in `factory.py`.
+- **`rewards/`** — Reward model hierarchy parallel to policies. `PreTrainedRewardModel` base in `pretrained.py`; concrete models in `classifier/`, `topreward/`, `robometer/`, `sarm/`. Config in `configs/rewards.py`.
 - **`processor/`** — Data transformation pipeline. `ProcessorStep` base with registry. `DataProcessorPipeline` / `PolicyProcessorPipeline` chain steps.
 - **`datasets/`** — `LeRobotDataset` (episode-aware sampling + video decoding) and `LeRobotDatasetMetadata`.
 - **`envs/`** — `EnvConfig` base in `configs.py`, factory in `factory.py`. Each env subclass defines `gym_kwargs` and `create_envs()`.
 - **`robots/`, `motors/`, `cameras/`, `teleoperators/`** — Hardware abstraction layers.
 - **`types.py`** and **`configs/types.py`** — Core type aliases and feature type definitions.
+
+### Training
+
+- **Imitation learning (IL)**: `scripts/lerobot_train.py` → `TrainPipelineConfig` in `configs/train.py`.
+- **Reinforcement learning (RL)**: `rl/train_rl.py` → `TrainRLServerPipelineConfig` (extends `TrainPipelineConfig`, `dataset` optional). Actor/learner are separate processes. Algorithm configs live in `rl/algorithms/configs.py`; SAC is the current implementation.
+
+### Deployment
+
+- **`rollout/`** — Unified deployment engine invoked via `lerobot-rollout`. `RolloutConfig` selects a strategy and inference backend via draccus polymorphism:
+  - `base` — autonomous rollout, no recording
+  - `sentry` — continuous recording with size-based episode rotation
+  - `highlight` — ring-buffer recording, save on keypress
+  - `episodic` — mirrors `lerobot-record` (fixed episode count/duration)
+  - `dagger` — human-in-the-loop correction collection (keyboard or foot pedal)
+  - Inference backends: `sync` (blocking) or `rtc` (async, via gRPC)
+- **`async_inference/`** — gRPC-based async policy server (`policy_server.py`) and robot client (`robot_client.py`). Used by the `rtc` inference backend.
+- **`transport/`** — Protobuf/gRPC definitions (`services.proto`, generated `_pb2.py` files) shared between async inference and RL actor/learner.
+
+### Utilities
+
+- **`model/`** — Robot kinematics (`kinematics.py`).
+- **`transforms/`** — Image transform utilities.
+- **`scripts/`** — CLI entry points mapped in `pyproject.toml [project.scripts]`.
+
+## CLI Entry Points
+
+All mapped in `pyproject.toml [project.scripts]`:
+
+| Command | Purpose |
+|---|---|
+| `lerobot-train` | Imitation learning training |
+| `lerobot-eval` | Policy evaluation in sim |
+| `lerobot-rollout` | Unified deployment (all strategies) |
+| `lerobot-record` | Simple episode recording (legacy; episodic strategy preferred) |
+| `lerobot-replay` | Replay a recorded dataset on hardware |
+| `lerobot-teleoperate` | Teleoperation without recording |
+| `lerobot-calibrate` | Robot/teleop calibration |
+| `lerobot-setup-motors` | One-time motor ID + baudrate setup |
+| `lerobot-find-port` | Identify USB port for a robot arm |
+| `lerobot-find-cameras` | List available cameras |
+| `lerobot-info` | Print dataset/policy metadata |
+| `lerobot-dataset-viz` | Visualize a dataset |
+| `lerobot-edit-dataset` | Edit dataset episodes |
 
 ## Repository Structure (outside `src/`)
 
@@ -54,3 +102,4 @@ pre-commit run --all-files                           # Lint + format (ruff, typo
 - **Optional dependencies**: many policies, envs, and robots are behind extras (e.g., `lerobot[aloha]`). New imports for optional packages must be guarded or lazy. See `pyproject.toml [project.optional-dependencies]`.
 - **Video decoding**: datasets can store observations as video files. `LeRobotDataset` handles frame extraction, but tests need ffmpeg installed.
 - **Prioritize use of `uv run`** to execute Python commands (not raw `python` or `pip`).
+- **gRPC generated files**: `*_pb2.py` and `*_pb2_grpc.py` in `transport/` are auto-generated from `services.proto` — do not edit them directly.
