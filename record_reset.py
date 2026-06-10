@@ -16,7 +16,7 @@ from lerobot.datasets.pipeline_features import (
     aggregate_pipeline_dataset_features,
     create_initial_features,
 )
-from lerobot.datasets.utils import combine_feature_dicts
+from lerobot.utils.feature_utils import combine_feature_dicts
 from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.processor import make_default_processors
 from lerobot.robots import make_robot_from_config
@@ -25,7 +25,7 @@ from lerobot.scripts.lerobot_record import DatasetRecordConfig, RecordConfig, re
 from lerobot.teleoperators import make_teleoperator_from_config
 from lerobot.teleoperators.meca500_bota.config_meca500_bota import meca500BotaConfig
 from lerobot.teleoperators.meca500_spacemouse.config_meca500_spacemouse import meca500SpacemouseConfig
-from lerobot.utils.control_utils import (
+from lerobot.common.control_utils import (
     init_keyboard_listener,
     is_headless,
     sanity_check_dataset_name,
@@ -145,7 +145,7 @@ def record_with_reset(cfg: RecordConfig) -> LeRobotDataset:
                 logging.warning(f"Removing existing dataset cache at {cache_root}")
                 shutil.rmtree(cache_root)
 
-        sanity_check_dataset_name(cfg.dataset.repo_id, cfg.policy)
+        sanity_check_dataset_name(cfg.dataset.repo_id, None)
         dataset = LeRobotDataset.create(
             cfg.dataset.repo_id,
             cfg.dataset.fps,
@@ -180,9 +180,6 @@ def record_with_reset(cfg: RecordConfig) -> LeRobotDataset:
                     robot_action_processor=robot_action_processor,
                     robot_observation_processor=robot_observation_processor,
                     teleop=teleop,
-                    policy=None,
-                    preprocessor=None,
-                    postprocessor=None,
                     dataset=dataset,
                     control_time_s=cfg.dataset.episode_time_s,
                     single_task=cfg.dataset.single_task,
@@ -221,6 +218,7 @@ def record_with_reset(cfg: RecordConfig) -> LeRobotDataset:
                         control_time_s=cfg.dataset.reset_time_s,
                         single_task=cfg.dataset.single_task,
                         display_data=cfg.display_data,
+                        display_compressed_images=False,
                     )
 
                 if events["rerecord_episode"]:

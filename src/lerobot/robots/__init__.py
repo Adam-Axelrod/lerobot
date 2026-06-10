@@ -19,3 +19,5 @@ from .robot import Robot
 from .utils import make_robot_from_config
 
 from . import meca500
+
+__all__ = ["Robot", "RobotConfig", "make_robot_from_config"]
