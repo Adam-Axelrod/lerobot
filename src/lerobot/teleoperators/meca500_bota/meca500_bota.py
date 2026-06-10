@@ -1,28 +1,26 @@
-# My imports
-import mecademicpy.robot as mdr
-import bota_driver
-import numpy as np
 import json
-import threading
-
-# Hugging Face imports
 import logging
+import threading
 import time
-from typing import Optional, Dict, Any
+from typing import Any
+
+import bota_driver
+import mecademicpy.robot as mdr
+import numpy as np
 
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
-from .config_meca500_bota import meca500BotaConfig
+from .config_meca500_bota import Meca500BotaConfig
 
 logger = logging.getLogger(__name__)
 
 
-class meca500Bota(Teleoperator):
-    config_class = meca500BotaConfig
+class Meca500Bota(Teleoperator):
+    config_class = Meca500BotaConfig
     name = "meca500_bota"
 
-    def __init__(self, config: meca500BotaConfig):
+    def __init__(self, config: Meca500BotaConfig):
         super().__init__(config)
         self.config = config
         self.sensor: bota_driver.BotaDriver | None = None

@@ -1,9 +1,6 @@
-# My imports
 import mecademicpy.robot as mdr
 import numpy as np
 
-
-# Hugging Face imports
 import logging
 import time
 from functools import cached_property
@@ -165,48 +162,23 @@ class Meca500(Robot):
             
         return obs_dict
     
-    # def _get_motion_queue_count(self) -> int:
-    #     """Helper to query the robot for the number of pending motion commands."""
-    #     # 2080 is the code for MX_ST_GET_CMD_PENDING_COUNT
-    #     try:
-    #         response = self.robot.SendCustomCommand("GetCmdPendingCount", expected_responses=[2080], timeout=0.5)
-    #         # The data field of the message contains the count as a string/int
-    #         return int(response.data)
-    #     except Exception as e:
-    #         logger.warning(f"Failed to get queue count: {e}")
-    #         return 100 # Return high number to prevent spamming if check fails
-
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
         
         if self.config.monitor_mode:
-            # In monitor mode, we do not send any commands
             return action
-        
-        # 1. Manage the Motion Queue
-        # We only send a new command if the robot is running low on commands.
-        # This prevents filling the buffer (and creating massive latency).
-        # A buffer of 1 or 2 is usually sufficient for smooth motion with blending.
-        #queue_count = self._get_motion_queue_count()
-        #if queue_count > 1:
-        #    # Skip sending this action frame to let the robot catch up
-        #    return action
-        
 
-        # 2. Parse Actions
+        # Parse actions
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
-        
-        # 3. Safety Cap (Optional)
+
         if self.config.max_relative_target is not None:
             present_pos_list = self.robot.GetRtTargetJointPos()
             present_pos = {f"joint_{i+1}": p for i, p in enumerate(present_pos_list)}
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
-        logger.info(f"Sending goal positions: {goal_pos}")
-        # 4. Send Command
-        # Note: Meca500 MoveJoints takes args, not a list
+        logger.debug(f"Sending goal positions: {goal_pos}")
         self.robot.MoveJoints(
             float(goal_pos["joint_1"]),
             float(goal_pos["joint_2"]),

@@ -1,1 +1,1 @@
-from .config_meca500_spacemouse import meca500SpacemouseConfig
+from .config_meca500_spacemouse import Meca500SpacemouseConfig
