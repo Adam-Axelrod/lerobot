@@ -15,7 +15,7 @@ from pathlib import Path
 
 from lerobot.robots.meca500.config_meca500 import Meca500Config
 from lerobot.scripts.lerobot_record import DatasetRecordConfig, RecordConfig, record
-from lerobot.teleoperators.meca500_bota.config_meca500_bota import meca500BotaConfig
+from lerobot.teleoperators.meca500_bota.config_meca500_bota import Meca500BotaConfig
 from lerobot.utils.import_utils import register_third_party_plugins
 
 # ----------------------------- CONFIG -----------------------------
@@ -52,7 +52,7 @@ def main() -> None:
             reset_time_s=RESET_TIME_S,
             push_to_hub=PUSH_TO_HUB,
         ),
-        teleop=meca500BotaConfig(),
+        teleop=Meca500BotaConfig(),
         display_data=DISPLAY_DATA,
     )
 

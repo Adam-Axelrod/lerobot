@@ -23,8 +23,8 @@ from lerobot.robots import make_robot_from_config
 from lerobot.robots.meca500.config_meca500 import Meca500Config
 from lerobot.scripts.lerobot_record import DatasetRecordConfig, RecordConfig, record_loop
 from lerobot.teleoperators import make_teleoperator_from_config
-from lerobot.teleoperators.meca500_bota.config_meca500_bota import meca500BotaConfig
-from lerobot.teleoperators.meca500_spacemouse.config_meca500_spacemouse import meca500SpacemouseConfig
+from lerobot.teleoperators.meca500_bota.config_meca500_bota import Meca500BotaConfig
+from lerobot.teleoperators.meca500_spacemouse.config_meca500_spacemouse import Meca500SpacemouseConfig
 from lerobot.common.control_utils import (
     init_keyboard_listener,
     is_headless,
@@ -42,7 +42,7 @@ TELEOP = "spacemouse"
 
 # Dataset
 USER = "AdamAxelrod"
-NAME = "space_mouse_puple_dot"
+NAME = "space_mouse_purple_dot"
 SINGLE_TASK = "reach_purple_dot"
 NUM_EPISODES = 100
 EPISODE_TIME_S = 60          # seconds per demo
@@ -66,12 +66,12 @@ HOME_TIMEOUT_S = 30.0
 def build_config() -> RecordConfig:
     robot_cfg = Meca500Config()  # defaults: monitor_mode=True + overhead/wrist cams
     if TELEOP == "bota":
-        teleop_cfg = meca500BotaConfig(
+        teleop_cfg = Meca500BotaConfig(
             home_joints=HOME_JOINTS,
             home_timeout_s=HOME_TIMEOUT_S,
         )
     elif TELEOP == "spacemouse":
-        teleop_cfg = meca500SpacemouseConfig(
+        teleop_cfg = Meca500SpacemouseConfig(
             home_joints=HOME_JOINTS,
             home_timeout_s=HOME_TIMEOUT_S,
         )

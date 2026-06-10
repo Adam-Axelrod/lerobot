@@ -10,8 +10,8 @@ Equivalent to:
 
 from lerobot.robots.meca500.config_meca500 import Meca500Config
 from lerobot.scripts.lerobot_teleoperate import TeleoperateConfig, teleoperate
-from lerobot.teleoperators.meca500_bota.config_meca500_bota import meca500BotaConfig
-from lerobot.teleoperators.meca500_spacemouse.config_meca500_spacemouse import meca500SpacemouseConfig
+from lerobot.teleoperators.meca500_bota.config_meca500_bota import Meca500BotaConfig
+from lerobot.teleoperators.meca500_spacemouse.config_meca500_spacemouse import Meca500SpacemouseConfig
 from lerobot.utils.import_utils import register_third_party_plugins
 
 # ----------------------------- CONFIG -----------------------------
@@ -21,8 +21,8 @@ FPS = 60
 # ------------------------------------------------------------------
 
 TELEOP_CONFIGS = {
-    "bota": meca500BotaConfig,
-    "spacemouse": meca500SpacemouseConfig,
+    "bota": Meca500BotaConfig,
+    "spacemouse": Meca500SpacemouseConfig,
 }
 
 
