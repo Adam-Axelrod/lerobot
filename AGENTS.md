@@ -8,6 +8,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 LeRobot is a PyTorch-based library for real-world robotics, providing datasets, pretrained policies, and tools for training, evaluation, data collection, and robot control. It integrates with Hugging Face Hub for model/dataset sharing.
 
+## ⚠️ Development vs. Deployment Environment
+
+**Code is written on a macOS laptop, but the machine physically connected to the Meca500 robot (and its cameras) is a Windows laptop. All code must be written to run on that Windows machine.**
+
+This means, especially for anything touching hardware (`robots/`, `cameras/`, `teleoperators/`, `motors/`, the `meca500` subpackage, and `scripts/meca500/`):
+
+- **Target Windows at runtime.** Use `pathlib.Path` (never hardcoded POSIX paths or `/`-separated strings), avoid POSIX-only assumptions (`os.fork`, signal semantics, `/dev/...` device paths, `select` on non-sockets, etc.), and prefer cross-platform APIs.
+- **Cameras use the Windows OpenCV backends** (DSHOW/MSMF), not V4L2/AVFoundation. Backend-specific values (e.g. the `CAP_PROP_AUTO_EXPOSURE` magic numbers, camera indices) must match Windows behavior. macOS is **not** a reliable proxy for testing camera focus/exposure.
+- **macOS-side checks are best-effort only.** Tests and quick scripts may be run on the Mac for convenience, but hardware behavior is only authoritative on the Windows laptop. Don't conclude a hardware/camera change "works" from macOS results alone.
+
 ## Tech Stack
 
 Python 3.12+ · PyTorch · Hugging Face (datasets, Hub, accelerate) · draccus (config/CLI) · Gymnasium (envs) · uv (package management)
@@ -103,3 +113,4 @@ All mapped in `pyproject.toml [project.scripts]`:
 - **Video decoding**: datasets can store observations as video files. `LeRobotDataset` handles frame extraction, but tests need ffmpeg installed.
 - **Prioritize use of `uv run`** to execute Python commands (not raw `python` or `pip`).
 - **gRPC generated files**: `*_pb2.py` and `*_pb2_grpc.py` in `transport/` are auto-generated from `services.proto` — do not edit them directly.
+- **Runtime target is Windows**: code is authored on macOS but runs on the Windows laptop wired to the Meca500. Write Windows-compatible code (see "Development vs. Deployment Environment" above).

@@ -51,11 +51,26 @@ class OpenCVCameraConfig(CameraConfig):
         warmup_s: Time reading frames before returning from connect (in seconds)
         fourcc: FOURCC code for video format (e.g., "MJPG", "YUYV", "I420"). Defaults to None (auto-detect).
         backend: OpenCV backend identifier (https://docs.opencv.org/3.4/d4/d15/group__videoio__flags__base.html). Defaults to ANY.
+        autofocus: Whether the camera should auto-focus. None (default) leaves the camera's own
+                   default untouched; True/False enables/disables autofocus.
+        focus: Manual focus value to apply (driver-dependent units). None (default) leaves it untouched.
+               Requires `autofocus=False` (most drivers ignore a manual focus while autofocus is on).
+        autoexposure: Whether the camera should auto-expose. None (default) leaves the camera's own
+                      default untouched; True/False enables/disables auto-exposure. The backend-specific
+                      magic value OpenCV expects is handled internally.
+        exposure: Manual exposure value to apply (driver-dependent units). None (default) leaves it
+                  untouched. Requires `autoexposure=False` (most drivers ignore a manual exposure
+                  while auto-exposure is on).
 
     Note:
         - Only 3-channel color output (RGB/BGR) is currently supported.
         - FOURCC codes must be 4-character strings (e.g., "MJPG", "YUYV"). Some common FOUCC codes: https://learn.microsoft.com/en-us/windows/win32/medfound/video-fourccs#fourcc-constants
         - Setting FOURCC can help achieve higher frame rates on some cameras.
+        - Exposure/focus controls are best-effort: OpenCV's support for them is backend- and
+          driver-dependent, and many cameras silently ignore them. Unsupported controls log a
+          warning rather than failing the connection. For imitation learning you usually want
+          `autofocus=False` and `autoexposure=False` (plus fixed `focus`/`exposure`) so the visual
+          statistics stay consistent between recording and rollout.
     """
 
     index_or_path: int | Path
@@ -64,6 +79,10 @@ class OpenCVCameraConfig(CameraConfig):
     warmup_s: int = 1
     fourcc: str | None = None
     backend: Cv2Backends = Cv2Backends.ANY
+    autofocus: bool | None = None
+    focus: int | None = None
+    autoexposure: bool | None = None
+    exposure: float | None = None
 
     def __post_init__(self) -> None:
         self.color_mode = ColorMode(self.color_mode)
@@ -73,4 +92,16 @@ class OpenCVCameraConfig(CameraConfig):
         if self.fourcc is not None and (not isinstance(self.fourcc, str) or len(self.fourcc) != 4):
             raise ValueError(
                 f"`fourcc` must be a 4-character string (e.g., 'MJPG', 'YUYV'), but '{self.fourcc}' is provided."
+            )
+
+        if self.focus is not None and self.autofocus is not False:
+            raise ValueError(
+                "`focus` requires `autofocus=False`; most drivers ignore a manual focus value "
+                "while autofocus is enabled."
+            )
+
+        if self.exposure is not None and self.autoexposure is not False:
+            raise ValueError(
+                "`exposure` requires `autoexposure=False`; most drivers ignore a manual exposure value "
+                "while auto-exposure is enabled."
             )

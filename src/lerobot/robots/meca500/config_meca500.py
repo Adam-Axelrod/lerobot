@@ -11,7 +11,10 @@ class Meca500Config(RobotConfig):
     
     monitor_mode: bool = True
 
-    # Standard camera configuration
+    # Standard camera configuration.
+    # Focus and exposure are locked (autofocus/autoexposure off) so the visual
+    # statistics stay consistent between recording and rollout. `focus`/`exposure`
+    # values are driver-dependent — tune per camera/lighting if frames look off.
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
             "overhead_cam": OpenCVCameraConfig(
@@ -19,15 +22,23 @@ class Meca500Config(RobotConfig):
                 fps=30,
                 width=640,
                 height=480,
+                autofocus=False,
+                focus=100,
+                autoexposure=False,
+                exposure=-6,
             ),
              "wrist_cam": OpenCVCameraConfig(
                 index_or_path=2,
                 fps=30,
                 width=640,
                 height=480,
+                autofocus=False,
+                focus=100,
+                autoexposure=False,
+                exposure=-6,
             ),
         }
-        
+
     )
 
     max_relative_target: float | dict[str, float] | None = None

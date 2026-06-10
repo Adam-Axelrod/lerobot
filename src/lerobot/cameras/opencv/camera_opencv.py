@@ -201,12 +201,8 @@ class OpenCVCamera(Camera):
 
         if self.videocapture is None:
             raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
-        
-        # self.videocapture.set(cv2.CAP_PROP_AUTOFOCUS, 0)
-        # self.videocapture.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)  # 0.25 to turn off auto exposure in OpenCV
-        # self.videocapture.set(cv2.CAP_PROP_FOCUS, 100)
-        # self.videocapture.set(cv2.CAP_PROP_EXPOSURE, -6)
 
+        self._configure_exposure_and_focus()
 
         set_fourcc_after_size_and_fps = platform.system() == "Windows"
         if self.config.fourcc is not None and not set_fourcc_after_size_and_fps:
@@ -233,6 +229,58 @@ class OpenCVCamera(Camera):
             # On Windows with DSHOW, changing the resolution can silently override the FOURCC setting.
             # Set FOURCC last to make sure the requested pixel format is actually enforced.
             self._validate_fourcc()
+
+    def _auto_exposure_value(self, enable: bool) -> float:
+        """Maps an autoexposure on/off request to the backend-specific magic value.
+
+        OpenCV's `CAP_PROP_AUTO_EXPOSURE` does not use a simple 0/1: the value that
+        means "auto" vs "manual" differs per backend. DSHOW/MSMF (Windows) use
+        0.75/0.25, while V4L2 (Linux) and most other backends use 3/1.
+        """
+        if platform.system() == "Windows":
+            return 0.75 if enable else 0.25
+        return 3.0 if enable else 1.0
+
+    def _try_set_property(self, name: str, prop_id: int, value: float) -> None:
+        """Best-effort `set()` of a single OpenCV property, with read-back verification.
+
+        Exposure/focus controls are backend- and driver-dependent and are often
+        silently ignored. Mirroring the FOURCC handling, a failure logs a warning
+        rather than raising, so an unsupported control never blocks a connection.
+        """
+        if self.videocapture is None:
+            raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
+
+        success = self.videocapture.set(prop_id, value)
+        actual = self.videocapture.get(prop_id)
+        if not success or not math.isclose(value, actual, rel_tol=1e-2, abs_tol=1e-3):
+            logger.warning(
+                f"{self} failed to set {name}={value} (actual={actual}, success={success}). "
+                f"This control may be unsupported by the camera/backend; continuing."
+            )
+
+    def _configure_exposure_and_focus(self) -> None:
+        """Applies the optional exposure/focus settings, when requested.
+
+        Each control is only touched when its config field is not None, so the
+        camera's own defaults are preserved otherwise. Auto controls are disabled
+        before their manual counterparts are set, since most drivers ignore a
+        manual value while the corresponding auto loop is still active.
+        """
+        if self.videocapture is None:
+            raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
+
+        if self.config.autoexposure is not None:
+            self._try_set_property(
+                "auto exposure", cv2.CAP_PROP_AUTO_EXPOSURE, self._auto_exposure_value(self.config.autoexposure)
+            )
+        if self.config.exposure is not None:
+            self._try_set_property("exposure", cv2.CAP_PROP_EXPOSURE, float(self.config.exposure))
+
+        if self.config.autofocus is not None:
+            self._try_set_property("autofocus", cv2.CAP_PROP_AUTOFOCUS, 1.0 if self.config.autofocus else 0.0)
+        if self.config.focus is not None:
+            self._try_set_property("focus", cv2.CAP_PROP_FOCUS, float(self.config.focus))
 
     def _validate_fps(self) -> None:
         """Validates and sets the camera's frames per second (FPS)."""
