@@ -1030,7 +1030,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         query_indices = None
         if self.delta_indices is not None:
-            query_indices, padding = self._get_query_indices(idx, ep_idx)
+            # Use the absolute frame index (the "index" column), not the positional `idx`.
+            # When `episodes` is a subset, `idx` is the position within the filtered
+            # hf_dataset while `_get_query_indices` compares against absolute episode
+            # bounds (dataset_from_index/dataset_to_index). Passing the positional idx
+            # would flag almost every action step as padding (mask all-True), wiping out
+            # the action supervision. For the full dataset `index == idx`, so this is a no-op.
+            current_idx = item["index"].item()
+            query_indices, padding = self._get_query_indices(current_idx, ep_idx)
             query_result = self._query_hf_dataset(query_indices)
             item = {**item, **padding}
             for key, val in query_result.items():

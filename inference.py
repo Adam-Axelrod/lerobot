@@ -22,7 +22,7 @@ from lerobot.utils.import_utils import register_third_party_plugins
 
 # ----------------------------- CONFIG -----------------------------
 USER = "AdamAxelrod"
-RUN = "space_mouse_puple_dot_50demos"
+RUN = "space_mouse_puple_dot_100demos"
 TASK = "reach_purple_dot"
 
 # ACT inference mode (see note in inference.ps1):

@@ -28,7 +28,7 @@ from lerobot.utils.import_utils import register_third_party_plugins
 USER = "AdamAxelrod"
 #RUN = "space_mouse_puple_dot_75demos_seed42_3"
 RUN = "space_mouse_puple_dot"
-CKPT = "025000"  # zero-padded step number, matches outputs/train/<RUN>/checkpoints/<CKPT>/
+CKPT = "035000"  # zero-padded step number, matches outputs/train/<RUN>/checkpoints/<CKPT>/
 TASK = "reach_purple_dot"
 
 # ACT inference mode (see note in inference.ps1):
@@ -37,9 +37,9 @@ TASK = "reach_purple_dot"
 TEMPORAL_ENSEMBLE_COEFF: float | None = None
 
 HOME_JOINTS = [0.0, 0.0, 0.0, 0.0, 90.0, 0.0]
-NUM_EPISODES = 10
+NUM_EPISODES = 20
 EPISODE_TIME_S = 30
-RESET_TIME_S = 10
+RESET_TIME_S = 5
 DISPLAY_DATA = True
 # ------------------------------------------------------------------
 

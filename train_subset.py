@@ -39,7 +39,7 @@ from train_logging import setup_split_logging  # noqa: E402
 USER = "AdamAxelrod"
 DATASET = "space_mouse_puple_dot"
 
-NUM_DEMOS = 100
+NUM_DEMOS = 40
 SEED = 42  # change to draw a different subset; same seed => same episodes
 
 STEPS = 50_000
