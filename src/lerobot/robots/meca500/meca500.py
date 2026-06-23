@@ -75,6 +75,21 @@ class Meca500(Robot):
                 self.robot.ActivateAndHome()
                 self.robot.WaitHomed(timeout=60)
         except Exception as e:
+            # The exception that surfaces here is a generic DisconnectError; the real
+            # cause ("Another user is already controlling the robot") lives further down
+            # the __cause__/__context__ chain, so walk it to find the actual message.
+            chain = []
+            cause = e
+            seen = set()
+            while cause is not None and id(cause) not in seen:
+                seen.add(id(cause))
+                chain.append(str(cause))
+                cause = cause.__cause__ or cause.__context__
+            if any("Another user is already controlling the robot" in msg for msg in chain):
+                raise DeviceNotConnectedError(
+                    f"Meca500 at {self.config.ip_address} is already controlled by another session. "
+                    f"Close the other connection (e.g. the web interface or a running script) and try again."
+                ) from None
             raise DeviceNotConnectedError(f"Failed to connect to Meca500 at {self.config.ip_address}: {e}")
 
         failed_cams: list[str] = []

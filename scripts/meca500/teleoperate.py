@@ -8,14 +8,17 @@ Equivalent to:
         --display_data=true
 """
 
+import sys
+
 from lerobot.robots.meca500.config_meca500 import Meca500Config
 from lerobot.scripts.lerobot_teleoperate import TeleoperateConfig, teleoperate
 from lerobot.teleoperators.meca500_bota.config_meca500_bota import Meca500BotaConfig
 from lerobot.teleoperators.meca500_spacemouse.config_meca500_spacemouse import Meca500SpacemouseConfig
+from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.import_utils import register_third_party_plugins
 
 # ----------------------------- CONFIG -----------------------------
-TELEOP = "spacemouse"  # "bota" or "spacemouse"
+TELEOP = "bota"  # "bota" or "spacemouse"
 DISPLAY_DATA = False
 FPS = 60
 # ------------------------------------------------------------------
@@ -33,13 +36,16 @@ def main() -> None:
         raise ValueError(f"TELEOP must be one of {list(TELEOP_CONFIGS)}, got {TELEOP!r}")
 
     cfg = TeleoperateConfig(
-        robot=Meca500Config(),  # monitor_mode=True (default) — teleop owns activation
-        teleop=TELEOP_CONFIGS[TELEOP](),
+        robot=Meca500Config(id="meca500"),  # monitor_mode=True (default) — teleop owns activation
+        teleop=TELEOP_CONFIGS[TELEOP](id=f"meca500_{TELEOP}"),
         fps=FPS,
         display_data=DISPLAY_DATA,
     )
 
-    teleoperate(cfg)
+    try:
+        teleoperate(cfg)
+    except DeviceNotConnectedError as e:
+        sys.exit(f"\nERROR: {e}")
 
 
 if __name__ == "__main__":

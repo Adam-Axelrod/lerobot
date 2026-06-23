@@ -253,7 +253,18 @@ class OpenCVCamera(Camera):
 
         success = self.videocapture.set(prop_id, value)
         actual = self.videocapture.get(prop_id)
-        if not success or not math.isclose(value, actual, rel_tol=1e-2, abs_tol=1e-3):
+
+        # On Windows, get() read-back is unreliable for these controls: DSHOW/MSMF report
+        # sentinel values (e.g. -1.0 for auto-exposure, 2.0 for autofocus) regardless of
+        # what set() actually applied, so a read-back mismatch there is not evidence of
+        # failure. Only flag an explicit set() failure on Windows; on other platforms keep
+        # verifying against the read-back value.
+        if platform.system() == "Windows":
+            failed = not success
+        else:
+            failed = not success or not math.isclose(value, actual, rel_tol=1e-2, abs_tol=1e-3)
+
+        if failed:
             logger.warning(
                 f"{self} failed to set {name}={value} (actual={actual}, success={success}). "
                 f"This control may be unsupported by the camera/backend; continuing."

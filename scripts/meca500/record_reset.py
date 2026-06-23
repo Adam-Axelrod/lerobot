@@ -64,14 +64,16 @@ HOME_TIMEOUT_S = 30.0
 
 
 def build_config() -> RecordConfig:
-    robot_cfg = Meca500Config()  # defaults: monitor_mode=True + overhead/wrist cams
+    robot_cfg = Meca500Config(id="meca500")  # defaults: monitor_mode=True + overhead/wrist cams
     if TELEOP == "bota":
         teleop_cfg = Meca500BotaConfig(
+            id="meca500_bota",
             home_joints=HOME_JOINTS,
             home_timeout_s=HOME_TIMEOUT_S,
         )
     elif TELEOP == "spacemouse":
         teleop_cfg = Meca500SpacemouseConfig(
+            id="meca500_spacemouse",
             home_joints=HOME_JOINTS,
             home_timeout_s=HOME_TIMEOUT_S,
         )

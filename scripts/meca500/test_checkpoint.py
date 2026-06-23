@@ -73,7 +73,7 @@ def main() -> None:
     policy.pretrained_path = policy_path
 
     cfg = RolloutConfig(
-        robot=Meca500Config(monitor_mode=False),
+        robot=Meca500Config(id="meca500", monitor_mode=False),
         dataset=DatasetRecordConfig(
             repo_id=f"{USER}/rollout_{RUN}_{CKPT}",
             single_task=TASK,
@@ -83,7 +83,7 @@ def main() -> None:
             reset_time_s=RESET_TIME_S,
             push_to_hub=False,
         ),
-        teleop=Meca500HomeConfig(home=HOME_JOINTS),
+        teleop=Meca500HomeConfig(id="meca500_home", home=HOME_JOINTS),
         policy=policy,
         strategy=EpisodicStrategyConfig(),
         fps=FPS,

@@ -21,11 +21,12 @@ from lerobot.robots.meca500.config_meca500 import Meca500Config
 from lerobot.rollout.configs import EpisodicStrategyConfig, RolloutConfig
 from lerobot.scripts.lerobot_rollout import rollout
 from lerobot.teleoperators.meca500_home.config_meca500_home import Meca500HomeConfig
+from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.import_utils import register_third_party_plugins
 
 # ----------------------------- CONFIG -----------------------------
 USER = "AdamAxelrod"
-RUN = "space_mouse_purple_dot_50demos"
+RUN = "space_mouse_puple_dot_100demos"
 TASK = "reach_purple_dot"
 
 # ACT inference mode:
@@ -62,7 +63,7 @@ def main() -> None:
     policy.pretrained_path = policy_path
 
     cfg = RolloutConfig(
-        robot=Meca500Config(monitor_mode=False),
+        robot=Meca500Config(id="meca500", monitor_mode=False),
         dataset=DatasetRecordConfig(
             repo_id=f"{USER}/rollout_{RUN}",
             single_task=TASK,
@@ -72,14 +73,17 @@ def main() -> None:
             reset_time_s=RESET_TIME_S,
             push_to_hub=False,
         ),
-        teleop=Meca500HomeConfig(home=HOME_JOINTS),
+        teleop=Meca500HomeConfig(id="meca500_home", home=HOME_JOINTS),
         policy=policy,
         strategy=EpisodicStrategyConfig(),
         fps=FPS,
         display_data=DISPLAY_DATA,
     )
 
-    rollout(cfg)
+    try:
+        rollout(cfg)
+    except DeviceNotConnectedError as e:
+        sys.exit(f"\nERROR: {e}")
 
 
 if __name__ == "__main__":

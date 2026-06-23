@@ -30,8 +30,8 @@ def main() -> None:
 
     # Robot in control mode (not monitor) so it activates, homes, and accepts MoveJoints.
     # No cameras needed for a reset — drop them to skip OpenCV startup.
-    robot = Meca500(Meca500Config(monitor_mode=False, cameras={}))
-    teleop = Meca500Home(Meca500HomeConfig(home=HOME_JOINTS))
+    robot = Meca500(Meca500Config(id="meca500", monitor_mode=False, cameras={}))
+    teleop = Meca500Home(Meca500HomeConfig(id="meca500_home", home=HOME_JOINTS))
 
     robot.connect()       # activates + homes to factory zero
     robot.configure()     # sets joint velocity / blending defaults

@@ -42,7 +42,7 @@ def main() -> None:
     shutil.rmtree(cache_dir, ignore_errors=True)
 
     cfg = RecordConfig(
-        robot=Meca500Config(),  # monitor_mode=True (default) — teleop owns activation
+        robot=Meca500Config(id="meca500"),  # monitor_mode=True (default) — teleop owns activation
         dataset=DatasetRecordConfig(
             repo_id=repo_id,
             single_task=TASK,
@@ -52,7 +52,7 @@ def main() -> None:
             reset_time_s=RESET_TIME_S,
             push_to_hub=PUSH_TO_HUB,
         ),
-        teleop=Meca500BotaConfig(),
+        teleop=Meca500BotaConfig(id="meca500_bota"),
         display_data=DISPLAY_DATA,
     )
 
