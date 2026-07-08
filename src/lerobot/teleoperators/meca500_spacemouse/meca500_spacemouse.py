@@ -246,12 +246,13 @@ class Meca500Spacemouse(Teleoperator):
 
         if self.robot.IsConnected():
             try:
+                # Stop motion but leave the robot ACTIVATED/HOMED — deactivating
+                # here would force a re-home on the next run. Disconnect below
+                # keeps the arm powered and holding its pose.
                 self.robot.PauseMotion()
                 self.robot.WaitMotionPaused(timeout=5)
                 self.robot.ClearMotion()
                 self.robot.WaitMotionCleared(timeout=5)
-                self.robot.DeactivateRobot()
-                self.robot.WaitDeactivated(timeout=10)
             except Exception as e:
                 logger.warning(f"Meca500 graceful stop failed, disconnecting anyway: {e}")
             try:

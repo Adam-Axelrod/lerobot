@@ -96,6 +96,7 @@ dependencies = [
     "bota-driver>=1.1.6,<1.2.0",
     "pyspacemouse>=2.0.0,<3.0.0",
     "hidapi>=0.14.0,<0.15.0",
+    "pynput>=1.8.0,<2.0.0",  # Enter-latch precision mode for SpaceMouse teleop
 ]
 
 # Optional dependencies
