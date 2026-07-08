@@ -6,7 +6,7 @@ import numpy as np
 
 @TeleoperatorConfig.register_subclass("meca500_bota")
 @dataclass
-class meca500BotaConfig(TeleoperatorConfig):
+class Meca500BotaConfig(TeleoperatorConfig):
     # Port to connect to the arm
     meca_address: str = "192.168.0.100"
 

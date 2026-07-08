@@ -15,9 +15,9 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..configs import CameraConfig, ColorMode, Cv2Rotation
+from ..configs import CameraConfig, ColorMode, Cv2Backends, Cv2Rotation
 
-__all__ = ["OpenCVCameraConfig", "ColorMode", "Cv2Rotation"]
+__all__ = ["OpenCVCameraConfig", "ColorMode", "Cv2Rotation", "Cv2Backends"]
 
 
 @CameraConfig.register_subclass("opencv")
@@ -50,11 +50,27 @@ class OpenCVCameraConfig(CameraConfig):
         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
         warmup_s: Time reading frames before returning from connect (in seconds)
         fourcc: FOURCC code for video format (e.g., "MJPG", "YUYV", "I420"). Defaults to None (auto-detect).
+        backend: OpenCV backend identifier (https://docs.opencv.org/3.4/d4/d15/group__videoio__flags__base.html). Defaults to ANY.
+        autofocus: Whether the camera should auto-focus. None (default) leaves the camera's own
+                   default untouched; True/False enables/disables autofocus.
+        focus: Manual focus value to apply (driver-dependent units). None (default) leaves it untouched.
+               Requires `autofocus=False` (most drivers ignore a manual focus while autofocus is on).
+        autoexposure: Whether the camera should auto-expose. None (default) leaves the camera's own
+                      default untouched; True/False enables/disables auto-exposure. The backend-specific
+                      magic value OpenCV expects is handled internally.
+        exposure: Manual exposure value to apply (driver-dependent units). None (default) leaves it
+                  untouched. Requires `autoexposure=False` (most drivers ignore a manual exposure
+                  while auto-exposure is on).
 
     Note:
         - Only 3-channel color output (RGB/BGR) is currently supported.
         - FOURCC codes must be 4-character strings (e.g., "MJPG", "YUYV"). Some common FOUCC codes: https://learn.microsoft.com/en-us/windows/win32/medfound/video-fourccs#fourcc-constants
         - Setting FOURCC can help achieve higher frame rates on some cameras.
+        - Exposure/focus controls are best-effort: OpenCV's support for them is backend- and
+          driver-dependent, and many cameras silently ignore them. Unsupported controls log a
+          warning rather than failing the connection. For imitation learning you usually want
+          `autofocus=False` and `autoexposure=False` (plus fixed `focus`/`exposure`) so the visual
+          statistics stay consistent between recording and rollout.
     """
 
     index_or_path: int | Path
@@ -62,24 +78,30 @@ class OpenCVCameraConfig(CameraConfig):
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
     fourcc: str | None = None
+    backend: Cv2Backends = Cv2Backends.ANY
+    autofocus: bool | None = None
+    focus: int | None = None
+    autoexposure: bool | None = None
+    exposure: float | None = None
 
     def __post_init__(self) -> None:
-        if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
-            raise ValueError(
-                f"`color_mode` is expected to be {ColorMode.RGB.value} or {ColorMode.BGR.value}, but {self.color_mode} is provided."
-            )
-
-        if self.rotation not in (
-            Cv2Rotation.NO_ROTATION,
-            Cv2Rotation.ROTATE_90,
-            Cv2Rotation.ROTATE_180,
-            Cv2Rotation.ROTATE_270,
-        ):
-            raise ValueError(
-                f"`rotation` is expected to be in {(Cv2Rotation.NO_ROTATION, Cv2Rotation.ROTATE_90, Cv2Rotation.ROTATE_180, Cv2Rotation.ROTATE_270)}, but {self.rotation} is provided."
-            )
+        self.color_mode = ColorMode(self.color_mode)
+        self.rotation = Cv2Rotation(self.rotation)
+        self.backend = Cv2Backends(self.backend)
 
         if self.fourcc is not None and (not isinstance(self.fourcc, str) or len(self.fourcc) != 4):
             raise ValueError(
                 f"`fourcc` must be a 4-character string (e.g., 'MJPG', 'YUYV'), but '{self.fourcc}' is provided."
+            )
+
+        if self.focus is not None and self.autofocus is not False:
+            raise ValueError(
+                "`focus` requires `autofocus=False`; most drivers ignore a manual focus value "
+                "while autofocus is enabled."
+            )
+
+        if self.exposure is not None and self.autoexposure is not False:
+            raise ValueError(
+                "`exposure` requires `autoexposure=False`; most drivers ignore a manual exposure value "
+                "while auto-exposure is enabled."
             )

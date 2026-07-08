@@ -27,7 +27,6 @@ node_modules/
 
 # Lock files
 poetry.lock
-uv.lock
 Pipfile.lock
 
 ### Build & Distribution ###
@@ -89,6 +88,14 @@ pip-log.txt
 pip-delete-this-directory.txt
 celerybeat-schedule
 celerybeat.pid
+
+# Generated training logs (train_logging.py writes these)
+train_log.txt
+train_error.txt
+training_log_*.txt
+
+# Personal reference file
+my_commands
 
 ### IDE & Editor Config ###
 # VS Code

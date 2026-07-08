@@ -18,6 +18,4 @@ from .config import TeleoperatorConfig
 from .teleoperator import Teleoperator
 from .utils import TeleopEvents, make_teleoperator_from_config
 
-from . import meca500_bota
-from . import meca500_home
-from . import meca500_spacemouse
+__all__ = ["Teleoperator", "TeleoperatorConfig", "TeleopEvents", "make_teleoperator_from_config"]

@@ -5,7 +5,7 @@ from ..config import TeleoperatorConfig
 
 @TeleoperatorConfig.register_subclass("meca500_spacemouse")
 @dataclass
-class meca500SpacemouseConfig(TeleoperatorConfig):
+class Meca500SpacemouseConfig(TeleoperatorConfig):
     # Mecademic control connection
     meca_address: str = "192.168.0.100"
 

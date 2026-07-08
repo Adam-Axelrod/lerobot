@@ -8,16 +8,16 @@ import numpy as np
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
-from .config_meca500_spacemouse import meca500SpacemouseConfig
+from .config_meca500_spacemouse import Meca500SpacemouseConfig
 
 logger = logging.getLogger(__name__)
 
 
-class meca500Spacemouse(Teleoperator):
-    config_class = meca500SpacemouseConfig
+class Meca500Spacemouse(Teleoperator):
+    config_class = Meca500SpacemouseConfig
     name = "meca500_spacemouse"
 
-    def __init__(self, config: meca500SpacemouseConfig):
+    def __init__(self, config: Meca500SpacemouseConfig):
         super().__init__(config)
         self.config = config
         self.robot = mdr.Robot()
