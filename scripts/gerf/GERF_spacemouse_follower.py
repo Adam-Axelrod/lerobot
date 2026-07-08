@@ -19,6 +19,7 @@ Ctrl-C to stop.
 """
 
 import time
+from contextlib import suppress
 from pathlib import Path
 
 import numpy as np
@@ -38,15 +39,15 @@ EE_FRAME = "gripper_frame_link"
 LOOP_HZ = 30.0
 
 # SpaceMouse → end-effector velocities at full deflection.
-LINEAR_GAIN = 0.15     # metres per second
-ANGULAR_GAIN = 1.5     # radians per second
+LINEAR_GAIN = 0.15  # metres per second
+ANGULAR_GAIN = 1.5  # radians per second
 
 # Per-axis sign flips to align the 3DConnexion device frame with the URDF base
 # frame. Order: [x, y, z, roll, pitch, yaw]. Tune by jogging each axis solo.
 AXIS_SIGNS = [+1.0, +1.0, +1.0, +1.0, +1.0, +1.0]
 
 DEADZONE = 0.10
-ALPHA = 0.3            # low-pass filter on the 6-D input (higher = less smoothing)
+ALPHA = 0.3  # low-pass filter on the 6-D input (higher = less smoothing)
 
 # Per-motor max position change per send_action call. Safety net against IK
 # glitches snapping the arm. Body motors are in degrees, gripper in 0..100.
@@ -175,10 +176,8 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\nStopping.")
     finally:
-        try:
+        with suppress(Exception):
             sm.close()
-        except Exception:
-            pass
         robot.disconnect()
 
 

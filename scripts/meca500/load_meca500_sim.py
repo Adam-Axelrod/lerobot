@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from contextlib import suppress
 from pathlib import Path
 
 from isaaclab.app import AppLauncher
@@ -199,10 +200,8 @@ def main() -> None:
             break
 
     if sm is not None:
-        try:
+        with suppress(Exception):
             sm.close()
-        except Exception:
-            pass
 
 
 if __name__ == "__main__":

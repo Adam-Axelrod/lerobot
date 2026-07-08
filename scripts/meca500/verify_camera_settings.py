@@ -103,8 +103,9 @@ class Viewer:
         plt.close(self.fig)
 
 
-def sweep(viewer: Viewer, cap: cv2.VideoCapture, prop: int, values: list[float], metric, label: str,
-          title: str) -> float:
+def sweep(
+    viewer: Viewer, cap: cv2.VideoCapture, prop: int, values: list[float], metric, label: str, title: str
+) -> float:
     readings = []
     for v in values:
         cap.set(prop, v)
@@ -134,28 +135,44 @@ def check_camera(name: str, index: int, backend: int, exposure: float, focus: fl
     cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, auto_exposure_off_value())
     viewer.show(cap, brightness_metric, 0.4, ["disabling auto-exposure..."])
     exp_pct = sweep(
-        viewer, cap, cv2.CAP_PROP_EXPOSURE, EXPOSURE_SWEEP, brightness_metric,
-        "exposure", "AUTO-EXPOSURE OFF -- brightness should climb",
+        viewer,
+        cap,
+        cv2.CAP_PROP_EXPOSURE,
+        EXPOSURE_SWEEP,
+        brightness_metric,
+        "exposure",
+        "AUTO-EXPOSURE OFF -- brightness should climb",
     )
     exposure_ok = exp_pct > EXPOSURE_PASS_PCT
-    print(f"    => brightness spread {exp_pct:.0f}% of mean -> auto-exposure "
-          f"{'LOCKED' if exposure_ok else 'NOT disabled'}")
+    print(
+        f"    => brightness spread {exp_pct:.0f}% of mean -> auto-exposure "
+        f"{'LOCKED' if exposure_ok else 'NOT disabled'}"
+    )
 
     # --- Focus: disable AF, then prove manual focus drives sharpness. ---
     print("  focus sweep (autofocus OFF -> picture should pull in/out of focus):")
     cap.set(cv2.CAP_PROP_AUTOFOCUS, 0.0)
     viewer.show(cap, sharpness_metric, 0.4, ["disabling autofocus..."])
     foc_pct = sweep(
-        viewer, cap, cv2.CAP_PROP_FOCUS, FOCUS_SWEEP, sharpness_metric,
-        "focus", "AUTOFOCUS OFF -- focus should change (needs a textured scene)",
+        viewer,
+        cap,
+        cv2.CAP_PROP_FOCUS,
+        FOCUS_SWEEP,
+        sharpness_metric,
+        "focus",
+        "AUTOFOCUS OFF -- focus should change (needs a textured scene)",
     )
     focus_ok = foc_pct > FOCUS_PASS_PCT
-    print(f"    => sharpness spread {foc_pct:.0f}% of mean -> autofocus "
-          f"{'LOCKED' if focus_ok else 'NOT disabled (or scene has no texture)'}")
+    print(
+        f"    => sharpness spread {foc_pct:.0f}% of mean -> autofocus "
+        f"{'LOCKED' if focus_ok else 'NOT disabled (or scene has no texture)'}"
+    )
 
     # --- Live locked view with the real config values. ---
-    print(f"  live locked view: exposure={exposure}, focus={focus}. Change the lighting; "
-          f"brightness should follow it. Press Q (or close the window) to continue.")
+    print(
+        f"  live locked view: exposure={exposure}, focus={focus}. Change the lighting; "
+        f"brightness should follow it. Press Q (or close the window) to continue."
+    )
     cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, auto_exposure_off_value())
     cap.set(cv2.CAP_PROP_EXPOSURE, exposure)
     cap.set(cv2.CAP_PROP_AUTOFOCUS, 0.0)

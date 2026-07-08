@@ -1,8 +1,9 @@
-import numpy as np
 from unittest.mock import MagicMock
 
-from lerobot.robots.meca500.meca500 import Meca500
+import numpy as np
+
 from lerobot.robots.meca500.config_meca500 import Meca500Config
+from lerobot.robots.meca500.meca500 import Meca500
 
 
 class FakeCamera:

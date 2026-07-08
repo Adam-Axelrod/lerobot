@@ -2,7 +2,7 @@ import json
 import logging
 import threading
 import time
-from typing import Any, Dict
+from typing import Any
 
 import bota_driver
 import mecademicpy.robot as mdr
@@ -36,7 +36,6 @@ class Meca500Bota(Teleoperator):
 
         self.wrench_filter = np.zeros(6)
 
-
     @property
     def action_features(self) -> dict[str, type]:
         # Define what data your robot provides (key: type/shape)
@@ -57,18 +56,18 @@ class Meca500Bota(Teleoperator):
     @property
     def is_connected(self) -> bool:
         return self._connected
-    
-    def read_json(self, path: str) -> Dict[str, Any]:
-        with open(path, "r", encoding="utf-8") as fh:
+
+    def read_json(self, path: str) -> dict[str, Any]:
+        with open(path, encoding="utf-8") as fh:
             return json.load(fh)
 
     def connect(self, calibrate: bool = True) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
-        
+
         try:
-            logger.info(f"Connecting to Bota Sensor")
-            config_content = self.read_json(self.config.json_path)
+            logger.info("Connecting to Bota Sensor")
+            self.read_json(self.config.json_path)
             self.sensor = bota_driver.BotaDriver(self.config.json_path)
             # Transition driver from UNCONFIGURED to INACTIVE state
             if not self.sensor.configure():
@@ -79,9 +78,11 @@ class Meca500Bota(Teleoperator):
             # Transition driver from INACTIVE to ACTIVE state
             if not self.sensor.activate():
                 raise RuntimeError("Failed to activate driver")
-            
+
         except Exception as e:
-            raise DeviceNotConnectedError(f"Failed to connect to Bota Sensor at {self.config.sensor_port}: {e}")
+            raise DeviceNotConnectedError(
+                f"Failed to connect to Bota Sensor at {self.config.sensor_port}: {e}"
+            ) from e
 
         try:
             logger.info(f"Connecting to Meca500 (Control) at {self.config.meca_address}...")
@@ -104,7 +105,9 @@ class Meca500Bota(Teleoperator):
                     f"Meca500 at {self.config.meca_address} is already controlled by another session. "
                     f"Close the other connection (e.g. the web interface or a running script) and try again."
                 ) from None
-            raise DeviceNotConnectedError(f"Failed to connect to Meca500 at {self.config.meca_address}: {e}")
+            raise DeviceNotConnectedError(
+                f"Failed to connect to Meca500 at {self.config.meca_address}: {e}"
+            ) from e
 
         self._connected = True
         self._running = True
@@ -121,43 +124,44 @@ class Meca500Bota(Teleoperator):
                 continue
             # Read sensor
             frame_data = self.sensor.read_frame()
-            if frame_data: # and frame_data.status == bota_driver.Status.VALID:
-                wrench = np.array([
-                    frame_data.force[0], frame_data.force[1], frame_data.force[2],
-                    frame_data.torque[0], frame_data.torque[1], frame_data.torque[2]
-                ])
-                
+            if frame_data:  # and frame_data.status == bota_driver.Status.VALID:
+                wrench = np.array(
+                    [
+                        frame_data.force[0],
+                        frame_data.force[1],
+                        frame_data.force[2],
+                        frame_data.torque[0],
+                        frame_data.torque[1],
+                        frame_data.torque[2],
+                    ]
+                )
+
                 # Filter
                 self.wrench_filter = (1 - self.config.alpha) * self.wrench_filter + self.config.alpha * wrench
-                
+
                 # Logic from your script (simplified for brevity)
-                normF = np.linalg.norm(self.wrench_filter[:3])
-                normM = np.linalg.norm(self.wrench_filter[3:])
-                
+                norm_f = np.linalg.norm(self.wrench_filter[:3])
+                norm_m = np.linalg.norm(self.wrench_filter[3:])
+
                 twist = np.zeros(6)
-                
+
                 # Translation
-                if normF > self.config.f_threshold_high:
-                     twist[:3] = self.config.gain_tr * self.wrench_filter[:3]
-                
+                if norm_f > self.config.f_threshold_high:
+                    twist[:3] = self.config.gain_tr * self.wrench_filter[:3]
+
                 # Rotation
-                if normM > self.config.m_threshold_high:
-                     twist[3:] = self.config.gain_rot * self.wrench_filter[3:]
+                if norm_m > self.config.m_threshold_high:
+                    twist[3:] = self.config.gain_rot * self.wrench_filter[3:]
 
                 # Send Velocity to Robot
                 # MoveLinVelTrf expects: x, y, z, wx, wy, wz
-                self.robot.MoveLinVelTrf(
-                    -twist[0], -twist[1], twist[2], 
-                    -twist[3], -twist[4], twist[5]
-                )
-            
-            time.sleep(0.002) # ~500Hz loop
+                self.robot.MoveLinVelTrf(-twist[0], -twist[1], twist[2], -twist[3], -twist[4], twist[5])
+
+            time.sleep(0.002)  # ~500Hz loop
 
     @property
     def is_calibrated(self) -> bool:
-        if not self.is_connected:
-            return False
-        return True  # If its homed, its calibrated
+        return self.is_connected  # If its homed, its calibrated
 
     def calibrate(self) -> None:
         # For Meca500, calibration is "Homing"

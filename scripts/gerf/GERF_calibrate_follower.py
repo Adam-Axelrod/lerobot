@@ -6,4 +6,3 @@ config = SO101FollowerConfig(
 )
 follower = SO101Follower(config)
 follower.setup_motors()
-

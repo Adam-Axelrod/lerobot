@@ -25,6 +25,7 @@ import lerobot.scripts.lerobot_train as _train_mod
 _ROOT = Path(__file__).resolve().parent
 LOG_FILE = _ROOT / "train_log.txt"
 ERROR_FILE = _ROOT / "train_error.txt"
+_SPLIT_LOG_PATCHED = False
 
 
 def _custom_format(record: logging.LogRecord) -> str:
@@ -52,7 +53,8 @@ def _attach_file_handlers() -> None:
 
 def setup_split_logging() -> None:
     """INFO+ -> train_log.txt, ERROR+ -> train_error.txt (idempotent)."""
-    if getattr(_train_mod.init_logging, "_split_log_patched", False):
+    global _SPLIT_LOG_PATCHED
+    if _SPLIT_LOG_PATCHED:
         return
 
     # Truncate both files once at process start, mimicking a shell `2> file`
@@ -67,8 +69,8 @@ def setup_split_logging() -> None:
         _orig_init_logging(*args, **kwargs)
         _attach_file_handlers()
 
-    _patched._split_log_patched = True
     _train_mod.init_logging = _patched
+    _SPLIT_LOG_PATCHED = True
 
     # Route uncaught exceptions/tracebacks into train_error.txt too (these go
     # straight to stderr, not through logging, so logging handlers miss them).

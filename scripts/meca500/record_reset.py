@@ -7,6 +7,7 @@ after the final episode. Edit the CONFIG block below, then `python record_reset.
 
 import logging
 import shutil
+from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
 from pprint import pformat
@@ -146,6 +147,7 @@ def record_with_reset(cfg: RecordConfig, clear_existing_cache: bool = True) -> L
                 shutil.rmtree(cache_root)
 
         sanity_check_dataset_name(cfg.dataset.repo_id, None)
+        camera_count = len(getattr(robot, "cameras", {}))
         dataset = LeRobotDataset.create(
             cfg.dataset.repo_id,
             cfg.dataset.fps,
@@ -154,7 +156,7 @@ def record_with_reset(cfg: RecordConfig, clear_existing_cache: bool = True) -> L
             features=dataset_features,
             use_videos=cfg.dataset.video,
             image_writer_processes=cfg.dataset.num_image_writer_processes,
-            image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
+            image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * camera_count,
             batch_encoding_size=cfg.dataset.video_encoding_batch_size,
         )
 
@@ -267,10 +269,8 @@ def record_with_reset(cfg: RecordConfig, clear_existing_cache: bool = True) -> L
             except Exception as e:
                 logging.warning(f"teleop.disconnect() failed: {e}")
         if not is_headless() and listener is not None:
-            try:
+            with suppress(Exception):
                 listener.stop()
-            except Exception:
-                pass
 
     log_say("Exiting", cfg.play_sounds)
     return dataset

@@ -22,12 +22,16 @@ import time
 
 from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import build_dataset_frame, combine_feature_dicts, hw_to_dataset_features
 from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.robots.so101_follower import SO101Follower, SO101FollowerConfig
 from lerobot.teleoperators.so101_leader import SO101Leader, SO101LeaderConfig
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.control_utils import init_keyboard_listener, is_headless
+from lerobot.utils.feature_utils import (
+    build_dataset_frame,
+    combine_feature_dicts,
+    hw_to_dataset_features,
+)
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging, log_say
 
@@ -46,7 +50,7 @@ MAX_RELATIVE_TARGET = None
 # Change CAMERA_INDEX to whatever your USB camera enumerates as on this machine.
 # List indices with:  python -m lerobot.find_cameras opencv
 CAMERA_INDEX = 0
-CAMERA_NAME = "front_cam"   # becomes observation.images.front_cam in the dataset
+CAMERA_NAME = "front_cam"  # becomes observation.images.front_cam in the dataset
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
 CAMERA_FPS = 30
@@ -65,21 +69,21 @@ CAMERAS = {
 }
 
 # --- Dataset / recording (mirrors lerobot-record's DatasetRecordConfig) ---
-REPO_ID = "adambaxelrod/gerf_dataset"     # "{hf_username}/{dataset_name}"
+REPO_ID = "adambaxelrod/gerf_dataset"  # "{hf_username}/{dataset_name}"
 SINGLE_TASK = "Pick up the object and place it in the box."
-ROOT = None                 # local storage dir; None = default HF cache location
-NUM_EPISODES = 10           # number of demos to record
-FPS = 30                    # control + dataset frame rate
-EPISODE_TIME_S = 30         # seconds of recording per episode
-RESET_TIME_S = 10           # seconds to reset the scene between episodes
-PUSH_TO_HUB = False         # upload to the HF Hub when finished
-PRIVATE = False             # if pushing, make the repo private
-TAGS = None                 # e.g. ["gerf", "so101"]
-USE_VIDEO = True            # encode camera frames to mp4 (vs raw png)
+ROOT = None  # local storage dir; None = default HF cache location
+NUM_EPISODES = 10  # number of demos to record
+FPS = 30  # control + dataset frame rate
+EPISODE_TIME_S = 30  # seconds of recording per episode
+RESET_TIME_S = 10  # seconds to reset the scene between episodes
+PUSH_TO_HUB = False  # upload to the HF Hub when finished
+PRIVATE = False  # if pushing, make the repo private
+TAGS = None  # e.g. ["gerf", "so101"]
+USE_VIDEO = True  # encode camera frames to mp4 (vs raw png)
 
 # --- UX ---
-DISPLAY_DATA = True        # stream cameras/state to a rerun viewer
-PLAY_SOUNDS = True          # spoken episode prompts
+DISPLAY_DATA = True  # stream cameras/state to a rerun viewer
+PLAY_SOUNDS = True  # spoken episode prompts
 NUM_IMAGE_WRITER_THREADS_PER_CAMERA = 4
 # ===================================================================
 

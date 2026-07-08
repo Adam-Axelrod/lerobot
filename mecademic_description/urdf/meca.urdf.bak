@@ -10,7 +10,7 @@
     <origin xyz="0 0 0.0" rpy="0 0 0" />
     <parent link="world" />
     <child link="meca_base_link" />
-    <axis xyz="0 0 1" />    
+    <axis xyz="0 0 1" />
   </joint>
 
   <!-- Base link is the center of the robot's bottom plate -->
@@ -194,7 +194,7 @@
     <parent link="meca_axis_6_link" />
     <child link="meca_gripper_link" />
   </joint>
-  
+
   <!-- Gripper Finger 1-->
   <link name="meca_gripper_finger1">
     <visual>
@@ -218,7 +218,7 @@
     <axis xyz="0 0 1"/>
     <limit lower="0" upper="0.024" effort="1.0" velocity="0.1"/>
   </joint>
-  
+
   <!-- Gripper Finger 2-->
   <link name="meca_gripper_finger2">
     <visual>

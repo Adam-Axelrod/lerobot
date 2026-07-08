@@ -33,8 +33,8 @@ def main() -> None:
     robot = Meca500(Meca500Config(id="meca500", monitor_mode=False, cameras={}))
     teleop = Meca500Home(Meca500HomeConfig(id="meca500_home", home=HOME_JOINTS))
 
-    robot.connect()       # activates + homes to factory zero
-    robot.configure()     # sets joint velocity / blending defaults
+    robot.connect()  # activates + homes to factory zero
+    robot.configure()  # sets joint velocity / blending defaults
     teleop.connect()
 
     try:

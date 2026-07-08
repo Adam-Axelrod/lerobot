@@ -283,7 +283,9 @@ class OpenCVCamera(Camera):
 
         if self.config.autoexposure is not None:
             self._try_set_property(
-                "auto exposure", cv2.CAP_PROP_AUTO_EXPOSURE, self._auto_exposure_value(self.config.autoexposure)
+                "auto exposure",
+                cv2.CAP_PROP_AUTO_EXPOSURE,
+                self._auto_exposure_value(self.config.autoexposure),
             )
         if self.config.exposure is not None:
             self._try_set_property("exposure", cv2.CAP_PROP_EXPOSURE, float(self.config.exposure))

@@ -80,21 +80,21 @@ pre-commit run --all-files                                                     #
 
 All mapped in `pyproject.toml [project.scripts]`:
 
-| Command | Purpose |
-|---|---|
-| `lerobot-train` | Imitation learning training |
-| `lerobot-eval` | Policy evaluation in sim |
-| `lerobot-rollout` | Unified deployment (all strategies) |
-| `lerobot-record` | Simple episode recording (legacy; episodic strategy preferred) |
-| `lerobot-replay` | Replay a recorded dataset on hardware |
-| `lerobot-teleoperate` | Teleoperation without recording |
-| `lerobot-calibrate` | Robot/teleop calibration |
-| `lerobot-setup-motors` | One-time motor ID + baudrate setup |
-| `lerobot-find-port` | Identify USB port for a robot arm |
-| `lerobot-find-cameras` | List available cameras |
-| `lerobot-info` | Print dataset/policy metadata |
-| `lerobot-dataset-viz` | Visualize a dataset |
-| `lerobot-edit-dataset` | Edit dataset episodes |
+| Command                | Purpose                                                        |
+| ---------------------- | -------------------------------------------------------------- |
+| `lerobot-train`        | Imitation learning training                                    |
+| `lerobot-eval`         | Policy evaluation in sim                                       |
+| `lerobot-rollout`      | Unified deployment (all strategies)                            |
+| `lerobot-record`       | Simple episode recording (legacy; episodic strategy preferred) |
+| `lerobot-replay`       | Replay a recorded dataset on hardware                          |
+| `lerobot-teleoperate`  | Teleoperation without recording                                |
+| `lerobot-calibrate`    | Robot/teleop calibration                                       |
+| `lerobot-setup-motors` | One-time motor ID + baudrate setup                             |
+| `lerobot-find-port`    | Identify USB port for a robot arm                              |
+| `lerobot-find-cameras` | List available cameras                                         |
+| `lerobot-info`         | Print dataset/policy metadata                                  |
+| `lerobot-dataset-viz`  | Visualize a dataset                                            |
+| `lerobot-edit-dataset` | Edit dataset episodes                                          |
 
 ## Repository Structure (outside `src/`)
 

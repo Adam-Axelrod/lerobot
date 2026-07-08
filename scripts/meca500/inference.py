@@ -14,6 +14,7 @@ Equivalent to:
 """
 
 import sys
+from pathlib import Path
 
 from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.configs.policies import PreTrainedConfig
@@ -60,7 +61,7 @@ def main() -> None:
     sys.argv = [sys.argv[0]]
 
     policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=policy_overrides)
-    policy.pretrained_path = policy_path
+    policy.pretrained_path = Path(policy_path)
 
     cfg = RolloutConfig(
         robot=Meca500Config(id="meca500", monitor_mode=False),

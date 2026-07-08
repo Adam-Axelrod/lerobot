@@ -17,6 +17,7 @@ DID open, so you can find the right one by trial.
 """
 
 import platform
+from typing import Any
 
 import cv2  # type: ignore
 import matplotlib.pyplot as plt
@@ -32,18 +33,22 @@ CAMERA_INDEX = 0
 #   focus        : manual focus, or None to leave focus untouched (e.g. fixed-lens microscope)
 #   exposure     : manual exposure, or None to leave auto-exposure on
 #   fourcc       : pixel format, e.g. "MJPG" for high-res USB cams (None = driver default)
-PRESETS = {
-    0: {"width": 640, "height": 480, "focus": 100, "exposure": -6},                     # overhead_cam
-    2: {"width": 640, "height": 480, "focus": 100, "exposure": -6, "fourcc": "MJPG"},   # wrist_cam
+CameraSettingValue = int | float | str | None
+CameraSettings = dict[str, CameraSettingValue]
+
+PRESETS: dict[int, CameraSettings] = {
+    0: {"width": 640, "height": 480, "focus": 100, "exposure": -6},  # overhead_cam
+    2: {"width": 640, "height": 480, "focus": 100, "exposure": -6, "fourcc": "MJPG"},  # wrist_cam
     3: {"width": 1280, "height": 1024, "focus": None, "exposure": -6, "fourcc": "MJPG"},  # microscope_cam
 }
-DEFAULT = {"width": 640, "height": 480, "focus": 100, "exposure": -6, "fourcc": None}
+DEFAULT: CameraSettings = {"width": 640, "height": 480, "focus": 100, "exposure": -6, "fourcc": None}
 # ======================================================================
 
 
-def settings_for(index: int) -> dict:
+def settings_for(index: int) -> CameraSettings:
     """Preset for this index, with DEFAULT filling any missing keys."""
-    return {**DEFAULT, **PRESETS.get(index, {})}
+    merged: CameraSettings = {**DEFAULT, **PRESETS.get(index, {})}
+    return merged
 
 
 def default_backend() -> int:
@@ -56,7 +61,7 @@ def auto_exposure_off_value() -> float:
     return 0.25 if platform.system() == "Windows" else 1.0
 
 
-def freeze_focus_and_exposure(cap: cv2.VideoCapture, settings: dict) -> None:
+def freeze_focus_and_exposure(cap: cv2.VideoCapture, settings: dict[str, Any]) -> None:
     """Lock focus/exposure exactly as OpenCVCamera does: disable the auto loop
     first, then apply the manual value (drivers ignore a manual value while the
     corresponding auto loop is still active)."""

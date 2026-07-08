@@ -1,6 +1,7 @@
 import logging
 import threading
 import time
+from contextlib import suppress
 
 import mecademicpy.robot as mdr
 import numpy as np
@@ -79,7 +80,7 @@ class Meca500Spacemouse(Teleoperator):
                 raise RuntimeError("pyspacemouse.open() returned None (device not found?)")
         except Exception as e:
             self._sm_device = None
-            raise DeviceNotConnectedError(f"Failed to open SpaceMouse: {e}")
+            raise DeviceNotConnectedError(f"Failed to open SpaceMouse: {e}") from e
 
         try:
             logger.info(f"Connecting to Meca500 (Control) at {self.config.meca_address}...")
@@ -91,12 +92,12 @@ class Meca500Spacemouse(Teleoperator):
             # ignores velocity commands on this run. Harmless if not paused.
             self.robot.ResumeMotion()
         except Exception as e:
-            try:
+            with suppress(Exception):
                 self._sm_device.close()
-            except Exception:
-                pass
             self._sm_device = None
-            raise DeviceNotConnectedError(f"Failed to connect to Meca500 at {self.config.meca_address}: {e}")
+            raise DeviceNotConnectedError(
+                f"Failed to connect to Meca500 at {self.config.meca_address}: {e}"
+            ) from e
 
         self._connected = True
         self._running = True

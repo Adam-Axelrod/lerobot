@@ -92,7 +92,9 @@ class Meca500(Robot):
                     f"Meca500 at {self.config.ip_address} is already controlled by another session. "
                     f"Close the other connection (e.g. the web interface or a running script) and try again."
                 ) from None
-            raise DeviceNotConnectedError(f"Failed to connect to Meca500 at {self.config.ip_address}: {e}")
+            raise DeviceNotConnectedError(
+                f"Failed to connect to Meca500 at {self.config.ip_address}: {e}"
+            ) from e
 
         failed_cams: list[str] = []
         for cam_name, cam in self.cameras.items():
@@ -115,9 +117,7 @@ class Meca500(Robot):
 
     @property
     def is_calibrated(self) -> bool:
-        if not self.is_connected:
-            return False
-        return True  # If its homed, its calibrated
+        return self.is_connected  # If its homed, its calibrated
 
     def calibrate(self) -> None:
         # For Meca500, calibration is "Homing"
