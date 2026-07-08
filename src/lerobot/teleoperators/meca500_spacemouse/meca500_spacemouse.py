@@ -86,6 +86,10 @@ class Meca500Spacemouse(Teleoperator):
             self.robot.Connect(address=self.config.meca_address)
             self.robot.ActivateAndHome()
             self.robot.WaitHomed()
+            # A prior session's disconnect leaves motion PAUSED (so the arm holds
+            # pose without deactivating). Resume here or the robot silently
+            # ignores velocity commands on this run. Harmless if not paused.
+            self.robot.ResumeMotion()
         except Exception as e:
             try:
                 self._sm_device.close()

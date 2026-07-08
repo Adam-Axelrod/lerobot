@@ -19,7 +19,7 @@ class Meca500MicroscopeConfig(Meca500Config):
 
     NOTE (verify on the Windows rig): three USB cameras on one bus can exceed
     bandwidth. The wrist cam therefore uses MJPG at a modest 640x480; confirm its
-    index (a free one — overhead is 0, microscope is 2) and that all three stream
+    index (overhead is 0, wrist is 2, microscope is 3) and that all three stream
     without dropped frames via scripts/meca500/check_camera.py.
     """
 
@@ -36,9 +36,9 @@ class Meca500MicroscopeConfig(Meca500Config):
                 exposure=-6,
             ),
             "wrist_cam": OpenCVCameraConfig(
-                # Free index on the Windows rig — overhead=0, microscope=2. Confirm
-                # with check_camera.py; 1 and 4 are the usual candidates.
-                index_or_path=1,
+                # Index on the Windows rig — overhead=0, wrist=2, microscope=3.
+                # Confirm with check_camera.py.
+                index_or_path=2,
                 fps=30,
                 width=640,
                 height=480,
@@ -50,7 +50,7 @@ class Meca500MicroscopeConfig(Meca500Config):
                 exposure=-6,
             ),
             "microscope_cam": OpenCVCameraConfig(
-                index_or_path=2,
+                index_or_path=3,
                 fps=30,
                 # Native resolution of the USB microscope cam — it snaps any other
                 # request to 1280x1024, which the strict width/fps check then rejects.

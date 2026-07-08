@@ -6,9 +6,9 @@ their real drivers exist:
     python scripts/meca500/check_camera.py
 
 Set CAMERA_INDEX below to the index you want to inspect, then run it. Each index has
-a preset (resolution, focus, exposure, codec) in PRESETS so the overhead cam (0) and
-the microscope cam (2) each preview at their real settings; unlisted indices use
-DEFAULT. A live window pops up (rendered with matplotlib, because lerobot ships the
+a preset (resolution, focus, exposure, codec) in PRESETS so the overhead cam (0), the
+wrist cam (2) and the microscope cam (3) each preview at their real settings; unlisted
+indices use DEFAULT. A live window pops up (rendered with matplotlib, because lerobot ships the
 headless build of OpenCV which has no GUI). Cover the lens / wave at it to confirm
 which camera maps to this port. Press Q (or close the window) to quit.
 
@@ -33,8 +33,9 @@ CAMERA_INDEX = 0
 #   exposure     : manual exposure, or None to leave auto-exposure on
 #   fourcc       : pixel format, e.g. "MJPG" for high-res USB cams (None = driver default)
 PRESETS = {
-    0: {"width": 640, "height": 480, "focus": 100, "exposure": -6},                    # overhead_cam
-    2: {"width": 1280, "height": 1024, "focus": None, "exposure": -6, "fourcc": "MJPG"},  # microscope_cam
+    0: {"width": 640, "height": 480, "focus": 100, "exposure": -6},                     # overhead_cam
+    2: {"width": 640, "height": 480, "focus": 100, "exposure": -6, "fourcc": "MJPG"},   # wrist_cam
+    3: {"width": 1280, "height": 1024, "focus": None, "exposure": -6, "fourcc": "MJPG"},  # microscope_cam
 }
 DEFAULT = {"width": 640, "height": 480, "focus": 100, "exposure": -6, "fourcc": None}
 # ======================================================================
