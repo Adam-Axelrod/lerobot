@@ -1,21 +1,25 @@
 """Record a SpaceMouse-teleop dataset on the Meca500 microscope/pipette rig.
 
-Cameras: overhead (index 0) + microscope (index 2). Movement is scaled WAY down vs.
-the default rig for fine pipette positioning. Produces datasets keyed
-`overhead_cam` + `microscope_cam` — a distinct observation space from the wrist-cam rig.
+Cameras: overhead (index 0) + wrist + microscope (index 2). The operator drives
+coarsely (gain_tr/gain_rot) until the pipette is under the microscope, then presses
+**Enter** to latch precision mode — the SpaceMouse gains drop to gain_tr_fine/
+gain_rot_fine for fine positioning. The latch (`precision.state`) is recorded as an
+action channel and reset to coarse on the between-episode auto-home.
+
+Uses the auto-home-between-episodes flow (record_reset.record_with_reset) so the arm
+homes after each demo and the precision latch resets for the next approach.
 
 Workflow: edit the CONFIG block below, then `python record_microscope.py`.
 Ctrl-C to stop, edit, up-arrow, run again.
 
-Tip: find good exposure/focus first with scripts/meca500/check_camera.py
-(set CAMERA_INDEX to 0 then 2), then paste the values below.
+Tip: find good exposure/focus + confirm camera indices first with
+scripts/meca500/check_camera.py, then paste the values below.
 """
 
-import shutil
-from pathlib import Path
+from record_reset import record_with_reset
 
 from lerobot.robots.meca500_microscope.config_meca500_microscope import Meca500MicroscopeConfig
-from lerobot.scripts.lerobot_record import DatasetRecordConfig, RecordConfig, record
+from lerobot.scripts.lerobot_record import DatasetRecordConfig, RecordConfig
 from lerobot.teleoperators.meca500_spacemouse.config_meca500_spacemouse import Meca500SpacemouseConfig
 from lerobot.utils.import_utils import register_third_party_plugins
 
@@ -31,14 +35,23 @@ RESET_TIME_S = 60
 DISPLAY_DATA = True
 PUSH_TO_HUB = True
 
-# Movement scale (SpaceMouse at full deflection). Default rig is 50/30 — scaled down
-# hard for fine pipette work. Drop to 1-2 mm/s for very fine positioning.
-GAIN_TR = 5.0   # mm/s  translation
-GAIN_ROT = 3.0  # deg/s rotation
+# Coarse movement scale (SpaceMouse at full deflection), used before the Enter latch.
+GAIN_TR = 50.0  # mm/s  translation
+GAIN_ROT = 30.0  # deg/s rotation
+
+# Fine (precision) scale, used after the operator presses Enter under the microscope.
+# Drop to 1-2 mm/s for very fine positioning.
+GAIN_TR_FINE = 5.0  # mm/s  translation
+GAIN_ROT_FINE = 3.0  # deg/s rotation
+
+# Auto-home target (executed between episodes; also resets the precision latch).
+HOME_JOINTS = [0.0, 0.0, 0.0, 0.0, 90.0, 0.0]
+HOME_TIMEOUT_S = 30.0
 
 # Camera tuning (driver-dependent units; tune with check_camera.py first).
 # The microscope cam has no software focus (fixed lens ring) — focus it by hand.
 OVERHEAD_EXPOSURE, OVERHEAD_FOCUS = -6, 100
+WRIST_EXPOSURE, WRIST_FOCUS = -6, 100
 MICROSCOPE_EXPOSURE = -6
 # ------------------------------------------------------------------
 
@@ -52,6 +65,8 @@ def build_robot_config() -> Meca500MicroscopeConfig:
     cfg = Meca500MicroscopeConfig(id="meca500_microscope")
     cfg.cameras["overhead_cam"].exposure = OVERHEAD_EXPOSURE
     cfg.cameras["overhead_cam"].focus = OVERHEAD_FOCUS
+    cfg.cameras["wrist_cam"].exposure = WRIST_EXPOSURE
+    cfg.cameras["wrist_cam"].focus = WRIST_FOCUS
     cfg.cameras["microscope_cam"].exposure = MICROSCOPE_EXPOSURE
     return cfg
 
@@ -59,16 +74,10 @@ def build_robot_config() -> Meca500MicroscopeConfig:
 def main() -> None:
     register_third_party_plugins()
 
-    repo_id = f"{USER}/{NAME}"
-
-    # Clear any stale local copy so re-runs don't trip the dataset sanity check.
-    cache_dir = Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id
-    shutil.rmtree(cache_dir, ignore_errors=True)
-
     cfg = RecordConfig(
         robot=build_robot_config(),  # monitor_mode=True (default) — teleop owns activation
         dataset=DatasetRecordConfig(
-            repo_id=repo_id,
+            repo_id=f"{USER}/{NAME}",
             single_task=TASK,
             num_episodes=NUM_EPISODES,
             fps=FPS,
@@ -80,11 +89,15 @@ def main() -> None:
             id="meca500_spacemouse",
             gain_tr=GAIN_TR,
             gain_rot=GAIN_ROT,
+            gain_tr_fine=GAIN_TR_FINE,
+            gain_rot_fine=GAIN_ROT_FINE,
+            home_joints=HOME_JOINTS,
+            home_timeout_s=HOME_TIMEOUT_S,
         ),
         display_data=DISPLAY_DATA,
     )
 
-    record(cfg)
+    record_with_reset(cfg)
 
 
 if __name__ == "__main__":

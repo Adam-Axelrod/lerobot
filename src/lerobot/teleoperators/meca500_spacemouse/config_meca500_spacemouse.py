@@ -15,6 +15,12 @@ class Meca500SpacemouseConfig(TeleoperatorConfig):
     gain_tr: float = 50.0
     gain_rot: float = 30.0
 
+    # Fine (precision) gains used while the Enter-latched precision mode is active
+    # (e.g. once the pipette is under the microscope). Scaled down hard so the
+    # operator can finely position the tip. Selected live in the guidance loop.
+    gain_tr_fine: float = 5.0
+    gain_rot_fine: float = 3.0
+
     # Deadzones in normalised input units (post sign flip).
     deadzone_tr: float = 0.05
     deadzone_rot: float = 0.05

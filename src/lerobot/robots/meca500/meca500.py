@@ -1,19 +1,20 @@
-import mecademicpy.robot as mdr
-import numpy as np
-
 import logging
 import time
 from functools import cached_property
 from typing import Any
 
+import mecademicpy.robot as mdr
+import numpy as np
+
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.robots import Robot
-from .config_meca500 import Meca500Config
-from ..utils import ensure_safe_goal_position
-
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
+from ..utils import ensure_safe_goal_position
+from .config_meca500 import Meca500Config
+
 logger = logging.getLogger(__name__)
+
 
 class Meca500(Robot):
     config_class = Meca500Config
@@ -38,21 +39,22 @@ class Meca500(Robot):
             "joint_5.pos": float,
             "joint_6.pos": float,
         }
-    
+
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
-        return {
-            cam: (self.cameras[cam].height, self.cameras[cam].width, 3) for cam in self.cameras
-        }
-    
+        return {cam: (self.cameras[cam].height, self.cameras[cam].width, 3) for cam in self.cameras}
+
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
         return {**self._motors_ft, **self._cameras_ft}
-    
+
     @cached_property
     def action_features(self) -> dict[str, type]:
-        return self._motors_ft
-    
+        # 6 joint targets plus the latched precision-mode flag (see the SpaceMouse
+        # teleop). `precision.state` is not a `.pos` key, so send_action ignores it
+        # as a joint target while it is still recorded and predicted by the policy.
+        return {**self._motors_ft, "precision.state": float}
+
     @property
     def is_connected(self) -> bool:
         # Robot-level connectivity should succeed even if one or more optional cameras
@@ -68,8 +70,8 @@ class Meca500(Robot):
             self.robot.Connect(
                 address=self.config.ip_address,
                 enable_synchronous_mode=False,
-                monitor_mode=self.config.monitor_mode
-                )
+                monitor_mode=self.config.monitor_mode,
+            )
             if not self.config.monitor_mode:
                 logger.info("Homing robot...")
                 self.robot.ActivateAndHome()
@@ -116,7 +118,7 @@ class Meca500(Robot):
         if not self.is_connected:
             return False
         return True  # If its homed, its calibrated
-    
+
     def calibrate(self) -> None:
         # For Meca500, calibration is "Homing"
         if self.is_connected:
@@ -130,12 +132,12 @@ class Meca500(Robot):
         if self.config.default_joint_vel:
             self.robot.SetJointVel(self.config.default_joint_vel)
 
-        self.robot.SetRealTimeMonitoring('all')
+        self.robot.SetRealTimeMonitoring("all")
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        
+
         # Read arm position
         start = time.perf_counter()
 
@@ -157,7 +159,7 @@ class Meca500(Robot):
 
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
-        
+
         # Read cameras
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
@@ -174,24 +176,32 @@ class Meca500(Robot):
 
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
-            
+
         return obs_dict
-    
+
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        
+
         if self.config.monitor_mode:
             return action
 
         # Parse actions
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
-        if self.config.max_relative_target is not None:
+        # When the policy predicts precision mode, clamp per-step motion harder so the
+        # arm scales down its own movements under the microscope. Falls back to the
+        # normal clamp when the gate is inactive or unconfigured.
+        precision_active = float(action.get("precision.state", 0.0)) > 0.5
+        relative_target = self.config.max_relative_target
+        if precision_active and self.config.precision_max_relative_target is not None:
+            relative_target = self.config.precision_max_relative_target
+
+        if relative_target is not None:
             present_pos_list = self.robot.GetRtTargetJointPos()
-            present_pos = {f"joint_{i+1}": p for i, p in enumerate(present_pos_list)}
+            present_pos = {f"joint_{i + 1}": p for i, p in enumerate(present_pos_list)}
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
-            goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
+            goal_pos = ensure_safe_goal_position(goal_present_pos, relative_target)
 
         logger.debug(f"Sending goal positions: {goal_pos}")
         self.robot.MoveJoints(
@@ -200,14 +210,14 @@ class Meca500(Robot):
             float(goal_pos["joint_3"]),
             float(goal_pos["joint_4"]),
             float(goal_pos["joint_5"]),
-            float(goal_pos["joint_6"])
+            float(goal_pos["joint_6"]),
         )
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
-    
+
     def disconnect(self) -> None:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-            
+
         logger.info("Disconnecting Meca500...")
         try:
             if self.robot.IsConnected():
@@ -230,8 +240,6 @@ class Meca500(Robot):
 
         for cam in self.cameras.values():
             cam.disconnect()
-        
+
         self._connected = False
         logger.info(f"{self} disconnected.")
-    
-

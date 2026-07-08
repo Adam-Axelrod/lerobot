@@ -438,6 +438,17 @@ css = [
 ]
 
 [[package]]
+name = "bota-driver"
+version = "1.1.9"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c0/ec/6ba2faf702527747fb3d2fd359d15399be0d98f11b5155a09b551514fd2f/bota_driver-1.1.9-cp312-abi3-macosx_15_0_arm64.whl", hash = "sha256:2375753ac021f3209350bf92884f46088aa5a0a684778747048c0b9e085b610c", size = 244180, upload-time = "2026-06-18T08:32:34.862Z" },
+    { url = "https://files.pythonhosted.org/packages/74/b9/a45a02dff6fd84e288d9ea1a483364491893e81c782d876e451bf08d4544/bota_driver-1.1.9-cp312-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:46a7c97be0a33bf9a5673fcda87532869dedadf02bd6b1b2744409a05c1ffc2c", size = 352832, upload-time = "2026-06-18T08:32:30.067Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/e5/8839bb6f76f5a1481977ebce431a29da2e20d18708e018080ab8a78e32e1/bota_driver-1.1.9-cp312-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:6cb4691029da41d8a481a3a5d4c7f7e58b7a16db252b7ace67f6f6c340680830", size = 2914739, upload-time = "2026-06-18T08:32:24.587Z" },
+    { url = "https://files.pythonhosted.org/packages/ac/32/b5c53217d83a95517907b3544b0de3ab11409c668cf2f565cc7329686730/bota_driver-1.1.9-cp312-abi3-win_amd64.whl", hash = "sha256:81b1ce15c85ad34b0df8561d36b33c07c7ac6a27a6dd94f62b16b70c439661cd", size = 259678, upload-time = "2026-06-18T08:32:32.48Z" },
+]
+
+[[package]]
 name = "certifi"
 version = "2026.4.22"
 source = { registry = "https://pypi.org/simple" }
@@ -1313,6 +1324,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/24/9f/d18d6b5e19244788a6d09c14a8406376b4f4bfcc008e6d17a4f4c15362e8/easydict-1.13.tar.gz", hash = "sha256:b1135dedbc41c8010e2bc1f77ec9744c7faa42bce1a1c87416791449d6c87780", size = 6809, upload-time = "2024-03-04T12:04:41.251Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/05/ec/fa6963f1198172c2b75c9ab6ecefb3045991f92f75f5eb41b6621b198123/easydict-1.13-py3-none-any.whl", hash = "sha256:6b787daf4dcaf6377b4ad9403a5cee5a86adbc0ca9a5bcf5410e9902002aeac2", size = 6804, upload-time = "2024-03-04T12:04:39.508Z" },
+]
+
+[[package]]
+name = "easyhid-ng"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cffi" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e1/e3/6cbdea8c8869c53ee6ae95456f0e2bfc24c24bdff1be63e22febc780aa21/easyhid_ng-0.1.0.tar.gz", hash = "sha256:33ec11fecf10aecd015a6e0ef1d5682a21b30218b6b64edf63eba2aba06ef959", size = 7627, upload-time = "2026-01-17T01:09:58.023Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6a/c6/9511d6eb3814d6ddedcc036b084e2268f0a4153d35fd3191209b8bf13a5b/easyhid_ng-0.1.0-py3-none-any.whl", hash = "sha256:71bbfb85b1fd824c109a5cb4d403bf0818293d52b8271589f30fb8ef19195657", size = 8051, upload-time = "2026-01-17T01:09:59.307Z" },
 ]
 
 [[package]]
@@ -2663,15 +2686,21 @@ name = "lerobot"
 version = "0.5.2"
 source = { editable = "." }
 dependencies = [
+    { name = "bota-driver" },
     { name = "cmake" },
+    { name = "contourpy" },
     { name = "draccus" },
     { name = "einops" },
     { name = "gymnasium" },
+    { name = "hidapi" },
     { name = "huggingface-hub" },
+    { name = "matplotlib" },
+    { name = "mecademicpy" },
     { name = "numpy" },
     { name = "opencv-python-headless" },
     { name = "packaging" },
     { name = "pillow" },
+    { name = "pyspacemouse" },
     { name = "requests" },
     { name = "safetensors" },
     { name = "setuptools" },
@@ -2905,9 +2934,6 @@ matplotlib-dep = [
     { name = "contourpy" },
     { name = "matplotlib" },
 ]
-meca500 = [
-    { name = "mecademicpy" },
-]
 metaworld = [
     { name = "av" },
     { name = "datasets" },
@@ -3076,7 +3102,9 @@ requires-dist = [
     { name = "accelerate", marker = "extra == 'smolvla'", specifier = ">=1.7.0,<2.0.0" },
     { name = "accelerate", marker = "extra == 'training'", specifier = ">=1.10.0,<2.0.0" },
     { name = "av", marker = "extra == 'av-dep'", specifier = ">=15.0.0,<16.0.0" },
+    { name = "bota-driver", specifier = ">=1.1.6,<1.2.0" },
     { name = "cmake", specifier = ">=3.29.0.1,<4.2.0" },
+    { name = "contourpy", specifier = ">=1.3.0,<2.0.0" },
     { name = "contourpy", marker = "extra == 'matplotlib-dep'", specifier = ">=1.3.0,<2.0.0" },
     { name = "datasets", marker = "extra == 'dataset'", specifier = ">=4.7.0,<5.0.0" },
     { name = "debugpy", marker = "extra == 'dev'", specifier = ">=1.8.1,<1.9.0" },
@@ -3099,6 +3127,7 @@ requires-dist = [
     { name = "gymnasium", specifier = ">=1.1.1,<2.0.0" },
     { name = "hebi-py", marker = "extra == 'phone'", specifier = ">=2.8.0,<2.12.0" },
     { name = "hf-libero", marker = "sys_platform == 'linux' and extra == 'libero'", specifier = ">=0.1.3,<0.2.0" },
+    { name = "hidapi", specifier = ">=0.14.0,<0.15.0" },
     { name = "hidapi", marker = "extra == 'gamepad'", specifier = ">=0.14.0,<0.15.0" },
     { name = "huggingface-hub", specifier = ">=1.0.0,<2.0.0" },
     { name = "ipykernel", marker = "extra == 'notebook'", specifier = ">=6.0.0,<7.0.0" },
@@ -3220,8 +3249,9 @@ requires-dist = [
     { name = "lerobot", extras = ["vla-jepa"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["wallx"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["xvla"], marker = "extra == 'all'" },
+    { name = "matplotlib", specifier = ">=3.10.3,<4.0.0" },
     { name = "matplotlib", marker = "extra == 'matplotlib-dep'", specifier = ">=3.10.3,<4.0.0" },
-    { name = "mecademicpy", marker = "extra == 'meca500'", specifier = ">=1.4.0" },
+    { name = "mecademicpy", specifier = ">=1.4.0" },
     { name = "meshcat", marker = "extra == 'unitree-g1'", specifier = ">=0.3.0,<0.4.0" },
     { name = "metaworld", marker = "extra == 'metaworld'", specifier = "==3.0.0" },
     { name = "mock-serial", marker = "sys_platform != 'win32' and extra == 'test'", specifier = ">=0.0.1,<0.1.0" },
@@ -3250,6 +3280,7 @@ requires-dist = [
     { name = "pyrealsense2", marker = "sys_platform != 'darwin' and extra == 'intelrealsense'", specifier = ">=2.55.1.6486,<2.57.0" },
     { name = "pyrealsense2-macosx", marker = "sys_platform == 'darwin' and extra == 'intelrealsense'", specifier = ">=2.54,<2.57.0" },
     { name = "pyserial", marker = "extra == 'pyserial-dep'", specifier = ">=3.5,<4.0" },
+    { name = "pyspacemouse", specifier = ">=2.0.0,<3.0.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.1.0,<9.0.0" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=5.0.0,<8.0.0" },
     { name = "pytest-timeout", marker = "extra == 'test'", specifier = ">=2.4.0,<3.0.0" },
@@ -3280,7 +3311,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'transformers-dep'", specifier = ">=5.4.0,<5.6.0" },
     { name = "wandb", marker = "extra == 'training'", specifier = ">=0.24.0,<0.25.0" },
 ]
-provides-extras = ["dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "meca500", "diffusion", "wallx", "pi", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "hilserl", "vla-jepa", "async", "peft", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
+provides-extras = ["dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "hilserl", "vla-jepa", "async", "peft", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
 
 [[package]]
 name = "librt"
@@ -5239,6 +5270,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/1e/7d/ae3f0a63f41e4d2f6cb66a5b57197850f919f59e558159a4dd3a818f5082/pyserial-3.5.tar.gz", hash = "sha256:3c77e014170dfffbd816e6ffc205e9842efb10be9f58ec16d3e8675b4925cddb", size = 159125, upload-time = "2020-11-23T03:59:15.045Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/07/bc/587a445451b253b285629263eb51c2d8e9bcea4fc97826266d186f96f558/pyserial-3.5-py2.py3-none-any.whl", hash = "sha256:c4451db6ba391ca6ca299fb3ec7bae67a5c55dde170964c7a14ceefec02f2cf0", size = 90585, upload-time = "2020-11-23T03:59:13.41Z" },
+]
+
+[[package]]
+name = "pyspacemouse"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "easyhid-ng" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/08/49/f0882556e09add821d42055a6a46aa459ffab5d1c17b97564a827e0500e2/pyspacemouse-2.0.0.tar.gz", hash = "sha256:df025ed74048c621f64ff3fb97493d2f86c2b3b508dda5e2cb901707db1e360f", size = 30965, upload-time = "2026-01-17T13:33:40.815Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2b/34/4da2b2b942a695a390286b5795c259e25f63f705cb844527c220875c0ecd/pyspacemouse-2.0.0-py3-none-any.whl", hash = "sha256:c48709c37aff54969e52d05eb003357a1a4ed94660caff4c48fee450aab9832e", size = 21389, upload-time = "2026-01-17T13:33:42.314Z" },
 ]
 
 [[package]]

@@ -11,12 +11,17 @@ from dataclasses import asdict
 from pathlib import Path
 from pprint import pformat
 
+from lerobot.common.control_utils import (
+    init_keyboard_listener,
+    is_headless,
+    sanity_check_dataset_name,
+    sanity_check_dataset_robot_compatibility,
+)
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import (
     aggregate_pipeline_dataset_features,
     create_initial_features,
 )
-from lerobot.utils.feature_utils import combine_feature_dicts
 from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.processor import make_default_processors
 from lerobot.robots import make_robot_from_config
@@ -25,13 +30,8 @@ from lerobot.scripts.lerobot_record import DatasetRecordConfig, RecordConfig, re
 from lerobot.teleoperators import make_teleoperator_from_config
 from lerobot.teleoperators.meca500_bota.config_meca500_bota import Meca500BotaConfig
 from lerobot.teleoperators.meca500_spacemouse.config_meca500_spacemouse import Meca500SpacemouseConfig
-from lerobot.common.control_utils import (
-    init_keyboard_listener,
-    is_headless,
-    sanity_check_dataset_name,
-    sanity_check_dataset_robot_compatibility,
-)
 from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.feature_utils import combine_feature_dicts
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.utils import init_logging, log_say
 from lerobot.utils.visualization_utils import init_rerun
@@ -45,16 +45,16 @@ USER = "AdamAxelrod"
 NAME = "space_mouse_purple_dot"
 SINGLE_TASK = "reach_purple_dot"
 NUM_EPISODES = 100
-EPISODE_TIME_S = 60          # seconds per demo
-RESET_TIME_S = 60            # manual environment-reset window after auto-home
+EPISODE_TIME_S = 60  # seconds per demo
+RESET_TIME_S = 60  # manual environment-reset window after auto-home
 FPS = 30
 PUSH_TO_HUB = True
 PRIVATE = False
 
 # Recording UI
-DISPLAY_DATA = True          # rerun viewer
+DISPLAY_DATA = True  # rerun viewer
 PLAY_SOUNDS = True
-RESUME = False               # append to an existing dataset?
+RESUME = False  # append to an existing dataset?
 CLEAR_EXISTING_CACHE = True  # if not resuming, delete the local cache for REPO_ID before recording
 
 # Auto-home (executed between episodes by this script)
@@ -80,7 +80,7 @@ def build_config() -> RecordConfig:
     else:
         raise ValueError(f"Unknown TELEOP: {TELEOP!r}. Expected 'bota' or 'spacemouse'.")
     dataset_cfg = DatasetRecordConfig(
-        repo_id = f"{USER}/{NAME}",
+        repo_id=f"{USER}/{NAME}",
         single_task=SINGLE_TASK,
         num_episodes=NUM_EPISODES,
         episode_time_s=EPISODE_TIME_S,
@@ -99,7 +99,7 @@ def build_config() -> RecordConfig:
     )
 
 
-def record_with_reset(cfg: RecordConfig) -> LeRobotDataset:
+def record_with_reset(cfg: RecordConfig, clear_existing_cache: bool = True) -> LeRobotDataset:
     init_logging()
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
@@ -139,10 +139,8 @@ def record_with_reset(cfg: RecordConfig) -> LeRobotDataset:
         # Fresh recording: optionally wipe any prior local cache for this repo_id
         # so LeRobotDataset.create() can mkdir() it cleanly. Mirrors the path
         # logic in LeRobotDataset.__init__ (root override else HF_LEROBOT_HOME / repo_id).
-        if CLEAR_EXISTING_CACHE:
-            cache_root = (
-                Path(cfg.dataset.root) if cfg.dataset.root else HF_LEROBOT_HOME / cfg.dataset.repo_id
-            )
+        if clear_existing_cache:
+            cache_root = Path(cfg.dataset.root) if cfg.dataset.root else HF_LEROBOT_HOME / cfg.dataset.repo_id
             if cache_root.exists():
                 logging.warning(f"Removing existing dataset cache at {cache_root}")
                 shutil.rmtree(cache_root)
@@ -232,9 +230,7 @@ def record_with_reset(cfg: RecordConfig) -> LeRobotDataset:
 
                 # Guard against an empty buffer (e.g., user hit Escape before
                 # the first frame was captured) — save_episode() raises on empty.
-                buffer_size = (
-                    dataset.episode_buffer.get("size", 0) if dataset.episode_buffer else 0
-                )
+                buffer_size = dataset.episode_buffer.get("size", 0) if dataset.episode_buffer else 0
                 if buffer_size == 0:
                     logging.warning("Skipping save_episode(): no frames captured.")
                     dataset.clear_episode_buffer()
@@ -282,7 +278,7 @@ def record_with_reset(cfg: RecordConfig) -> LeRobotDataset:
 
 def main() -> None:
     register_third_party_plugins()
-    record_with_reset(build_config())
+    record_with_reset(build_config(), clear_existing_cache=CLEAR_EXISTING_CACHE)
 
 
 if __name__ == "__main__":

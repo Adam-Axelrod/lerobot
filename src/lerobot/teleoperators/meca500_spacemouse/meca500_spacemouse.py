@@ -33,6 +33,11 @@ class Meca500Spacemouse(Teleoperator):
         self._signs = np.array(self.config.axis_signs, dtype=float)
         self._sm_device = None  # SpaceMouseDevice handle, opened in connect()
 
+        # One-shot precision latch: Enter sets it True (guidance loop then uses the
+        # fine gains); it is only ever cleared by go_home() between episodes.
+        self._precision_active = False
+        self._kb_listener = None  # pynput keyboard.Listener, started in connect()
+
     @property
     def action_features(self) -> dict[str, type]:
         return {
@@ -42,6 +47,9 @@ class Meca500Spacemouse(Teleoperator):
             "joint_4.pos": float,
             "joint_5.pos": float,
             "joint_6.pos": float,
+            # Latched precision-mode flag (1.0 after Enter, else 0.0). Not a `.pos`
+            # key, so the robot ignores it as a joint target while it is still logged.
+            "precision.state": float,
         }
 
     @property
@@ -90,8 +98,37 @@ class Meca500Spacemouse(Teleoperator):
         self._running = True
         self._thread = threading.Thread(target=self._guidance_loop, daemon=True)
         self._thread.start()
+
+        self._start_keyboard_listener()
+
         logger.info("SpaceMouse teleop started.")
         logger.info(f"{self} connected.")
+
+    def _start_keyboard_listener(self) -> None:
+        """Listen for the Enter key to latch precision mode.
+
+        pynput ships a Win32 backend (the runtime target here), so importing it is
+        safe on Windows; we only skip on headless Linux (no DISPLAY), mirroring the
+        guard in teleoperators/keyboard/teleop_keyboard.py. A failure to start the
+        listener is non-fatal — teleop still works, just without the Enter latch.
+        """
+        try:
+            from pynput import keyboard
+        except Exception as e:  # ImportError, or Linux-no-DISPLAY backend error
+            logger.warning(
+                f"Keyboard listener unavailable ({e}); Enter-latch precision mode disabled. "
+                "Install pynput to enable it."
+            )
+            self._kb_listener = None
+            return
+
+        def on_press(key):
+            if key == keyboard.Key.enter and not self._precision_active:
+                self._precision_active = True
+                logger.info("Precision mode latched ON (fine gains).")
+
+        self._kb_listener = keyboard.Listener(on_press=on_press)
+        self._kb_listener.start()
 
     def _read_twist(self) -> np.ndarray:
         # SpaceMouseDevice.read() returns a SpaceMouseState with fields
@@ -107,14 +144,21 @@ class Meca500Spacemouse(Teleoperator):
     def _guidance_loop(self) -> None:
         dz_tr = self.config.deadzone_tr
         dz_rot = self.config.deadzone_rot
-        gain_tr = self.config.gain_tr
-        gain_rot = self.config.gain_rot
         alpha = self.config.alpha
 
         while self._running:
             if self._homing.is_set():
                 time.sleep(0.01)
                 continue
+
+            # Read gains each iteration so the Enter-latched precision mode takes
+            # effect live (coarse until latched, fine afterwards).
+            if self._precision_active:
+                gain_tr = self.config.gain_tr_fine
+                gain_rot = self.config.gain_rot_fine
+            else:
+                gain_tr = self.config.gain_tr
+                gain_rot = self.config.gain_rot
 
             raw = self._read_twist() * self._signs
             self._twist_filter = (1 - alpha) * self._twist_filter + alpha * raw
@@ -154,6 +198,7 @@ class Meca500Spacemouse(Teleoperator):
             "joint_4.pos": joints[3],
             "joint_5.pos": joints[4],
             "joint_6.pos": joints[5],
+            "precision.state": float(self._precision_active),
         }
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
@@ -181,6 +226,9 @@ class Meca500Spacemouse(Teleoperator):
         finally:
             # Drop any pent-up SpaceMouse input so the arm doesn't lurch when guidance resumes.
             self._twist_filter = np.zeros(6)
+            # One-shot latch: homing marks the end of an episode, so drop back to
+            # coarse gains for the next approach.
+            self._precision_active = False
             self._homing.clear()
 
     def disconnect(self) -> None:
@@ -188,6 +236,13 @@ class Meca500Spacemouse(Teleoperator):
         if self._thread:
             self._thread.join(timeout=1.0)
             self._thread = None
+
+        if self._kb_listener is not None:
+            try:
+                self._kb_listener.stop()
+            except Exception as e:
+                logger.warning(f"Keyboard listener stop failed: {e}")
+            self._kb_listener = None
 
         if self.robot.IsConnected():
             try:
