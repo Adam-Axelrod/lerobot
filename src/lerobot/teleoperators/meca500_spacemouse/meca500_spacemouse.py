@@ -33,9 +33,12 @@ class Meca500Spacemouse(Teleoperator):
         self._signs = np.array(self.config.axis_signs, dtype=float)
         self._sm_device = None  # SpaceMouseDevice handle, opened in connect()
 
-        # One-shot precision latch: Enter sets it True (guidance loop then uses the
-        # fine gains); it is only ever cleared by go_home() between episodes.
+        # Precision toggle: Enter flips it (guidance loop then uses the fine gains);
+        # go_home() also drops it back to coarse between episodes.
         self._precision_active = False
+        # Tracks whether Enter is currently held so OS key auto-repeat doesn't
+        # flicker the toggle; only a fresh press (after a release) flips it.
+        self._enter_down = False
         self._kb_listener = None  # pynput keyboard.Listener, started in connect()
 
     @property
@@ -47,8 +50,8 @@ class Meca500Spacemouse(Teleoperator):
             "joint_4.pos": float,
             "joint_5.pos": float,
             "joint_6.pos": float,
-            # Latched precision-mode flag (1.0 after Enter, else 0.0). Not a `.pos`
-            # key, so the robot ignores it as a joint target while it is still logged.
+            # Precision-mode flag (1.0 when the Enter toggle is on, else 0.0). Not a
+            # `.pos` key, so the robot ignores it as a joint target while it is still logged.
             "precision.state": float,
         }
 
@@ -109,29 +112,47 @@ class Meca500Spacemouse(Teleoperator):
         logger.info(f"{self} connected.")
 
     def _start_keyboard_listener(self) -> None:
-        """Listen for the Enter key to latch precision mode.
+        """Listen for hotkeys: Enter toggles precision mode, 'h' homes the arm.
 
         pynput ships a Win32 backend (the runtime target here), so importing it is
         safe on Windows; we only skip on headless Linux (no DISPLAY), mirroring the
         guard in teleoperators/keyboard/teleop_keyboard.py. A failure to start the
-        listener is non-fatal — teleop still works, just without the Enter latch.
+        listener is non-fatal — teleop still works, just without the hotkeys.
         """
         try:
             from pynput import keyboard
         except Exception as e:  # ImportError, or Linux-no-DISPLAY backend error
             logger.warning(
-                f"Keyboard listener unavailable ({e}); Enter-latch precision mode disabled. "
-                "Install pynput to enable it."
+                f"Keyboard listener unavailable ({e}); Enter-toggle precision mode and "
+                "'h' home hotkey disabled. Install pynput to enable them."
             )
             self._kb_listener = None
             return
 
         def on_press(key):
-            if key == keyboard.Key.enter and not self._precision_active:
-                self._precision_active = True
-                logger.info("Precision mode latched ON (fine gains).")
+            if key == keyboard.Key.enter:
+                # Ignore OS key auto-repeat (on_press fires repeatedly while held);
+                # only a fresh press after a release flips the toggle.
+                if not self._enter_down:
+                    self._enter_down = True
+                    self._precision_active = not self._precision_active
+                    logger.info(
+                        "Precision mode %s.",
+                        "ON (fine gains)" if self._precision_active else "OFF (coarse gains)",
+                    )
+            elif getattr(key, "char", None) == "h" and not self._homing.is_set():
+                # Manual reset: send the arm back to config.home_joints (and drop the
+                # precision toggle), the same MoveJoints reset record runs between
+                # episodes. Run it on a throwaway thread so go_home()'s WaitIdle
+                # doesn't block the OS keyboard hook; the _homing guard above
+                # ignores repeat presses while a reset is already in flight.
+                threading.Thread(target=self.go_home, daemon=True).start()
 
-        self._kb_listener = keyboard.Listener(on_press=on_press)
+        def on_release(key):
+            if key == keyboard.Key.enter:
+                self._enter_down = False
+
+        self._kb_listener = keyboard.Listener(on_press=on_press, on_release=on_release)
         self._kb_listener.start()
 
     def _read_twist(self) -> np.ndarray:
@@ -155,8 +176,8 @@ class Meca500Spacemouse(Teleoperator):
                 time.sleep(0.01)
                 continue
 
-            # Read gains each iteration so the Enter-latched precision mode takes
-            # effect live (coarse until latched, fine afterwards).
+            # Read gains each iteration so the Enter-toggled precision mode takes
+            # effect live (coarse when off, fine when on).
             if self._precision_active:
                 gain_tr = self.config.gain_tr_fine
                 gain_rot = self.config.gain_rot_fine
@@ -230,8 +251,8 @@ class Meca500Spacemouse(Teleoperator):
         finally:
             # Drop any pent-up SpaceMouse input so the arm doesn't lurch when guidance resumes.
             self._twist_filter = np.zeros(6)
-            # One-shot latch: homing marks the end of an episode, so drop back to
-            # coarse gains for the next approach.
+            # Homing marks the end of an episode, so drop the precision toggle back
+            # to coarse gains for the next approach.
             self._precision_active = False
             self._homing.clear()
 

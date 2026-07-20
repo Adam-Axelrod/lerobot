@@ -1,13 +1,14 @@
 """Record a SpaceMouse-teleop dataset on the Meca500 microscope/pipette rig.
 
-Cameras: overhead (index 0) + wrist + microscope (index 2). The operator drives
+Cameras: microscope (index 0) + overhead (index 1) + wrist (index 3). The operator drives
 coarsely (gain_tr/gain_rot) until the pipette is under the microscope, then presses
-**Enter** to latch precision mode — the SpaceMouse gains drop to gain_tr_fine/
-gain_rot_fine for fine positioning. The latch (`precision.state`) is recorded as an
-action channel and reset to coarse on the between-episode auto-home.
+**Enter** to toggle precision mode — the SpaceMouse gains drop to gain_tr_fine/
+gain_rot_fine for fine positioning (press Enter again to toggle back to coarse). The
+toggle state (`precision.state`) is recorded as an action channel and reset to coarse
+on the between-episode auto-home.
 
 Uses the auto-home-between-episodes flow (record_reset.record_with_reset) so the arm
-homes after each demo and the precision latch resets for the next approach.
+homes after each demo and the precision toggle resets for the next approach.
 
 Workflow: edit the CONFIG block below, then `python record_microscope.py`.
 Ctrl-C to stop, edit, up-arrow, run again.
@@ -30,22 +31,22 @@ TASK = "move_pipette_under_microscope"
 
 NUM_EPISODES = 100
 FPS = 30
-EPISODE_TIME_S = 60
+EPISODE_TIME_S = 120
 RESET_TIME_S = 60
 DISPLAY_DATA = True
 PUSH_TO_HUB = True
 
-# Coarse movement scale (SpaceMouse at full deflection), used before the Enter latch.
+# Coarse movement scale (SpaceMouse at full deflection); the default until Enter toggles.
 GAIN_TR = 50.0  # mm/s  translation
 GAIN_ROT = 30.0  # deg/s rotation
 
-# Fine (precision) scale, used after the operator presses Enter under the microscope.
+# Fine (precision) scale, used while the Enter toggle is on under the microscope.
 # Drop to 1-2 mm/s for very fine positioning.
 GAIN_TR_FINE = 5.0  # mm/s  translation
 GAIN_ROT_FINE = 3.0  # deg/s rotation
 
-# Auto-home target (executed between episodes; also resets the precision latch).
-HOME_JOINTS = [0.0, 0.0, 0.0, 0.0, 90.0, 0.0]
+# Auto-home target (executed between episodes; also resets the precision toggle).
+HOME_JOINTS = [70, 10, 10, 90, -80, 15]
 HOME_TIMEOUT_S = 30.0
 
 # Camera tuning (driver-dependent units; tune with check_camera.py first).

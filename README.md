@@ -1,142 +1,140 @@
-<p align="center">
-  <img alt="LeRobot, Hugging Face Robotics Library" src="./media/readme/lerobot-logo-thumbnail.png" width="100%">
-</p>
+# Meca500 Robot Learning
 
-<div align="center">
+A fork of [🤗 LeRobot](https://github.com/huggingface/lerobot) extended with hardware, teleoperation, and simulation support for a **Mecademic Meca500** 6-axis industrial arm, built for PhD research on learned fine-manipulation under a microscope.
 
-[![Tests](https://github.com/huggingface/lerobot/actions/workflows/latest_deps_tests.yml/badge.svg?branch=main)](https://github.com/huggingface/lerobot/actions/workflows/latest_deps_tests.yml?query=branch%3Amain)
-[![Tests](https://github.com/huggingface/lerobot/actions/workflows/docker_publish.yml/badge.svg?branch=main)](https://github.com/huggingface/lerobot/actions/workflows/docker_publish.yml?query=branch%3Amain)
-[![Python versions](https://img.shields.io/pypi/pyversions/lerobot)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/huggingface/lerobot/blob/main/LICENSE)
-[![Status](https://img.shields.io/pypi/status/lerobot)](https://pypi.org/project/lerobot/)
-[![Version](https://img.shields.io/pypi/v/lerobot)](https://pypi.org/project/lerobot/)
-[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-v2.1-ff69b4.svg)](https://github.com/huggingface/lerobot/blob/main/CODE_OF_CONDUCT.md)
-[![Discord](https://img.shields.io/badge/Discord-Join_Us-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/q8Dzzpym3f)
+Everything upstream LeRobot provides (datasets, policies, training, rollout) still works unchanged. This README covers **what has been added on top**:
 
-</div>
+| Area | What was added |
+|---|---|
+| **Robots** | `meca500`, `meca500_microscope` — LeRobot `Robot` implementations driving a real Meca500 over `mecademicpy` |
+| **Teleoperators** | `meca500_spacemouse` (3DConnexion 6-DoF jogging), `meca500_bota` (force-sensor hand guidance), `meca500_home` (fixed-pose driver) |
+| **Precision mode** | A latched fine-motion mode recorded as an action channel and reproduced at rollout time |
+| **Scripts** | `scripts/meca500/` — edit-a-config-block-and-run wrappers for teleop, recording, checkpoint testing, inference, and camera setup |
+| **Simulation** | Meca500 USD assets + an Isaac Lab / Isaac Sim scene with SpaceMouse jogging |
 
-**LeRobot** aims to provide models, datasets, and tools for real-world robotics in PyTorch. The goal is to lower the barrier to entry so that everyone can contribute to and benefit from shared datasets and pretrained models.
+---
 
-🤗 A hardware-agnostic, Python-native interface that standardizes control across diverse platforms, from low-cost arms (SO-100) to humanoids.
+## The task
 
-🤗 A standardized, scalable LeRobotDataset format (Parquet + MP4 or images) hosted on the Hugging Face Hub, enabling efficient storage, streaming and visualization of massive robotic datasets.
+The target task is **positioning a stripper pipette under a microscope** with the Meca500 — a manipulation problem where the useful working scale is far smaller than the arm's approach scale. The rig carries three cameras: an overhead view, a wrist view, and a USB microscope camera looking at the workspace at 1280×1024.
 
-🤗 State-of-the-art policies that have been shown to transfer to the real-world ready for training and deployment.
+The core idea in this fork is that **coarse approach and fine positioning are different regimes**, and the policy should learn to switch between them rather than being tuned to a single motion scale.
 
-🤗 Comprehensive support for the open-source ecosystem to democratize physical AI.
+---
 
-## Quick Start
+## Teleoperation
 
-LeRobot can be installed directly from PyPI.
+### SpaceMouse (`meca500_spacemouse`)
 
-```bash
-pip install lerobot
-lerobot-info
+The main teleop path. A 3DConnexion SpaceMouse's 6 axes drive `MoveLinVelWrf` in the Meca's world frame — translation in mm/s, rotation in deg/s — through a dedicated ~200 Hz control loop, with per-axis sign flips, deadzones, and a low-pass filter to make the raw HID input usable for demonstration data.
+
+**Precision mode.** Pressing **Enter** latches a fine-gain mode: translation drops from 50 → 5 mm/s and rotation from 30 → 3 deg/s, so the operator can position the pipette tip under the microscope without fighting the gains used for the approach. Pressing Enter again toggles back.
+
+Crucially, the latch state is recorded as an action channel — `precision.state` — alongside the 6 joint targets. The policy therefore learns *when* to be in precision mode, and at rollout time `Meca500.send_action` reads the policy's own predicted `precision.state`: when it crosses 0.5, per-step joint motion is clamped to `precision_max_relative_target` instead of the normal `max_relative_target`. The trained policy scales down its own movements as it approaches the microscope.
+
+See [config_meca500_spacemouse.py](src/lerobot/teleoperators/meca500_spacemouse/config_meca500_spacemouse.py) for the gains and [meca500_spacemouse.py](src/lerobot/teleoperators/meca500_spacemouse/meca500_spacemouse.py) for the control loop.
+
+### Bota force sensor (`meca500_bota`)
+
+Hand-guidance teleop: a Bota force/torque sensor at the flange lets the operator physically push the arm through a demonstration. Forces and moments above threshold are mapped to Cartesian velocity commands with a low-pass filter and hysteresis band. Used for the earlier reach-target datasets.
+
+### Home (`meca500_home`)
+
+A degenerate "teleoperator" that just emits a fixed joint pose. Used as the reset driver during autonomous rollout and by [reset.py](scripts/meca500/reset.py).
+
+---
+
+## Scripts
+
+Everything in [scripts/meca500/](scripts/meca500/) follows the same pattern: a `CONFIG` block at the top of the file, then `python <script>.py`. Ctrl-C, edit, up-arrow, run again. Each docstring lists the equivalent `lerobot-*` CLI invocation.
+
+| Script | Purpose |
+|---|---|
+| [teleoperate_microscope.py](scripts/meca500/teleoperate_microscope.py) | SpaceMouse teleop on the microscope rig — practice the Enter toggle and **H** reset, tune gains |
+| [record_microscope.py](scripts/meca500/record_microscope.py) | Record demonstrations on the microscope rig, with auto-home between episodes |
+| [record_reset.py](scripts/meca500/record_reset.py) | Generic record loop that issues a `MoveJoints(HOME_JOINTS)` after each episode (and on re-record) |
+| [teleoperate.py](scripts/meca500/teleoperate.py) / [record.py](scripts/meca500/record.py) | Bota hand-guidance equivalents |
+| [test_checkpoint_microscope.py](scripts/meca500/test_checkpoint_microscope.py) | Run a local training checkpoint on the rig mid-training, with the precision clamp active |
+| [inference.py](scripts/meca500/inference.py) | Run a Hub-hosted trained policy via the episodic rollout strategy |
+| [reset.py](scripts/meca500/reset.py) | Drive the arm to a fixed home pose and disconnect |
+| [check_camera.py](scripts/meca500/check_camera.py) | Open one camera index and preview it, to identify which physical camera it is |
+| [verify_camera_settings.py](scripts/meca500/verify_camera_settings.py) | Sweep exposure and focus to *visually* confirm auto-exposure/autofocus are actually disabled |
+| [load_meca500_sim.py](scripts/meca500/load_meca500_sim.py) | Isaac Sim scene (see below) |
+
+Training is driven from PowerShell via [train.ps1](train.ps1), which wraps `lerobot-train` with the run naming, output-dir collision handling, and logging used here.
+
+---
+
+## Cameras
+
+The rig runs three USB cameras on one Windows machine, which is where most of the non-obvious configuration lives:
+
+- **Windows backends.** All cameras open with the DirectShow backend explicitly — the OpenCV `CAP_ANY` default picks MSMF on Windows and fails to open these UVC devices.
+- **Locked focus and exposure.** Autofocus and auto-exposure are disabled so visual statistics stay consistent between recording and rollout. On Windows this cannot be verified by read-back (DSHOW reports `-1.0`/`2.0` regardless, and `set()` returns success even when ignored), hence the sweep-based [verify_camera_settings.py](scripts/meca500/verify_camera_settings.py).
+- **USB bandwidth.** The microscope camera streams 1280×1024 MJPG at its native resolution (it snaps any other request); the wrist camera also uses MJPG so a third stream fits on the bus.
+- **Indices are not stable** across reboots and replugs — confirm them with `check_camera.py` before every session.
+
+See [config_meca500_microscope.py](src/lerobot/robots/meca500_microscope/config_meca500_microscope.py).
+
+---
+
+## Simulation — Isaac Lab / Isaac Sim
+
+[scripts/meca500/load_meca500_sim.py](scripts/meca500/load_meca500_sim.py) brings the Meca500 up in Isaac Sim as an Isaac Lab `Articulation`, on a ground plane with the Fusion 360 desk environment spawned as a static collider, and lets you jog all 6 joints with the same SpaceMouse used on the real arm (any device button snaps back to home).
+
+Notes worth knowing before running it:
+
+- Joints are driven through the **tensor API** (`set_joint_position_target`), not the GUI drive-target slider — so it works on the GPU pipeline and does not need `--device cpu`.
+- The arm asset is [mecademic_description/urdf/meca_arm_only/](mecademic_description/urdf/meca_arm_only/) (6 revolute joints, no gripper). The full `urdf/meca/meca.usd` export is an empty 492-byte stub.
+- `hidapi.dll` is not bundled with the Isaac Sim environment; the script reuses the copy in the hardware `.venv` and prepends it to `PATH`, because easyhid resolves it via `ctypes.util.find_library()` which ignores `os.add_dll_directory`.
+- `simulation_app.close()` can hang indefinitely on Windows during CUDA/physics teardown, so the script ends with `os._exit(0)`.
+
+It runs in a **separate Isaac Sim conda environment**, not the hardware `.venv`:
+
+```powershell
+& "$env:LOCALAPPDATA\miniconda3\envs\leisaac_envhub\python.exe" scripts/meca500/load_meca500_sim.py
 ```
 
-> [!IMPORTANT]
-> For detailed installation guide, please see the [Installation Documentation](https://huggingface.co/docs/lerobot/installation).
+Useful flags: `--headless`, `--steps N`, `--jog-gain`, `--deadzone`. `AXIS_SIGNS` in the script flips a joint's jog direction.
 
-## Robots & Control
+The [mecademic_description/](mecademic_description/) package holds the URDF, meshes, launch files, and the `desk.usd` / `Environment.usd` scene assets.
 
-<div align="center">
-  <img src="./media/readme/robots_control_video.webp" width="640px" alt="Reachy 2 Demo">
-</div>
+---
 
-LeRobot provides a unified `Robot` class interface that decouples control logic from hardware specifics. It supports a wide range of robots and teleoperation devices.
+## Setup
 
-```python
-from lerobot.robots.myrobot import MyRobot
+Hardware code targets **Windows** — that is the machine wired to the Meca500 and its cameras. Development happens on macOS, but macOS is not a reliable proxy for camera focus/exposure behaviour.
 
-# Connect to a robot
-robot = MyRobot(config=...)
-robot.connect()
-
-# Read observation and send action
-obs = robot.get_observation()
-action = model.select_action(obs)
-robot.send_action(action)
+```powershell
+uv sync --locked --extra all
 ```
 
-**Supported Hardware:** SO100, LeKiwi, Koch, HopeJR, OMX, EarthRover, Reachy2, Gamepads, Keyboards, Phones, OpenARM, Unitree G1.
+Then, for the SpaceMouse, drop `hidapi.dll` into `.venv\Scripts\` (pyspacemouse 2.0 needs it on `PATH`), and make sure `pynput` is installed — without it the Enter-latch precision mode is silently disabled and `precision.state` stays pinned at 0.
 
-While these devices are natively integrated into the LeRobot codebase, the library is designed to be extensible. You can easily implement the Robot interface to utilize LeRobot's data collection, training, and visualization tools for your own custom robot.
+The arm is reached over Ethernet at `192.168.0.100` by default.
 
-For detailed hardware setup guides, see the [Hardware Documentation](https://huggingface.co/docs/lerobot/integrate_hardware).
+Typical loop:
 
-## LeRobot Dataset
-
-To solve the data fragmentation problem in robotics, we utilize the **LeRobotDataset** format.
-
-- **Structure:** Synchronized MP4 videos (or images) for vision and Parquet files for state/action data.
-- **HF Hub Integration:** Explore thousands of robotics datasets on the [Hugging Face Hub](https://huggingface.co/lerobot).
-- **Tools:** Seamlessly delete episodes, split by indices/fractions, add/remove features, and merge multiple datasets.
-
-```python
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
-# Load a dataset from the Hub
-dataset = LeRobotDataset("lerobot/aloha_mobile_cabinet")
-
-# Access data (automatically handles video decoding)
-episode_index=0
-print(f"{dataset[episode_index]['action'].shape=}\n")
+```powershell
+python scripts/meca500/check_camera.py             # confirm camera indices
+python scripts/meca500/teleoperate_microscope.py   # tune gains, practise the task
+python scripts/meca500/record_microscope.py        # collect demonstrations
+. .\train.ps1; Start-Training -Dataset microscope_pipette
+python scripts/meca500/test_checkpoint_microscope.py
 ```
 
-Learn more about it in the [LeRobotDataset Documentation](https://huggingface.co/docs/lerobot/lerobot-dataset-v3)
+---
 
-## SoTA Models
+## Repository notes
 
-LeRobot implements state-of-the-art policies in pure PyTorch, covering Imitation Learning, Reinforcement Learning, and Vision-Language-Action (VLA) models, with more coming soon. It also provides you with the tools to instrument and inspect your training process.
+- Contributor and architecture guidance for this fork lives in [AGENTS.md](AGENTS.md); a practical user-facing walkthrough of the upstream LeRobot workflow is in [AGENT_GUIDE.md](AGENT_GUIDE.md).
+- The Meca500 additions follow LeRobot's own extension points — `RobotConfig.register_subclass` / `TeleoperatorConfig.register_subclass` — so the standard `lerobot-record`, `lerobot-train`, and `lerobot-rollout` CLIs work against them directly.
 
-<p align="center">
-  <img alt="Gr00t Architecture" src="./media/readme/VLA_architecture.jpg" width="640px">
-</p>
+---
 
-Training a policy is as simple as running a script configuration:
+## Upstream
 
-```bash
-lerobot-train \
-  --policy=act \
-  --dataset.repo_id=lerobot/aloha_mobile_cabinet
-```
-
-| Category                   | Models                                                                                                                                                                                                                  |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Imitation Learning**     | [ACT](./docs/source/policy_act_README.md), [Diffusion](./docs/source/policy_diffusion_README.md), [VQ-BeT](./docs/source/policy_vqbet_README.md), [Multitask DiT Policy](./docs/source/policy_multi_task_dit_README.md) |
-| **Reinforcement Learning** | [HIL-SERL](./docs/source/hilserl.mdx), [TDMPC](./docs/source/policy_tdmpc_README.md) & QC-FQL (coming soon)                                                                                                             |
-| **VLAs Models**            | [Pi0Fast](./docs/source/pi0fast.mdx), [Pi0.5](./docs/source/pi05.mdx), [GR00T N1.5](./docs/source/policy_groot_README.md), [SmolVLA](./docs/source/policy_smolvla_README.md), [XVLA](./docs/source/xvla.mdx)            |
-
-Similarly to the hardware, you can easily implement your own policy & leverage LeRobot's data collection, training, and visualization tools, and share your model to the HF Hub
-
-For detailed policy setup guides, see the [Policy Documentation](https://huggingface.co/docs/lerobot/bring_your_own_policies). For GPU/RAM requirements and expected training time per policy, see the [Compute Hardware Guide](https://huggingface.co/docs/lerobot/hardware_guide).
-
-## Inference & Evaluation
-
-Evaluate your policies in simulation or on real hardware using the unified evaluation script. LeRobot supports standard benchmarks like **LIBERO**, **MetaWorld** and more to come.
-
-```bash
-# Evaluate a policy on the LIBERO benchmark
-lerobot-eval \
-  --policy.path=lerobot/pi0_libero_finetuned \
-  --env.type=libero \
-  --env.task=libero_object \
-  --eval.n_episodes=10
-```
-
-Learn how to implement your own simulation environment or benchmark and distribute it from the HF Hub by following the [EnvHub Documentation](https://huggingface.co/docs/lerobot/envhub)
-
-## Resources
-
-- **[Documentation](https://huggingface.co/docs/lerobot/index):** The complete guide to tutorials & API.
-- **[Chinese Tutorials: LeRobot+SO-ARM101中文教程-同济子豪兄](https://zihao-ai.feishu.cn/wiki/space/7589642043471924447)** Detailed doc for assembling, teleoperate, dataset, train, deploy. Verified by Seed Studio and 5 global hackathon players.
-- **[Discord](https://discord.gg/q8Dzzpym3f):** Join the `LeRobot` server to discuss with the community.
-- **[X](https://x.com/LeRobotHF):** Follow us on X to stay up-to-date with the latest developments.
-- **[Robot Learning Tutorial](https://huggingface.co/spaces/lerobot/robot-learning-tutorial):** A free, hands-on course to learn robot learning using LeRobot.
-
-## Citation
-
-If you use LeRobot in your project, please cite the GitHub repository to acknowledge the ongoing development and contributors:
+This repository is a fork of **LeRobot** by Hugging Face. All upstream functionality, documentation, and licensing (Apache 2.0) are retained. See the [upstream repository](https://github.com/huggingface/lerobot) and [documentation](https://huggingface.co/docs/lerobot/index).
 
 ```bibtex
 @misc{cadene2024lerobot,
@@ -146,32 +144,3 @@ If you use LeRobot in your project, please cite the GitHub repository to acknowl
     year = {2024}
 }
 ```
-
-If you are referencing our research or the academic paper, please also cite our ICLR publication:
-
-<details>
-<summary><b>ICLR 2026 Paper</b></summary>
-
-```bibtex
-@inproceedings{cadenelerobot,
-  title={LeRobot: An Open-Source Library for End-to-End Robot Learning},
-  author={Cadene, Remi and Alibert, Simon and Capuano, Francesco and Aractingi, Michel and Zouitine, Adil and Kooijmans, Pepijn and Choghari, Jade and Russi, Martino and Pascal, Caroline and Palma, Steven and Shukor, Mustafa and Moss, Jess and Soare, Alexander and Aubakirova, Dana and Lhoest, Quentin and Gallou\'edec, Quentin and Wolf, Thomas},
-  booktitle={The Fourteenth International Conference on Learning Representations},
-  year={2026},
-  url={https://arxiv.org/abs/2602.22818}
-}
-```
-
-</details>
-
-## Contribute
-
-We welcome contributions from everyone in the community! To get started, please read our [CONTRIBUTING.md](https://github.com/huggingface/lerobot/blob/main/CONTRIBUTING.md) guide. Whether you're adding a new feature, improving documentation, or fixing a bug, your help and feedback are invaluable. We're incredibly excited about the future of open-source robotics and can't wait to work with you on what's next—thank you for your support!
-
-<p align="center">
-  <img alt="SO101 Video" src="./media/readme/so100_video.webp" width="640px">
-</p>
-
-<div align="center">
-<sub>Built by the <a href="https://huggingface.co/lerobot">LeRobot</a> team at <a href="https://huggingface.co">Hugging Face</a> with ❤️</sub>
-</div>

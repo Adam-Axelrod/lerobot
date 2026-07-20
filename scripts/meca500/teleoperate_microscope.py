@@ -1,10 +1,13 @@
 """SpaceMouse teleop for the Meca500 microscope/pipette rig.
 
 Jog the stripper pipette under the microscope with a 3DConnexion SpaceMouse. Cameras:
-overhead (index 0) + wrist + microscope (index 2). Drive coarsely (gain_tr/gain_rot),
-then press **Enter** to latch precision mode — the gains drop to gain_tr_fine/
-gain_rot_fine for fine positioning. No recording here; use it to practice the latch
-and tune gains before running record_microscope.py.
+microscope (index 0) + overhead (index 1) + wrist (index 3). Drive coarsely (gain_tr/gain_rot),
+then press **Enter** to toggle precision mode — the gains drop to gain_tr_fine/
+gain_rot_fine for fine positioning (press Enter again to toggle back to coarse).
+Press **H** to reset: the arm homes to HOME_JOINTS and the precision toggle clears,
+the same MoveJoints reset that record_microscope.py runs between episodes. No
+recording here; use it to practice the toggle/reset and tune gains before running
+record_microscope.py.
 
 Workflow: edit the CONFIG block below, then `python teleoperate_microscope.py`.
 Ctrl-C to stop, edit, up-arrow, run again.
@@ -30,14 +33,19 @@ from lerobot.utils.import_utils import register_third_party_plugins
 DISPLAY_DATA = True
 FPS = 60
 
-# Coarse movement scale (SpaceMouse at full deflection), used before the Enter latch.
+# Coarse movement scale (SpaceMouse at full deflection); the default until Enter toggles.
 GAIN_TR = 50.0  # mm/s  translation
 GAIN_ROT = 30.0  # deg/s rotation
 
-# Fine (precision) scale, used after pressing Enter under the microscope.
+# Fine (precision) scale, used while the Enter toggle is on under the microscope.
 # Drop to 1-2 mm/s for very fine positioning.
 GAIN_TR_FINE = 5.0  # mm/s  translation
 GAIN_ROT_FINE = 3.0  # deg/s rotation
+
+# Reset ("home") pose. Press **H** during teleop to send the arm back here and
+# drop the precision toggle — the same MoveJoints reset record runs between episodes.
+HOME_JOINTS = [70, 10, 10, 90, -80, 15]  # deg, joints 1-6
+HOME_TIMEOUT_S = 30.0
 
 # Camera tuning (driver-dependent units; tune with check_camera.py first).
 # The microscope cam has no software focus (fixed lens ring) — focus it by hand.
@@ -73,6 +81,8 @@ def main() -> None:
             gain_rot=GAIN_ROT,
             gain_tr_fine=GAIN_TR_FINE,
             gain_rot_fine=GAIN_ROT_FINE,
+            home_joints=HOME_JOINTS,
+            home_timeout_s=HOME_TIMEOUT_S,
         ),
         fps=FPS,
         display_data=DISPLAY_DATA,
