@@ -189,7 +189,12 @@ class TrainPipelineConfig(HubMixin):
             else:
                 self.job_name = f"{self.env.type}_{active_cfg.type}"
 
-        if not self.resume and isinstance(self.output_dir, Path) and self.output_dir.is_dir():
+        # Coerce a string output_dir (from the CLI or a caller that builds the config
+        # directly) to a Path, so downstream `output_dir / ...` path ops don't blow up.
+        if isinstance(self.output_dir, str):
+            self.output_dir = Path(self.output_dir)
+
+        if not self.resume and self.output_dir is not None and self.output_dir.is_dir():
             raise FileExistsError(
                 f"Output directory {self.output_dir} already exists and resume is {self.resume}. "
                 f"Please change your output directory so that {self.output_dir} is not overwritten."

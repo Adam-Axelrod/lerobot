@@ -97,6 +97,8 @@ dependencies = [
     "pyspacemouse>=2.0.0,<3.0.0",
     "hidapi>=0.14.0,<0.15.0",
     "pynput>=1.8.0,<2.0.0",  # Enter-latch precision mode for SpaceMouse teleop
+    # Resolve reshuffling USB camera indices by DirectShow device name (Windows rig only).
+    "pygrabber>=0.2,<0.3; sys_platform == 'win32'",
 ]
 
 # Optional dependencies

@@ -6,9 +6,13 @@ their real drivers exist:
     python scripts/meca500/check_camera.py
 
 Set CAMERA_INDEX below to the index you want to inspect, then run it. Each index has
-a preset (resolution, focus, exposure, codec) in PRESETS so the microscope cam (0), the
-overhead cam (1) and the wrist cam (3) each preview at their real settings; unlisted
-indices use DEFAULT. A live window pops up (rendered with matplotlib, because lerobot ships the
+a preset (resolution, focus, exposure, codec) in PRESETS so the overhead cam (0), the
+wrist cam (2) and the microscope cam (3) each preview at their real settings; unlisted
+indices use DEFAULT (index 1 is the built-in laptop webcam). NOTE: these indices drift
+when USB cameras are replugged/power-cycled — the robot config re-resolves them by
+device name at runtime (see meca500_microscope/camera_resolver.py), but this manual tool
+still addresses a raw index, so re-confirm which camera is which if a preview looks wrong.
+A live window pops up (rendered with matplotlib, because lerobot ships the
 headless build of OpenCV which has no GUI). Cover the lens / wave at it to confirm
 which camera maps to this port. Press Q (or close the window) to quit.
 
@@ -24,7 +28,7 @@ import matplotlib.pyplot as plt
 # ======================================================================
 # CONFIG — set the camera port/index you want to check.
 # ======================================================================
-CAMERA_INDEX = 3
+CAMERA_INDEX = 3  # 0=overhead, 1=webcam, 2=wrist, 3=microscope on the Windows rig
 
 # Per-index presets — switch CAMERA_INDEX and the matching resolution/controls apply.
 # Keys mirror the meca500 rigs; any index not listed falls back to DEFAULT below.
@@ -33,9 +37,10 @@ CAMERA_INDEX = 3
 #   exposure     : manual exposure, or None to leave auto-exposure on
 #   fourcc       : pixel format, e.g. "MJPG" for high-res USB cams (None = driver default)
 PRESETS = {
-    0: {"width": 1280, "height": 1024, "focus": None, "exposure": -6, "fourcc": "MJPG"},  # microscope_cam
-    1: {"width": 640, "height": 480, "focus": 100, "exposure": -6},                     # overhead_cam
-    3: {"width": 640, "height": 480, "focus": 100, "exposure": -6, "fourcc": "MJPG"},   # wrist_cam
+    0: {"width": 640, "height": 480, "focus": 100, "exposure": -6},                    # overhead_cam (UC60)
+    # 1 is the built-in laptop webcam (Chicony) — not part of the rig; uses DEFAULT.
+    2: {"width": 640, "height": 480, "focus": 100, "exposure": -6, "fourcc": "MJPG"},  # wrist_cam (UC60)
+    3: {"width": 640, "height": 360, "focus": None, "exposure": -6, "fourcc": "MJPG"}, # microscope_cam (VMS700, 16:9)
 }
 DEFAULT = {"width": 640, "height": 480, "focus": 100, "exposure": -6, "fourcc": None}
 # ======================================================================

@@ -31,7 +31,7 @@ from lerobot.utils.import_utils import register_third_party_plugins
 
 # ----------------------------- CONFIG -----------------------------
 DISPLAY_DATA = True
-FPS = 60
+FPS = 20
 
 # Coarse movement scale (SpaceMouse at full deflection); the default until Enter toggles.
 GAIN_TR = 50.0  # mm/s  translation
@@ -50,7 +50,7 @@ HOME_TIMEOUT_S = 30.0
 # Camera tuning (driver-dependent units; tune with check_camera.py first).
 # The microscope cam has no software focus (fixed lens ring) — focus it by hand.
 OVERHEAD_EXPOSURE, OVERHEAD_FOCUS = -6, 100
-WRIST_EXPOSURE, WRIST_FOCUS = -6, 100
+WRIST_EXPOSURE, WRIST_FOCUS = -5, 100
 MICROSCOPE_EXPOSURE = -6
 # ------------------------------------------------------------------
 

@@ -124,16 +124,19 @@ def record_with_reset(cfg: RecordConfig, clear_existing_cache: bool = True) -> L
     )
 
     if cfg.resume:
-        dataset = LeRobotDataset(
+        # resume() requires an explicit root (it refuses to write into the shared
+        # Hub snapshot cache), so fall back to the default HF_LEROBOT_HOME layout.
+        num_cameras = len(robot.cameras) if hasattr(robot, "cameras") else 0
+        resume_root = cfg.dataset.root if cfg.dataset.root else HF_LEROBOT_HOME / cfg.dataset.repo_id
+        dataset = LeRobotDataset.resume(
             cfg.dataset.repo_id,
-            root=cfg.dataset.root,
+            root=resume_root,
             batch_encoding_size=cfg.dataset.video_encoding_batch_size,
+            image_writer_processes=cfg.dataset.num_image_writer_processes if num_cameras > 0 else 0,
+            image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * num_cameras
+            if num_cameras > 0
+            else 0,
         )
-        if hasattr(robot, "cameras") and len(robot.cameras) > 0:
-            dataset.start_image_writer(
-                num_processes=cfg.dataset.num_image_writer_processes,
-                num_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
-            )
         sanity_check_dataset_robot_compatibility(dataset, robot, cfg.dataset.fps, dataset_features)
     else:
         # Fresh recording: optionally wipe any prior local cache for this repo_id
@@ -230,8 +233,7 @@ def record_with_reset(cfg: RecordConfig, clear_existing_cache: bool = True) -> L
 
                 # Guard against an empty buffer (e.g., user hit Escape before
                 # the first frame was captured) — save_episode() raises on empty.
-                buffer_size = dataset.episode_buffer.get("size", 0) if dataset.episode_buffer else 0
-                if buffer_size == 0:
+                if not dataset.has_pending_frames():
                     logging.warning("Skipping save_episode(): no frames captured.")
                     dataset.clear_episode_buffer()
                     continue

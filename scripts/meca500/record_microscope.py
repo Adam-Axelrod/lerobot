@@ -29,12 +29,19 @@ USER = "AdamAxelrod"
 NAME = "microscope_pipette"
 TASK = "move_pipette_under_microscope"
 
-NUM_EPISODES = 100
-FPS = 30
+NUM_EPISODES = 10
+FPS = 20
 EPISODE_TIME_S = 120
 RESET_TIME_S = 60
 DISPLAY_DATA = True
 PUSH_TO_HUB = True
+
+# RESUME=True appends new episodes to the existing dataset at repo_id (USER/NAME),
+# both locally and on the Hub — use this to add to a previous recording.
+# RESUME=False creates a fresh dataset; with CLEAR_EXISTING_CACHE=True it first
+# deletes the local cache for repo_id (and a later push overwrites the Hub repo).
+RESUME = True
+CLEAR_EXISTING_CACHE = True
 
 # Coarse movement scale (SpaceMouse at full deflection); the default until Enter toggles.
 GAIN_TR = 50.0  # mm/s  translation
@@ -52,7 +59,7 @@ HOME_TIMEOUT_S = 30.0
 # Camera tuning (driver-dependent units; tune with check_camera.py first).
 # The microscope cam has no software focus (fixed lens ring) — focus it by hand.
 OVERHEAD_EXPOSURE, OVERHEAD_FOCUS = -6, 100
-WRIST_EXPOSURE, WRIST_FOCUS = -6, 100
+WRIST_EXPOSURE, WRIST_FOCUS = -5, 100
 MICROSCOPE_EXPOSURE = -6
 # ------------------------------------------------------------------
 
@@ -96,9 +103,10 @@ def main() -> None:
             home_timeout_s=HOME_TIMEOUT_S,
         ),
         display_data=DISPLAY_DATA,
+        resume=RESUME,
     )
 
-    record_with_reset(cfg)
+    record_with_reset(cfg, clear_existing_cache=CLEAR_EXISTING_CACHE)
 
 
 if __name__ == "__main__":
