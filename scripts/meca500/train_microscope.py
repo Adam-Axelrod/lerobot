@@ -24,7 +24,7 @@ SUBSET_SEED for reproducibility). Frames are kept episode-contiguous — we samp
 episodes, never individual frames — so action chunking stays valid.
 
 Checkpoints land in outputs/train/<RUN_NAME>/checkpoints/<step>/pretrained_model,
-which is exactly where test_checkpoint_microscope.py looks for them.
+which is exactly where microscope_inference.py looks for them.
 
 Requires: pip install 'lerobot[training]'  (accelerate + wandb extras).
 """

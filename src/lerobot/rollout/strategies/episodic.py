@@ -187,15 +187,23 @@ class EpisodicStrategy(RolloutStrategy):
 
                         continue
 
+                    if not dataset.has_pending_frames():
+                        # The episode was stopped (ESC, Ctrl-C, right arrow) before a
+                        # single frame reached the buffer.  save_episode() raises on an
+                        # empty buffer, so end the session instead — there is nothing to
+                        # record and nothing to lose.
+                        logger.warning("Episode ended before any frame was recorded — stopping session")
+                        break
+
                     dataset.save_episode()
                     recorded_episodes += 1
             finally:
                 # Save any frames buffered in the current episode so an unexpected
                 # exception or KeyboardInterrupt does not silently drop recorded data.
-                # suppress: save_episode raises if the buffer is empty (nothing to lose).
-                logger.info("Episodic control loop ended — saving any in-progress episode")
-                with contextlib.suppress(Exception):
-                    dataset.save_episode()
+                if dataset.has_pending_frames():
+                    logger.info("Episodic control loop ended — saving in-progress episode")
+                    with contextlib.suppress(Exception):
+                        dataset.save_episode()
 
     def _policy_loop(
         self,

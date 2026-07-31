@@ -28,7 +28,7 @@ import matplotlib.pyplot as plt
 # ======================================================================
 # CONFIG — set the camera port/index you want to check.
 # ======================================================================
-CAMERA_INDEX = 3  # 0=overhead, 1=webcam, 2=wrist, 3=microscope on the Windows rig
+CAMERA_INDEX = 0  # 0=overhead, 1=webcam, 2=wrist, 3=microscope on the Windows rig
 
 # Per-index presets — switch CAMERA_INDEX and the matching resolution/controls apply.
 # Keys mirror the meca500 rigs; any index not listed falls back to DEFAULT below.

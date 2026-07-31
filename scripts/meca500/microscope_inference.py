@@ -1,14 +1,18 @@
-"""Run a local training checkpoint on the Meca500 microscope/pipette rig.
+"""Run policy inference on the Meca500 microscope/pipette rig.
 
-Same as test_checkpoint.py but for the microscope rig (overhead + wrist + microscope
+The general inference script for the microscope rig (overhead + wrist + microscope
 cameras) and the 7-dim action space (6 joints + the predicted `precision.state`).
+It runs any trained policy on the arm — whether you're validating an intermediate
+training checkpoint or deploying the final model for real use. By default it loads
+a local checkpoint from outputs/train/<RUN>/checkpoints/<CKPT>/; point CKPT at the
+final step to run your finished model, or an earlier step to compare checkpoints.
 
 When the policy's predicted `precision.state` crosses 0.5, Meca500.send_action clamps
 per-step joint motion to PRECISION_MAX_REL_TARGET instead of MAX_REL_TARGET, so the
-arm "scales down its own movements" under the microscope. Tune both after the first
-checkpoint (values are joint-space degrees per step).
+arm "scales down its own movements" under the microscope. Tune both (values are
+joint-space degrees per step).
 
-Workflow: edit the CONFIG block below, then `python test_checkpoint_microscope.py`.
+Workflow: edit the CONFIG block below, then `python microscope_inference.py`.
 Ctrl-C to stop, edit CKPT (or anything else), up-arrow, run again.
 
 Equivalent to:
@@ -35,7 +39,9 @@ from lerobot.utils.import_utils import register_third_party_plugins
 # ----------------------------- CONFIG -----------------------------
 USER = "AdamAxelrod"
 RUN = "microscope_pipette"
-CKPT = "025000"  # zero-padded step number, matches outputs/train/<RUN>/checkpoints/<CKPT>/
+# None → automatically use the final (highest-numbered) checkpoint. Or set a
+# zero-padded step number (e.g. "025000") to pin an earlier one for comparison.
+CKPT: str | None = None
 TASK = "move_pipette_under_microscope"
 
 # ACT inference mode:
@@ -50,25 +56,47 @@ TEMPORAL_ENSEMBLE_COEFF: float | None = None
 MAX_REL_TARGET: float | None = None
 PRECISION_MAX_REL_TARGET: float | None = 0.5
 
-HOME_JOINTS = [0.0, 0.0, 0.0, 0.0, 90.0, 0.0]
+HOME_JOINTS = [70, 10, 10, 90, -80, 15]
 NUM_EPISODES = 10
 EPISODE_TIME_S = 30
 RESET_TIME_S = 10
-FPS = 30
+FPS = 20
 DISPLAY_DATA = True
 # ------------------------------------------------------------------
+
+
+def resolve_checkpoint(run: str, ckpt: str | None) -> tuple[str, Path]:
+    """Resolve CKPT to a concrete checkpoint dir, defaulting to the final one.
+
+    ckpt=None picks the highest-numbered step under outputs/train/<run>/checkpoints/;
+    otherwise the given step is used verbatim. Returns (step, pretrained_model_path).
+    """
+    checkpoints_dir = Path("outputs/train") / run / "checkpoints"
+
+    if ckpt is None:
+        steps = sorted(
+            d.name for d in checkpoints_dir.glob("*") if d.is_dir() and d.name.isdigit()
+        )
+        if not steps:
+            raise FileNotFoundError(
+                f"No checkpoints found under {checkpoints_dir}. Check RUN='{run}'."
+            )
+        ckpt = steps[-1]
+        print(f"[ckpt] CKPT=None → using final checkpoint {ckpt}.")
+
+    policy_path = checkpoints_dir / ckpt / "pretrained_model"
+    if not policy_path.is_dir():
+        raise FileNotFoundError(
+            f"Checkpoint not found: {policy_path}. "
+            f"Check RUN='{run}' and CKPT='{ckpt}' (zero-padded step number)."
+        )
+    return ckpt, policy_path
 
 
 def main() -> None:
     register_third_party_plugins()
 
-    policy_path = Path("outputs/train") / RUN / "checkpoints" / CKPT / "pretrained_model"
-
-    if not policy_path.is_dir():
-        raise FileNotFoundError(
-            f"Checkpoint not found: {policy_path}. "
-            f"Check RUN='{RUN}' and CKPT='{CKPT}' (zero-padded step number)."
-        )
+    ckpt, policy_path = resolve_checkpoint(RUN, CKPT)
 
     policy_overrides: list[str] = []
     if TEMPORAL_ENSEMBLE_COEFF is not None:
@@ -92,7 +120,7 @@ def main() -> None:
             precision_max_relative_target=PRECISION_MAX_REL_TARGET,
         ),
         dataset=DatasetRecordConfig(
-            repo_id=f"{USER}/rollout_{RUN}_{CKPT}",
+            repo_id=f"{USER}/rollout_{RUN}_{ckpt}",
             single_task=TASK,
             fps=FPS,
             num_episodes=NUM_EPISODES,

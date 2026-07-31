@@ -54,7 +54,7 @@ Everything in [scripts/meca500/](scripts/meca500/) follows the same pattern: a `
 | [record_microscope.py](scripts/meca500/record_microscope.py) | Record demonstrations on the microscope rig, with auto-home between episodes |
 | [record_reset.py](scripts/meca500/record_reset.py) | Generic record loop that issues a `MoveJoints(HOME_JOINTS)` after each episode (and on re-record) |
 | [teleoperate.py](scripts/meca500/teleoperate.py) / [record.py](scripts/meca500/record.py) | Bota hand-guidance equivalents |
-| [test_checkpoint_microscope.py](scripts/meca500/test_checkpoint_microscope.py) | Run a local training checkpoint on the rig mid-training, with the precision clamp active |
+| [microscope_inference.py](scripts/meca500/microscope_inference.py) | Run a trained policy on the microscope rig, with the precision clamp active — for both mid-training checkpoint checks and final-model inference |
 | [inference.py](scripts/meca500/inference.py) | Run a Hub-hosted trained policy via the episodic rollout strategy |
 | [reset.py](scripts/meca500/reset.py) | Drive the arm to a fixed home pose and disconnect |
 | [check_camera.py](scripts/meca500/check_camera.py) | Open one camera index and preview it, to identify which physical camera it is |
@@ -120,7 +120,7 @@ python scripts/meca500/check_camera.py             # confirm camera indices
 python scripts/meca500/teleoperate_microscope.py   # tune gains, practise the task
 python scripts/meca500/record_microscope.py        # collect demonstrations
 . .\train.ps1; Start-Training -Dataset microscope_pipette
-python scripts/meca500/test_checkpoint_microscope.py
+python scripts/meca500/microscope_inference.py
 ```
 
 ---
