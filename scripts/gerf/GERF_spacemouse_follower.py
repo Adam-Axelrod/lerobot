@@ -18,6 +18,7 @@ Edit the CONFIG block below, then `python GERF_spacemouse_follower.py`.
 Ctrl-C to stop.
 """
 
+import contextlib
 import time
 from pathlib import Path
 
@@ -175,10 +176,8 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\nStopping.")
     finally:
-        try:
+        with contextlib.suppress(Exception):
             sm.close()
-        except Exception:
-            pass
         robot.disconnect()
 
 

@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 
 from ..config import TeleoperatorConfig
-import numpy as np
 
 
 @TeleoperatorConfig.register_subclass("meca500_bota")

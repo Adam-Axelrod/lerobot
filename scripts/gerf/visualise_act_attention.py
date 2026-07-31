@@ -1,9 +1,10 @@
-import torch
 import cv2
-import numpy as np
 import matplotlib.pyplot as plt
-from lerobot.policies.act.modeling_act import ACTPolicy
+import numpy as np
+import torch
+
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.policies.act.modeling_act import ACTPolicy
 
 # 1. Load your trained policy directly from the Hugging Face Hub
 model_repo_id = "AdamAxelrod/red_dot_model"
@@ -35,7 +36,7 @@ img_h, img_w = original_image.shape[:2]
 # 4. Prepare the batch dictionary for the model
 # We must add a batch dimension (unsqueeze) to all tensors and move them to the GPU/CPU
 batch = {
-    k: v.unsqueeze(0).to(device) if isinstance(v, torch.Tensor) else v 
+    k: v.unsqueeze(0).to(device) if isinstance(v, torch.Tensor) else v
     for k, v in frame.items()
 }
 
@@ -45,7 +46,7 @@ attention_maps = []
 def get_attention_hook(module, input, output):
     # nn.MultiheadAttention returns (attn_output, attn_weights)
     # We grab the weights at index 1 and move them to CPU
-    attn_weights = output[1] 
+    attn_weights = output[1]
     attention_maps.append(attn_weights.detach().cpu())
 
 # Attach the hook to the last cross-attention layer of the ACT decoder

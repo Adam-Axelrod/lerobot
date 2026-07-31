@@ -28,6 +28,7 @@ steps (0 = run until the window is closed). Ctrl-C also stops it.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 from pathlib import Path
 
@@ -199,10 +200,8 @@ def main() -> None:
             break
 
     if sm is not None:
-        try:
+        with contextlib.suppress(Exception):
             sm.close()
-        except Exception:
-            pass
 
 
 if __name__ == "__main__":

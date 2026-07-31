@@ -26,14 +26,14 @@ os.environ.setdefault(
     "PYTHONWARNINGS", "ignore::UserWarning:torchvision.io._video_deprecation_warning"
 )
 
+from train_logging import setup_split_logging  # noqa: E402
+
 from lerobot.configs.default import DatasetConfig, WandBConfig  # noqa: E402
 from lerobot.configs.train import TrainPipelineConfig  # noqa: E402
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata  # noqa: E402
 from lerobot.policies.act.configuration_act import ACTConfig  # noqa: E402
 from lerobot.scripts.lerobot_train import train  # noqa: E402
 from lerobot.utils.import_utils import register_third_party_plugins  # noqa: E402
-
-from train_logging import setup_split_logging  # noqa: E402
 
 # ----------------------------- CONFIG -----------------------------
 USER = "AdamAxelrod"

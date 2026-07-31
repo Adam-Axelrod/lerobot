@@ -5,6 +5,7 @@ the selected teleop's control socket after each demo (and on rerecord). Skipped
 after the final episode. Edit the CONFIG block below, then `python record_reset.py`.
 """
 
+import contextlib
 import logging
 import shutil
 from dataclasses import asdict
@@ -269,10 +270,8 @@ def record_with_reset(cfg: RecordConfig, clear_existing_cache: bool = True) -> L
             except Exception as e:
                 logging.warning(f"teleop.disconnect() failed: {e}")
         if not is_headless() and listener is not None:
-            try:
+            with contextlib.suppress(Exception):
                 listener.stop()
-            except Exception:
-                pass
 
     log_say("Exiting", cfg.play_sounds)
     return dataset

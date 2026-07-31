@@ -18,18 +18,13 @@ permissions:
   contents: read
 
 on:
-  # Allows running this workflow manually from the Actions tab
+  # Manual-only in this fork.
+  #
+  # NOTE: This is a personal research fork and is not upstreamed, so enforcing
+  # huggingface/lerobot's style rules on every push is noise rather than signal.
+  # The automatic `push` / `pull_request` triggers are intentionally removed;
+  # run this from the Actions tab if you ever want a full pre-commit sweep.
   workflow_dispatch:
-
-  # Triggers the workflow on push events to main
-  push:
-    branches:
-      - main
-
-  # Triggers the workflow on pull request events targeting main
-  pull_request:
-    branches:
-      - main
 
 # Ensures that only the latest commit for a PR or branch is built, canceling older runs.
 concurrency:
