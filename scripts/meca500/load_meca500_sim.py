@@ -19,7 +19,7 @@ working ``urdf/meca_arm_only/meca_arm_only.usd`` instead.
 
 IMPORTANT: run with the Isaac Sim env, NOT the meca500 hardware .venv:
 
-    & "$env:LOCALAPPDATA\miniconda3\envs\leisaac_envhub\python.exe" scripts/meca500/load_meca500_sim.py
+    & "$env:LOCALAPPDATA\miniconda3\envs\env_isaaclab\python.exe" scripts/meca500/load_meca500_sim.py
 
 Add ``--headless`` to run without the GUI, ``--steps N`` to stop after N physics
 steps (0 = run until the window is closed). Ctrl-C also stops it.

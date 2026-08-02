@@ -112,7 +112,7 @@ Work top to bottom. Steps 0–3 are prep/safety. Step 4 is the destructive one.
   ```powershell
   Get-AppxPackage *PythonSoftwareFoundation.Python* | Remove-AppxPackage
   ```
-  Leave your separate `leisaac_envhub` conda env untouched — it is unrelated.
+  Leave your separate `env_isaaclab` conda env untouched — it is unrelated.
 
 - [ ] **13. Delete this runbook + scratch files** once done:
   `ENV_FIX_RUNBOOK.md`, `frozen-before-rebuild.txt`, Desktop `hidapi.dll`.
@@ -122,5 +122,5 @@ Work top to bottom. Steps 0–3 are prep/safety. Step 4 is the destructive one.
 ### Notes
 - requires-python for lerobot is `>=3.12`; we choose 3.12 (not 3.13/3.14) for the
   most reliable Windows wheel coverage, especially PyTorch.
-- Your `leisaac_envhub` conda env is a separate environment and is NOT affected by
+- Your `env_isaaclab` conda env is a separate environment and is NOT affected by
   any of this.

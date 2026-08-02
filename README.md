@@ -92,7 +92,7 @@ Notes worth knowing before running it:
 It runs in a **separate Isaac Sim conda environment**, not the hardware `.venv`:
 
 ```powershell
-& "$env:LOCALAPPDATA\miniconda3\envs\leisaac_envhub\python.exe" scripts/meca500/load_meca500_sim.py
+& "$env:LOCALAPPDATA\miniconda3\envs\env_isaaclab\python.exe" scripts/meca500/load_meca500_sim.py
 ```
 
 Useful flags: `--headless`, `--steps N`, `--jog-gain`, `--deadzone`. `AXIS_SIGNS` in the script flips a joint's jog direction.

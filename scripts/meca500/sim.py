@@ -36,7 +36,8 @@ DESK_USD = REPO_ROOT / "mecademic_description" / "desk.usd"
 ENV_USD = REPO_ROOT / "mecademic_description" / "Environment.usd"
 
 # Conda env names that have carried the Isaac Sim install on our machines.
-ENV_NAMES = ("leisaac_envhub", "isaaclab", "env_isaaclab")
+# ``env_isaaclab`` is Isaac Lab's own default; the others are older local names.
+ENV_NAMES = ("env_isaaclab", "leisaac_envhub", "isaaclab")
 
 
 def candidate_pythons() -> list[Path]:
