@@ -13,8 +13,6 @@ from pathlib import Path
 from pprint import pformat
 
 from lerobot.common.control_utils import (
-    init_keyboard_listener,
-    is_headless,
     sanity_check_dataset_name,
     sanity_check_dataset_robot_compatibility,
 )
@@ -34,6 +32,7 @@ from lerobot.teleoperators.meca500_spacemouse.config_meca500_spacemouse import M
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.feature_utils import combine_feature_dicts
 from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.keyboard_input import init_keyboard_listener, is_headless
 from lerobot.utils.utils import init_logging, log_say
 from lerobot.utils.visualization_utils import init_rerun
 
