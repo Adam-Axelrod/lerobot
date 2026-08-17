@@ -1,4 +1,4 @@
-from lerobot.teleoperators.so101_leader import SO101Leader, SO101LeaderConfig
+from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 
 config = SO101LeaderConfig(
     port="COM4",
