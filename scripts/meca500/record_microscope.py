@@ -35,6 +35,9 @@ FPS = 20
 EPISODE_TIME_S = 120
 RESET_TIME_S = 60
 DISPLAY_DATA = True
+# Spoken phase announcements ("Recording episode 3", "Reset the environment").
+# False = console log only; the same messages are still written to the terminal.
+PLAY_SOUNDS = False
 PUSH_TO_HUB = True
 
 # RESUME=True appends new episodes to the existing dataset at repo_id (USER/NAME),
@@ -90,6 +93,7 @@ def main() -> None:
             home_timeout_s=HOME_TIMEOUT_S,
         ),
         display_data=DISPLAY_DATA,
+        play_sounds=PLAY_SOUNDS,
         resume=RESUME,
     )
 

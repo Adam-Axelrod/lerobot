@@ -72,6 +72,9 @@ EPISODE_TIME_S = 30
 RESET_TIME_S = 10
 FPS = 20
 DISPLAY_DATA = True
+# Spoken phase announcements ("Recording episode 3", "Reset the environment").
+# False = console log only; the same messages are still written to the terminal.
+PLAY_SOUNDS = False
 # ------------------------------------------------------------------
 
 
@@ -115,6 +118,7 @@ def main() -> None:
         strategy=EpisodicStrategyConfig(),
         fps=FPS,
         display_data=DISPLAY_DATA,
+        play_sounds=PLAY_SOUNDS,
     )
 
     rollout(cfg)
