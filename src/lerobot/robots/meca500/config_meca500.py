@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from lerobot.cameras import CameraConfig
 from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.robots import RobotConfig
+from lerobot.robots.meca500.camera_settings import apply_camera_settings
 
 
 @RobotConfig.register_subclass("meca500")
@@ -14,8 +15,12 @@ class Meca500Config(RobotConfig):
 
     # Standard camera configuration.
     # Focus and exposure are locked (autofocus/autoexposure off) so the visual
-    # statistics stay consistent between recording and rollout. `focus`/`exposure`
-    # values are driver-dependent — tune per camera/lighting if frames look off.
+    # statistics stay consistent between recording and rollout.
+    #
+    # The `focus`/`exposure` values below are only the fallback: the tuned values
+    # live in camera_settings.json and are applied in __post_init__, so tuning once
+    # with scripts/meca500/camera_tool.py applies to recording, teleop and inference
+    # alike. Structural settings (resolution, fps, fourcc, backend) stay here.
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
             "overhead_cam": OpenCVCameraConfig(
@@ -50,3 +55,11 @@ class Meca500Config(RobotConfig):
     precision_max_relative_target: float | dict[str, float] | None = None
 
     default_joint_vel: float = 25.0
+
+    def __post_init__(self) -> None:
+        # Apply the tuned exposure/focus for this rig before the base class validates
+        # the camera set. Keyed on `self.type` (the registered choice name), so the
+        # microscope subclass automatically picks up its own section instead of the
+        # base rig's - no per-subclass wiring, and no chance of the two crossing over.
+        apply_camera_settings(self.type, self.cameras)
+        super().__post_init__()

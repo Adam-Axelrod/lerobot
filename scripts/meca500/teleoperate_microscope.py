@@ -12,8 +12,8 @@ record_microscope.py.
 Workflow: edit the CONFIG block below, then `python teleoperate_microscope.py`.
 Ctrl-C to stop, edit, up-arrow, run again.
 
-Tip: find good exposure/focus + confirm camera indices first with
-scripts/meca500/check_camera.py, then paste the values below.
+Tip: confirm camera identities and tune exposure/focus first with
+scripts/meca500/camera_tool.py (it saves them; nothing to paste here).
 
 Equivalent to:
     lerobot-teleoperate --robot.type=meca500_microscope \
@@ -47,34 +47,20 @@ GAIN_ROT_FINE = 3.0  # deg/s rotation
 HOME_JOINTS = [70, 10, 10, 90, -80, 15]  # deg, joints 1-6
 HOME_TIMEOUT_S = 30.0
 
-# Camera tuning (driver-dependent units; tune with check_camera.py first).
-# The microscope cam has no software focus (fixed lens ring) — focus it by hand.
-OVERHEAD_EXPOSURE, OVERHEAD_FOCUS = -6, 100
-WRIST_EXPOSURE, WRIST_FOCUS = -5, 100
-MICROSCOPE_EXPOSURE = -6
+# Camera exposure/focus is NOT configured here — it lives in
+# src/lerobot/robots/meca500/camera_settings.json and is applied automatically by
+# Meca500MicroscopeConfig. Tune it with `python scripts/meca500/camera_tool.py`.
 # ------------------------------------------------------------------
-
-
-def build_robot_config() -> Meca500MicroscopeConfig:
-    """Microscope rig config with the CONFIG-block camera tuning applied.
-
-    autoexposure/autofocus are already set in the defaults, so assigning
-    exposure/focus after construction is safe (it skips the __post_init__ check).
-    """
-    cfg = Meca500MicroscopeConfig(id="meca500_microscope")
-    cfg.cameras["overhead_cam"].exposure = OVERHEAD_EXPOSURE
-    cfg.cameras["overhead_cam"].focus = OVERHEAD_FOCUS
-    cfg.cameras["wrist_cam"].exposure = WRIST_EXPOSURE
-    cfg.cameras["wrist_cam"].focus = WRIST_FOCUS
-    cfg.cameras["microscope_cam"].exposure = MICROSCOPE_EXPOSURE
-    return cfg
 
 
 def main() -> None:
     register_third_party_plugins()
 
     cfg = TeleoperateConfig(
-        robot=build_robot_config(),  # monitor_mode=True (default) — teleop owns activation
+        # monitor_mode=True (default) — teleop owns activation. Camera indices are
+        # resolved by USB identity and exposure/focus loaded from camera_settings.json,
+        # both inside __post_init__.
+        robot=Meca500MicroscopeConfig(id="meca500_microscope"),
         teleop=Meca500SpacemouseConfig(
             id="meca500_spacemouse",
             gain_tr=GAIN_TR,

@@ -1,0 +1,37 @@
+{
+  "_comment": "Tuned camera exposure/focus per rig. Edit with 'python scripts/meca500/camera_tool.py' rather than by hand. Structural settings (resolution/fps/fourcc/backend/index) live on the robot config dataclasses in config_meca500.py and config_meca500_microscope.py. Values are driver-dependent; see camera_settings.py for why this file is git-tracked.",
+  "meca500": {
+    "overhead_cam": {
+      "autoexposure": false,
+      "exposure": -6,
+      "autofocus": false,
+      "focus": 100
+    },
+    "wrist_cam": {
+      "autoexposure": false,
+      "exposure": -6,
+      "autofocus": false,
+      "focus": 100
+    }
+  },
+  "meca500_microscope": {
+    "overhead_cam": {
+      "autoexposure": false,
+      "exposure": -6,
+      "autofocus": false,
+      "focus": 100
+    },
+    "wrist_cam": {
+      "autoexposure": false,
+      "exposure": -5,
+      "autofocus": false,
+      "focus": 100
+    },
+    "microscope_cam": {
+      "autoexposure": false,
+      "exposure": -6,
+      "autofocus": null,
+      "focus": null
+    }
+  }
+}

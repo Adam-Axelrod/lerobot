@@ -16,7 +16,7 @@ Everything upstream LeRobot provides (datasets, policies, training, rollout) sti
 
 ## The task
 
-The target task is **positioning a stripper pipette under a microscope** with the Meca500 — a manipulation problem where the useful working scale is far smaller than the arm's approach scale. The rig carries three cameras: an overhead view, a wrist view, and a USB microscope camera looking at the workspace at 1280×1024.
+The target task is **positioning a stripper pipette under a microscope** with the Meca500 — a manipulation problem where the useful working scale is far smaller than the arm's approach scale. The rig carries three cameras: an overhead view, a wrist view, and a USB microscope camera looking at the workspace (a 16:9 sensor run at 640×360, the only mode fast enough for teleop).
 
 The core idea in this fork is that **coarse approach and fine positioning are different regimes**, and the policy should learn to switch between them rather than being tuned to a single motion scale.
 
@@ -64,8 +64,8 @@ In [scripts/meca500/](scripts/meca500/):
 | [microscope_inference.py](scripts/meca500/microscope_inference.py) | Run a trained policy on the microscope rig, with the precision clamp active — for both mid-training checkpoint checks and final-model inference |
 | [inference.py](scripts/meca500/inference.py) | Run a Hub-hosted trained policy via the episodic rollout strategy |
 | [reset.py](scripts/meca500/reset.py) | Drive the arm to a fixed home pose and disconnect |
-| [check_camera.py](scripts/meca500/check_camera.py) | Open one camera index and preview it, to identify which physical camera it is |
-| [verify_camera_settings.py](scripts/meca500/verify_camera_settings.py) | Sweep exposure and focus to *visually* confirm auto-exposure/autofocus are actually disabled |
+| [camera_tool.py](scripts/meca500/camera_tool.py) | The camera tool: identify each camera by stable USB id, preview them live titled by role, tune exposure/focus and save it for every other script (`--list`, `--verify`, `--rig`, `--cameras`) |
+| [check_positioning.py](scripts/meca500/check_positioning.py) | Overlay a recorded dataset frame on the live camera feed, to restore the desk layout before a rollout |
 
 And in [scripts/sim/](scripts/sim/):
 
@@ -83,11 +83,12 @@ Training is driven from PowerShell via [train.ps1](train.ps1), which wraps `lero
 The rig runs three USB cameras on one Windows machine, which is where most of the non-obvious configuration lives:
 
 - **Windows backends.** All cameras open with the DirectShow backend explicitly — the OpenCV `CAP_ANY` default picks MSMF on Windows and fails to open these UVC devices.
-- **Locked focus and exposure.** Autofocus and auto-exposure are disabled so visual statistics stay consistent between recording and rollout. On Windows this cannot be verified by read-back (DSHOW reports `-1.0`/`2.0` regardless, and `set()` returns success even when ignored), hence the sweep-based [verify_camera_settings.py](scripts/meca500/verify_camera_settings.py).
-- **USB bandwidth.** The microscope camera streams 1280×1024 MJPG at its native resolution (it snaps any other request); the wrist camera also uses MJPG so a third stream fits on the bus.
-- **Indices are not stable** across reboots and replugs — confirm them with `check_camera.py` before every session.
+- **Locked focus and exposure.** Autofocus and auto-exposure are disabled so visual statistics stay consistent between recording and rollout. On Windows this cannot be verified by read-back (DSHOW reports `-1.0`/`2.0` regardless, and `set()` returns success even when ignored), hence the sweep-based `camera_tool.py --verify`.
+- **One place for the tuning.** Exposure/focus live in [camera_settings.json](src/lerobot/robots/meca500/camera_settings.json) and are applied by the robot config's `__post_init__`, so tuning once with `camera_tool.py` applies to recording, teleop and inference alike. It is git-tracked deliberately: `LeRobotDataset` does not record camera settings, so version control is the only way to trace a dataset back to the settings that produced it. Structural settings (resolution, fps, codec) stay on the config dataclass.
+- **USB bandwidth.** The microscope camera (VMS700) is a slow 16:9 device — ~22fps at 640×360, ~5.5fps at 720p — so it runs at 640×360 MJPG; the wrist camera also uses MJPG so a third stream fits on the bus. Previewing all three at once may not be possible; use `camera_tool.py --cameras`.
+- **Indices are not stable** across reboots and replugs, so they are never trusted. Cameras are identified by stable USB device identity instead: the microscope by its unique DirectShow name, and the two identical arm cameras by USB device id — one reports a hardware serial and is pinned, the other is taken by elimination. If that identification fails the arm roles are left **unresolved with a warning** rather than guessed from enumeration order, which is how overhead and wrist previously got silently transposed after a replug.
 
-See [config_meca500_microscope.py](src/lerobot/robots/meca500_microscope/config_meca500_microscope.py).
+See [config_meca500_microscope.py](src/lerobot/robots/meca500_microscope/config_meca500_microscope.py) and [camera_resolver.py](src/lerobot/robots/meca500_microscope/camera_resolver.py).
 
 ---
 
@@ -136,7 +137,7 @@ The arm is reached over Ethernet at `192.168.0.100` by default.
 Typical loop:
 
 ```powershell
-python scripts/meca500/check_camera.py             # confirm camera indices
+python scripts/meca500/camera_tool.py              # confirm camera roles, tune exposure/focus
 python scripts/meca500/teleoperate_microscope.py   # tune gains, practise the task
 python scripts/meca500/record_microscope.py        # collect demonstrations
 . .\train.ps1; Start-Training -Dataset microscope_pipette

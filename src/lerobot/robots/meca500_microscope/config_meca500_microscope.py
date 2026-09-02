@@ -16,19 +16,21 @@ class Meca500MicroscopeConfig(Meca500Config):
 
     Identical Meca500 hardware/behaviour — only the camera set differs. Focus and
     exposure are locked (autofocus/autoexposure off) so the visual statistics stay
-    consistent between recording and rollout. `focus`/`exposure` are driver-dependent;
-    tune per camera/lighting with scripts/meca500/check_camera.py.
+    consistent between recording and rollout. The `focus`/`exposure` values below are
+    only a fallback: the tuned ones live in meca500/camera_settings.json and are
+    applied by the base class. Tune them with scripts/meca500/camera_tool.py.
 
-    Camera indices: the ``index_or_path`` values below are only a *fallback*. USB
-    indices are not stable on Windows — unplugging/replugging the microscope (or a
-    power-cycle) reshuffles them — so on Windows the indices are re-resolved at
-    construction by DirectShow device name (see camera_resolver.py):
-      * microscope = "VMS700"  (unique name, always found)
-      * overhead + wrist = "UC60 Video"  (same model; told apart only by USB port,
-        lower index = overhead, higher = wrist — keep each in its own port)
+    Camera indices: the ``index_or_path`` values below are also only a *fallback*.
+    USB indices are not stable on Windows — unplugging/replugging (or a power-cycle)
+    reshuffles them — so on Windows they are re-resolved at construction by stable
+    USB device identity (see camera_resolver.py):
+      * microscope = "VMS700"  (unique DirectShow name, always found)
+      * overhead + wrist = "UC60 Video"  (same model, same name; told apart by USB
+        device id — one reports a hardware serial and is pinned, the other is taken
+        by elimination, so neither depends on which port it is in)
     The built-in laptop webcam ("Chicony...") is ignored. Off Windows, or if the
-    lookup fails, the static indices below are used as-is. Confirm any changes with
-    scripts/meca500/check_camera.py.
+    lookup fails, the static indices below are used as-is and the arm cameras are
+    left UNRESOLVED rather than guessed. Confirm with scripts/meca500/camera_tool.py.
 
     NOTE: the microscope cam (VMS700) is a slow 16:9 USB device — it sustains
     ~22fps at 640x360, ~5.5fps at 1280x720, ~2.4fps at 1920x1080 (its native max),
@@ -38,13 +40,13 @@ class Meca500MicroscopeConfig(Meca500Config):
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
             "overhead_cam": OpenCVCameraConfig(
-                # Fallback index (re-resolved by name on Windows). "UC60 Video", lower index.
+                # Fallback index only (re-resolved by USB device id on Windows). "UC60 Video".
                 index_or_path=0,
                 fps=30,
                 width=640,
                 height=480,
                 # DirectShow, not the CAP_ANY default (which picks MSMF on Windows and
-                # fails to open these UVC cams). Matches scripts/meca500/check_camera.py.
+                # fails to open these UVC cams). Matches scripts/meca500/camera_tool.py.
                 backend=Cv2Backends.DSHOW,
                 autofocus=False,
                 focus=100,
@@ -52,7 +54,7 @@ class Meca500MicroscopeConfig(Meca500Config):
                 exposure=-6,
             ),
             "wrist_cam": OpenCVCameraConfig(
-                # Fallback index (re-resolved by name on Windows). "UC60 Video", higher index.
+                # Fallback index only (re-resolved by USB device id on Windows). "UC60 Video".
                 index_or_path=2,
                 fps=30,
                 width=640,
@@ -66,7 +68,7 @@ class Meca500MicroscopeConfig(Meca500Config):
                 exposure=-6,
             ),
             "microscope_cam": OpenCVCameraConfig(
-                # Fallback index (re-resolved by name on Windows). "VMS700".
+                # Fallback index only (re-resolved by DirectShow name on Windows). "VMS700".
                 index_or_path=3,
                 fps=30,
                 # The VMS700 is a 16:9 sensor; its only MJPG modes are 1920x1080,
