@@ -31,6 +31,7 @@ Requires: pip install 'lerobot[training]'  (accelerate + wandb extras).
 
 import random
 import sys
+from pathlib import Path
 
 # Import the policies package so every built-in architecture registers itself
 # with PreTrainedConfig's choice registry (act, diffusion, vqbet, tdmpc, ...).
@@ -53,7 +54,7 @@ from lerobot.utils.import_utils import register_third_party_plugins
 # Keep it stable only while resuming that same run. microscope_inference.py's RUN
 # must match this to evaluate the resulting checkpoints.
 RUN_NAME = "microscope_pipette_2026-09-02"
-RESUME = False  # True to continue an interrupted run in the same output dir
+RESUME = True  # True to continue an interrupted run in the same output dir
 
 # --- Dataset (Hugging Face Hub repo_id, or a local dataset cached under HF_LEROBOT_HOME) ---
 USER = "AdamAxelrod"
@@ -214,6 +215,25 @@ def main() -> None:
     # as the first arg makes it skip CLI parsing and use our config directly.
     # Clear argv so nothing downstream (validate() re-parses it) sees stray flags.
     sys.argv = [sys.argv[0]]
+
+    if RESUME:
+        # Resuming cannot be expressed on the config object alone: validate() reads
+        # --config_path straight out of sys.argv (draccus has already consumed it by
+        # then), so `resume=True` without it raises "A config_path is expected when
+        # resuming a run". Point it at the last checkpoint's train_config.json.
+        resume_config = (
+            Path("outputs/train") / RUN_NAME / "checkpoints" / "last" / "pretrained_model" / "train_config.json"
+        )
+        if not resume_config.is_file():
+            raise FileNotFoundError(
+                f"RESUME=True but no checkpoint to resume from: {resume_config} does not exist. "
+                f"Check RUN_NAME={RUN_NAME!r}, or set RESUME=False to start a fresh run "
+                f"(delete outputs/train/{RUN_NAME}/ first, since a fresh run refuses to "
+                f"overwrite an existing output dir)."
+            )
+        print(f"[resume] continuing from {resume_config}")
+        sys.argv.append(f"--config_path={resume_config}")
+
     train(cfg)
 
 
