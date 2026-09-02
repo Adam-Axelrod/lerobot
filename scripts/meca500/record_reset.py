@@ -1,8 +1,19 @@
-"""Record a dataset and auto-home the Meca500 between episodes.
+"""Record a dataset and auto-home the Meca500 around every episode.
 
-Same flow as `lerobot-record`, plus a one-shot `MoveJoints(HOME_JOINTS)` over
-the selected teleop's control socket after each demo (and on rerecord). Skipped
-after the final episode. Edit the CONFIG block below, then `python record_reset.py`.
+Same flow as `lerobot-record`, plus a one-shot `MoveJoints(HOME_JOINTS)` over the
+selected teleop's control socket:
+
+  * once before the first episode, and
+  * after each demo (and on rerecord), skipped after the final one.
+
+So every episode starts from the same joint configuration. The initial home
+matters: `connect()` runs the Meca's own `ActivateAndHome()`, which only
+references the encoders and does not travel, so without it episode 0 would start
+from wherever the arm was left while every later episode started from
+HOME_JOINTS. Homing also drops the precision toggle back to coarse, so
+`precision.state` starts at 0 for every episode including the first.
+
+Edit the CONFIG block below, then `python record_reset.py`.
 """
 
 import contextlib
@@ -99,6 +110,31 @@ def build_config() -> RecordConfig:
     )
 
 
+def _auto_home(teleop, play_sounds: bool, occasion: str) -> None:
+    """Drive the arm to the teleop's configured ``home_joints``, if it can.
+
+    Note this is NOT the Meca500's own ``ActivateAndHome()``, which only references
+    the encoders at connect time and does not travel anywhere. Only ``go_home()``
+    issues the ``MoveJoints(home_joints)`` that actually repositions the arm.
+
+    Duck-typed on ``go_home()``: a teleop that cannot home, or a homing move that
+    does not complete, is a warning rather than a failure — neither is worth losing
+    a recording session over.
+    """
+    if teleop is None or not hasattr(teleop, "go_home"):
+        logging.warning(
+            f"Teleop does not implement go_home(); skipping the auto-home {occasion}. "
+            "The arm will start from wherever it currently is."
+        )
+        return
+
+    try:
+        log_say("Homing robot", play_sounds)
+        teleop.go_home()
+    except Exception as e:
+        logging.warning(f"teleop.go_home() failed {occasion}, continuing: {e}")
+
+
 def record_with_reset(cfg: RecordConfig, clear_existing_cache: bool = True) -> LeRobotDataset:
     init_logging()
     logging.info(pformat(asdict(cfg)))
@@ -171,6 +207,14 @@ def record_with_reset(cfg: RecordConfig, clear_existing_cache: bool = True) -> L
     # bota driver (otherwise nanobind leaks) and the Meca500 control socket
     # (otherwise the controller faults on "control connection dropped").
     try:
+        # Home before episode 0 as well, not just between episodes. connect() runs
+        # the Meca's ActivateAndHome(), which only references the encoders — without
+        # this the first episode would start from wherever the arm happened to be
+        # left, while every later episode starts from home_joints. That single
+        # inconsistent start pose is invisible in the data and skews the initial
+        # state distribution the policy learns from.
+        _auto_home(teleop, cfg.play_sounds, "before the first episode")
+
         with VideoEncodingManager(dataset):
             recorded_episodes = 0
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
@@ -195,19 +239,8 @@ def record_with_reset(cfg: RecordConfig, clear_existing_cache: bool = True) -> L
                     (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
                 ):
                     # Auto-home over the teleop's control socket before the
-                    # manual reset window. Duck-typed so a missing go_home()
-                    # is just a warning.
-                    if teleop is not None and hasattr(teleop, "go_home"):
-                        try:
-                            log_say("Homing robot", cfg.play_sounds)
-                            teleop.go_home()
-                        except Exception as e:
-                            logging.warning(f"teleop.go_home() failed, continuing: {e}")
-                    else:
-                        logging.warning(
-                            "Teleop does not implement go_home(); skipping auto-home. "
-                            "record_reset.py expects meca500_bota."
-                        )
+                    # manual reset window.
+                    _auto_home(teleop, cfg.play_sounds, "between episodes")
 
                     log_say("Reset the environment", cfg.play_sounds)
                     record_loop(

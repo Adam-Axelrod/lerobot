@@ -7,8 +7,9 @@ gain_rot_fine for fine positioning (press Enter again to toggle back to coarse).
 toggle state (`precision.state`) is recorded as an action channel and reset to coarse
 on the between-episode auto-home.
 
-Uses the auto-home-between-episodes flow (record_reset.record_with_reset) so the arm
-homes after each demo and the precision toggle resets for the next approach.
+Uses the auto-home flow (record_reset.record_with_reset) so the arm homes to
+HOME_JOINTS before the first episode and after each demo, and the precision toggle
+resets for the next approach. Every episode therefore starts from the same pose.
 
 Workflow: edit the CONFIG block below, then `python record_microscope.py`.
 Ctrl-C to stop, edit, up-arrow, run again.
