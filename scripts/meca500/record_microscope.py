@@ -27,10 +27,10 @@ from lerobot.utils.import_utils import register_third_party_plugins
 
 # ----------------------------- CONFIG -----------------------------
 USER = "AdamAxelrod"
-NAME = "microscope_pipette"
+NAME = "microscope_pipette_2026-09-02"
 TASK = "move_pipette_under_microscope"
 
-NUM_EPISODES = 10
+NUM_EPISODES = 100
 FPS = 20
 EPISODE_TIME_S = 120
 RESET_TIME_S = 60
