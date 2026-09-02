@@ -30,6 +30,7 @@ Requires: pip install 'lerobot[training]'  (accelerate + wandb extras).
 """
 
 import random
+import re
 import sys
 from pathlib import Path
 
@@ -99,6 +100,9 @@ HF_USER = "AdamAxelrod"  # only used to build the model repo_id when pushing
 
 USE_WANDB = True
 WANDB_PROJECT = "meca500_microscope"
+# Which wandb run a RESUME should reattach to. None = auto-detect the most recent
+# run under this run's output dir (see find_wandb_run_id). Set explicitly to pin one.
+WANDB_RUN_ID: str | None = None
 # ------------------------------------------------------------------
 
 
@@ -165,6 +169,27 @@ def _report_precision_channel(meta: LeRobotDatasetMetadata) -> None:
         )
 
 
+def find_wandb_run_id(run_name: str) -> str | None:
+    """The most recent wandb run id under this run's output dir, or None.
+
+    Needed on Windows. When resuming, WandBLogger falls back to
+    get_wandb_run_id_from_filesystem(), which globs ``wandb/latest-run/run-*`` --
+    but ``latest-run`` is a symlink wandb does not create on Windows, and that
+    helper also splits paths on "/" which Windows globs never contain. Either way
+    it raises "Couldn't get the previous WandB run ID for run resumption."
+
+    Passing ``run_id`` explicitly skips that lookup entirely, so this reads the id
+    straight off the run directory name (``run-<timestamp>-<id>/run-<id>.wandb``),
+    picking the newest by mtime if a run dir has accumulated more than one.
+    """
+    wandb_dir = Path("outputs/train") / run_name / "wandb"
+    runs = sorted(wandb_dir.glob("run-*/run-*.wandb"), key=lambda p: p.stat().st_mtime)
+    if not runs:
+        return None
+    match = re.fullmatch(r"run-(.+)\.wandb", runs[-1].name)
+    return match.group(1) if match else None
+
+
 def build_policy_config() -> PreTrainedConfig:
     """Instantiate the chosen policy config, leaving input/output features to be
     inferred from the dataset (so the full 7-dim action, incl. precision.state, is used)."""
@@ -192,6 +217,19 @@ def main() -> None:
 
     episodes, _ = build_episode_subset(f"{USER}/{NAME}")
 
+    # Only relevant when resuming: wandb reattaches to the existing run rather than
+    # starting a second one for the same training run.
+    wandb_run_id = WANDB_RUN_ID
+    if USE_WANDB and RESUME and wandb_run_id is None:
+        wandb_run_id = find_wandb_run_id(RUN_NAME)
+        if wandb_run_id:
+            print(f"[wandb] resuming run {wandb_run_id}")
+        else:
+            print(
+                f"[wandb] no previous run found under outputs/train/{RUN_NAME}/wandb — "
+                f"resume will fail. Set WANDB_RUN_ID, or USE_WANDB=False for this run."
+            )
+
     cfg = TrainPipelineConfig(
         dataset=DatasetConfig(
             repo_id=f"{USER}/{NAME}",
@@ -208,7 +246,7 @@ def main() -> None:
         steps=STEPS,
         save_freq=SAVE_FREQ,
         log_freq=LOG_FREQ,
-        wandb=WandBConfig(enable=USE_WANDB, project=WANDB_PROJECT),
+        wandb=WandBConfig(enable=USE_WANDB, project=WANDB_PROJECT, run_id=wandb_run_id),
     )
 
     # train() is @parser.wrap()-decorated: passing a TrainPipelineConfig instance
