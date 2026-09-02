@@ -5,13 +5,13 @@ conda env with a long, machine-specific path. This launcher finds that
 interpreter for you and re-runs the real script under it, so you can start it
 with whatever ``python`` happens to be on your PATH:
 
-    python scripts/meca500/sim.py           # open the GUI viewer
-    python scripts/meca500/sim.py --test    # headless smoke test, exits on its own
+    python scripts/sim/sim.py           # open the GUI viewer
+    python scripts/sim/sim.py --test    # headless smoke test, exits on its own
 
 Any other flags are passed straight through to ``load_meca500_sim.py``:
 
-    python scripts/meca500/sim.py --jog-gain 0.5
-    python scripts/meca500/sim.py --headless --steps 500
+    python scripts/sim/sim.py --jog-gain 0.5
+    python scripts/sim/sim.py --headless --steps 500
 
 Interpreter lookup order:
   1. ``$MECA_SIM_PYTHON`` if set (use this if your env lives somewhere unusual)
@@ -77,7 +77,7 @@ def find_python() -> Path:
     sys.exit(
         "[sim] Could not find an Isaac Sim Python.\n"
         "      Activate the Isaac Lab conda env and re-run, or point at it directly:\n"
-        "        MECA_SIM_PYTHON=/path/to/envs/isaaclab/bin/python python scripts/meca500/sim.py"
+        "        MECA_SIM_PYTHON=/path/to/envs/isaaclab/bin/python python scripts/sim/sim.py"
     )
 
 

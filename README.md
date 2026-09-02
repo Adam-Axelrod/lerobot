@@ -46,7 +46,14 @@ A degenerate "teleoperator" that just emits a fixed joint pose. Used as the rese
 
 ## Scripts
 
-Everything in [scripts/meca500/](scripts/meca500/) follows the same pattern: a `CONFIG` block at the top of the file, then `python <script>.py`. Ctrl-C, edit, up-arrow, run again. Each docstring lists the equivalent `lerobot-*` CLI invocation.
+Scripts are split by the environment they run in:
+
+- **[scripts/meca500/](scripts/meca500/)** — real-hardware work (teleop, recording, cameras, inference). Runs in the hardware `.venv`.
+- **[scripts/sim/](scripts/sim/)** — Isaac Sim / Isaac Lab work. Runs in the separate `env_isaaclab` conda env, *not* the `.venv` — see [Simulation](#simulation--isaac-lab--isaac-sim).
+
+Both follow the same pattern: a `CONFIG` block at the top of the file, then `python <script>.py`. Ctrl-C, edit, up-arrow, run again. Each docstring lists the equivalent `lerobot-*` CLI invocation.
+
+In [scripts/meca500/](scripts/meca500/):
 
 | Script | Purpose |
 |---|---|
@@ -59,7 +66,13 @@ Everything in [scripts/meca500/](scripts/meca500/) follows the same pattern: a `
 | [reset.py](scripts/meca500/reset.py) | Drive the arm to a fixed home pose and disconnect |
 | [check_camera.py](scripts/meca500/check_camera.py) | Open one camera index and preview it, to identify which physical camera it is |
 | [verify_camera_settings.py](scripts/meca500/verify_camera_settings.py) | Sweep exposure and focus to *visually* confirm auto-exposure/autofocus are actually disabled |
-| [load_meca500_sim.py](scripts/meca500/load_meca500_sim.py) | Isaac Sim scene (see below) |
+
+And in [scripts/sim/](scripts/sim/):
+
+| Script | Purpose |
+|---|---|
+| [sim.py](scripts/sim/sim.py) | Launcher — finds the Isaac Sim interpreter and re-runs `load_meca500_sim.py` under it, so you can start the sim with whatever `python` is on your PATH |
+| [load_meca500_sim.py](scripts/sim/load_meca500_sim.py) | The Isaac Sim scene itself (see [Simulation](#simulation--isaac-lab--isaac-sim)) |
 
 Training is driven from PowerShell via [train.ps1](train.ps1), which wraps `lerobot-train` with the run naming, output-dir collision handling, and logging used here.
 
@@ -80,7 +93,7 @@ See [config_meca500_microscope.py](src/lerobot/robots/meca500_microscope/config_
 
 ## Simulation — Isaac Lab / Isaac Sim
 
-[scripts/meca500/load_meca500_sim.py](scripts/meca500/load_meca500_sim.py) brings the Meca500 up in Isaac Sim as an Isaac Lab `Articulation`, on a ground plane with the Fusion 360 desk environment spawned as a static collider, and lets you jog all 6 joints with the same SpaceMouse used on the real arm (any device button snaps back to home).
+[scripts/sim/load_meca500_sim.py](scripts/sim/load_meca500_sim.py) brings the Meca500 up in Isaac Sim as an Isaac Lab `Articulation`, on a ground plane with the Fusion 360 desk environment spawned as a static collider, and lets you jog all 6 joints with the same SpaceMouse used on the real arm (any device button snaps back to home).
 
 Notes worth knowing before running it:
 
@@ -89,10 +102,17 @@ Notes worth knowing before running it:
 - `hidapi.dll` is not bundled with the Isaac Sim environment; the script reuses the copy in the hardware `.venv` and prepends it to `PATH`, because easyhid resolves it via `ctypes.util.find_library()` which ignores `os.add_dll_directory`.
 - `simulation_app.close()` can hang indefinitely on Windows during CUDA/physics teardown, so the script ends with `os._exit(0)`.
 
-It runs in a **separate Isaac Sim conda environment**, not the hardware `.venv`:
+It runs in a **separate Isaac Sim conda environment**, not the hardware `.venv`. [sim.py](scripts/sim/sim.py) finds that interpreter for you, so this works from any `python`:
 
 ```powershell
-& "$env:LOCALAPPDATA\miniconda3\envs\env_isaaclab\python.exe" scripts/meca500/load_meca500_sim.py
+python scripts/sim/sim.py            # open the GUI viewer
+python scripts/sim/sim.py --test     # headless smoke test, exits on its own
+```
+
+Or invoke the Isaac interpreter directly if you prefer:
+
+```powershell
+& "$env:LOCALAPPDATA\miniconda3\envs\env_isaaclab\python.exe" scripts/sim/load_meca500_sim.py
 ```
 
 Useful flags: `--headless`, `--steps N`, `--jog-gain`, `--deadzone`. `AXIS_SIGNS` in the script flips a joint's jog direction.
