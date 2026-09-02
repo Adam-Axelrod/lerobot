@@ -43,8 +43,21 @@ from lerobot.scripts.lerobot_train import train
 from lerobot.utils.import_utils import register_third_party_plugins
 
 # ----------------------------- CONFIG -----------------------------
+# --- Run identity ---
+# Names this training run. Two things derive from it, so change it for every new
+# run or the script will refuse to start:
+#   * checkpoints -> outputs/train/<RUN_NAME>/checkpoints/<step>/pretrained_model
+#     (RESUME=False refuses to start if that directory already exists)
+#   * the pushed model repo -> <HF_USER>/<RUN_NAME>_<ARCHITECTURE>, which is
+#     OVERWRITTEN if it already exists on the Hub
+# Keep it stable only while resuming that same run. microscope_inference.py's RUN
+# must match this to evaluate the resulting checkpoints.
+RUN_NAME = "microscope_pipette_2026-09-02"
+RESUME = False  # True to continue an interrupted run in the same output dir
+
 # --- Dataset (Hugging Face Hub repo_id, or a local dataset cached under HF_LEROBOT_HOME) ---
-DATASET_REPO_ID = "AdamAxelrod/microscope_pipette"
+USER = "AdamAxelrod"
+NAME = "microscope_pipette_2026-09-02"
 TASK = "move_pipette_under_microscope"  # informational; used for the run/model name
 
 # --- Architecture ---
@@ -79,10 +92,7 @@ DEVICE = "cuda"  # "cuda", "cuda:0", "cpu", or "mps". Accelerate auto-detects th
 VIDEO_BACKEND = "pyav"
 
 # --- Output / logging ---
-# Checkpoints go to outputs/train/<RUN_NAME>/... . Keep RUN_NAME stable to resume.
-RUN_NAME = "microscope_pipette"
-RESUME = False  # True to continue an interrupted run in the same output dir
-
+# (RUN_NAME / RESUME live at the top of this block — they name the run.)
 PUSH_TO_HUB = True  # push the trained policy to the Hub at the end
 HF_USER = "AdamAxelrod"  # only used to build the model repo_id when pushing
 
@@ -179,11 +189,11 @@ def build_policy_config() -> PreTrainedConfig:
 def main() -> None:
     register_third_party_plugins()
 
-    episodes, _ = build_episode_subset(DATASET_REPO_ID)
+    episodes, _ = build_episode_subset(f"{USER}/{NAME}")
 
     cfg = TrainPipelineConfig(
         dataset=DatasetConfig(
-            repo_id=DATASET_REPO_ID,
+            repo_id=f"{USER}/{NAME}",
             episodes=episodes,
             video_backend=VIDEO_BACKEND,
         ),
