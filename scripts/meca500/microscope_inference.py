@@ -3,9 +3,14 @@
 The general inference script for the microscope rig (overhead + wrist + microscope
 cameras) and the 7-dim action space (6 joints + the predicted `precision.state`).
 It runs any trained policy on the arm — whether you're validating an intermediate
-training checkpoint or deploying the final model for real use. By default it loads
-a local checkpoint from outputs/train/<RUN>/checkpoints/<CKPT>/; point CKPT at the
-final step to run your finished model, or an earlier step to compare checkpoints.
+training checkpoint or deploying the final model for real use. CKPT selects which:
+the final local checkpoint (the default), a specific earlier step to compare
+against, or the pushed Hub model. Checkpoint resolution is shared with
+inference.py so both scripts behave identically; see `resolve_policy` there.
+
+Rollouts from different checkpoints get distinct dataset repo_ids
+(rollout_<RUN>_<CKPT>), so evaluating a second checkpoint cannot silently
+overwrite the first.
 
 When the policy's predicted `precision.state` crosses 0.5, Meca500.send_action clamps
 per-step joint motion to PRECISION_MAX_REL_TARGET instead of MAX_REL_TARGET, so the
@@ -26,7 +31,10 @@ Equivalent to:
 """
 
 import sys
-from pathlib import Path
+
+# HUB is unused by default but is part of the CONFIG vocabulary below: set
+# CKPT = HUB to run the pushed Hub model instead of a local checkpoint.
+from inference import HUB, resolve_policy  # noqa: F401
 
 from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.configs.policies import PreTrainedConfig
@@ -39,8 +47,10 @@ from lerobot.utils.import_utils import register_third_party_plugins
 # ----------------------------- CONFIG -----------------------------
 USER = "AdamAxelrod"
 RUN = "microscope_pipette"
-# None → automatically use the final (highest-numbered) checkpoint. Or set a
-# zero-padded step number (e.g. "025000") to pin an earlier one for comparison.
+# Which policy to run (see resolve_policy in inference.py):
+#   None       → the FINAL local checkpoint under outputs/train/<RUN>/checkpoints/
+#   "025000"   → that specific local checkpoint, to compare against an earlier step
+#   HUB        → the pushed Hub model <USER>/<RUN>_model
 CKPT: str | None = None
 TASK = "move_pipette_under_microscope"
 
@@ -65,38 +75,10 @@ DISPLAY_DATA = True
 # ------------------------------------------------------------------
 
 
-def resolve_checkpoint(run: str, ckpt: str | None) -> tuple[str, Path]:
-    """Resolve CKPT to a concrete checkpoint dir, defaulting to the final one.
-
-    ckpt=None picks the highest-numbered step under outputs/train/<run>/checkpoints/;
-    otherwise the given step is used verbatim. Returns (step, pretrained_model_path).
-    """
-    checkpoints_dir = Path("outputs/train") / run / "checkpoints"
-
-    if ckpt is None:
-        steps = sorted(
-            d.name for d in checkpoints_dir.glob("*") if d.is_dir() and d.name.isdigit()
-        )
-        if not steps:
-            raise FileNotFoundError(
-                f"No checkpoints found under {checkpoints_dir}. Check RUN='{run}'."
-            )
-        ckpt = steps[-1]
-        print(f"[ckpt] CKPT=None → using final checkpoint {ckpt}.")
-
-    policy_path = checkpoints_dir / ckpt / "pretrained_model"
-    if not policy_path.is_dir():
-        raise FileNotFoundError(
-            f"Checkpoint not found: {policy_path}. "
-            f"Check RUN='{run}' and CKPT='{ckpt}' (zero-padded step number)."
-        )
-    return ckpt, policy_path
-
-
 def main() -> None:
     register_third_party_plugins()
 
-    ckpt, policy_path = resolve_checkpoint(RUN, CKPT)
+    label, policy_path = resolve_policy(USER, RUN, CKPT)
 
     policy_overrides: list[str] = []
     if TEMPORAL_ENSEMBLE_COEFF is not None:
@@ -120,7 +102,7 @@ def main() -> None:
             precision_max_relative_target=PRECISION_MAX_REL_TARGET,
         ),
         dataset=DatasetRecordConfig(
-            repo_id=f"{USER}/rollout_{RUN}_{ckpt}",
+            repo_id=f"{USER}/rollout_{RUN}" + (f"_{label}" if label else ""),
             single_task=TASK,
             fps=FPS,
             num_episodes=NUM_EPISODES,

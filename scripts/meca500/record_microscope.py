@@ -7,7 +7,7 @@ gain_rot_fine for fine positioning (press Enter again to toggle back to coarse).
 toggle state (`precision.state`) is recorded as an action channel and reset to coarse
 on the between-episode auto-home.
 
-Uses the auto-home flow (record_reset.record_with_reset) so the arm homes to
+Uses the auto-home flow (record.record_with_reset) so the arm homes to
 HOME_JOINTS before the first episode and after each demo, and the precision toggle
 resets for the next approach. Every episode therefore starts from the same pose.
 
@@ -18,7 +18,7 @@ Tip: confirm camera identities and tune exposure/focus first with
 scripts/meca500/camera_tool.py (it saves them; nothing to paste here).
 """
 
-from record_reset import record_with_reset
+from record import record_with_reset
 
 from lerobot.robots.meca500_microscope.config_meca500_microscope import Meca500MicroscopeConfig
 from lerobot.scripts.lerobot_record import DatasetRecordConfig, RecordConfig

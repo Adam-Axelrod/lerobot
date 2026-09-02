@@ -35,6 +35,6 @@ class Meca500SpacemouseConfig(TeleoperatorConfig):
     # Internal control loop period (seconds). 5 ms ≈ 200 Hz is plenty for a SpaceMouse.
     loop_dt: float = 0.005
 
-    # Auto-home target used by record_reset.py between episodes.
+    # Auto-home target used by scripts/meca500/record.py around every episode.
     home_joints: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 90.0, 0.0])
     home_timeout_s: float = 30.0

@@ -59,10 +59,10 @@ In [scripts/meca500/](scripts/meca500/):
 |---|---|
 | [teleoperate_microscope.py](scripts/meca500/teleoperate_microscope.py) | SpaceMouse teleop on the microscope rig — practice the Enter toggle and **H** reset, tune gains |
 | [record_microscope.py](scripts/meca500/record_microscope.py) | Record demonstrations on the microscope rig, with auto-home between episodes |
-| [record_reset.py](scripts/meca500/record_reset.py) | Generic record loop that issues a `MoveJoints(HOME_JOINTS)` after each episode (and on re-record) |
-| [teleoperate.py](scripts/meca500/teleoperate.py) / [record.py](scripts/meca500/record.py) | Bota hand-guidance equivalents |
+| [record.py](scripts/meca500/record.py) | Record on the plain rig with either teleoperator (`TELEOP = "bota"` / `"spacemouse"`), auto-homing to `HOME_JOINTS` before the first episode and after each one. Also owns the shared `record_with_reset` loop that `record_microscope.py` uses |
+| [teleoperate.py](scripts/meca500/teleoperate.py) | Bota hand-guidance teleop |
 | [microscope_inference.py](scripts/meca500/microscope_inference.py) | Run a trained policy on the microscope rig, with the precision clamp active — for both mid-training checkpoint checks and final-model inference |
-| [inference.py](scripts/meca500/inference.py) | Run a Hub-hosted trained policy via the episodic rollout strategy |
+| [inference.py](scripts/meca500/inference.py) | Run a trained policy on the plain rig — `CKPT` selects the pushed Hub model, the final local checkpoint, or a specific earlier step. Also owns the shared `resolve_policy` used by `microscope_inference.py` |
 | [reset.py](scripts/meca500/reset.py) | Drive the arm to a fixed home pose and disconnect |
 | [camera_tool.py](scripts/meca500/camera_tool.py) | The camera tool: identify each camera by stable USB id, preview them live titled by role, tune exposure/focus and save it for every other script (`--list`, `--verify`, `--rig`, `--cameras`) |
 | [check_positioning.py](scripts/meca500/check_positioning.py) | Overlay a recorded dataset frame on the live camera feed, to restore the desk layout before a rollout |

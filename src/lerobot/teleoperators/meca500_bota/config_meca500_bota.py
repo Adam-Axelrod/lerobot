@@ -23,6 +23,6 @@ class Meca500BotaConfig(TeleoperatorConfig):
 
     alpha: float = 0.1 #  0.1 Simple low pass filter factor
 
-    # Target pose used by go_home() (invoked between episodes by record_reset.py).
+    # Target pose used by go_home() (invoked around every episode by scripts/meca500/record.py).
     home_joints: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 90.0, 0.0])
     home_timeout_s: float = 30.0
