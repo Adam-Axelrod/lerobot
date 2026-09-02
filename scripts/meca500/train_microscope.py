@@ -255,6 +255,18 @@ def main() -> None:
     sys.argv = [sys.argv[0]]
 
     if RESUME:
+        # validate() applies the policy's optimizer/scheduler presets only when NOT
+        # resuming, because upstream's resume path expects the whole config to have
+        # been *loaded from* the checkpoint's train_config.json by draccus. This
+        # script builds the config in Python instead, so on resume nothing populates
+        # them and make_optimizer_and_scheduler() raises "Optimizer config is
+        # required". Apply the presets ourselves — they are what the original run
+        # used (verified field-for-field against the checkpoint's train_config.json),
+        # and the optimizer *state* is restored separately from
+        # training_state/optimizer_state.safetensors.
+        cfg.optimizer = cfg.policy.get_optimizer_preset()
+        cfg.scheduler = cfg.policy.get_scheduler_preset()
+
         # Resuming cannot be expressed on the config object alone: validate() reads
         # --config_path straight out of sys.argv (draccus has already consumed it by
         # then), so `resume=True` without it raises "A config_path is expected when
