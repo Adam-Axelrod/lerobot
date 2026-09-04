@@ -19,7 +19,15 @@ from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.utils import init_logging
 
 # ----------------------------- CONFIG -----------------------------
-HOME_JOINTS = [0.0, 0.0, 0.0, 0.0, 90.0, 0.0]
+# Pick the pose for the rig you are actually on — they are NOT interchangeable.
+# Driving to the wrong one parks the arm somewhere the trained policy has never
+# seen, which is worse than not resetting at all. Keep these in sync with the
+# HOME_JOINTS in the corresponding record_*/[microscope_]inference scripts.
+#
+#   microscope rig : [70, 10, 10, 90, -80, 15]   (record_microscope.py,
+#                                                 microscope_inference.py)
+#   plain rig      : [0.0, 0.0, 0.0, 0.0, 90.0, 0.0]  (record.py, inference.py)
+HOME_JOINTS = [70, 10, 10, 90, -80, 15]
 MOVE_TIMEOUT_S = 30.0  # max wait for the arm to reach HOME_JOINTS
 # ------------------------------------------------------------------
 

@@ -38,10 +38,13 @@ from inference import HUB, resolve_policy  # noqa: F401
 
 from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.robots.meca500.config_meca500 import Meca500Config
+from lerobot.robots.meca500.meca500 import Meca500
 from lerobot.robots.meca500_microscope.config_meca500_microscope import Meca500MicroscopeConfig
 from lerobot.rollout.configs import EpisodicStrategyConfig, RolloutConfig
 from lerobot.scripts.lerobot_rollout import rollout
 from lerobot.teleoperators.meca500_home.config_meca500_home import Meca500HomeConfig
+from lerobot.teleoperators.meca500_home.meca500_home import Meca500Home
 from lerobot.utils.import_utils import register_third_party_plugins
 
 # ----------------------------- CONFIG -----------------------------
@@ -67,6 +70,11 @@ MAX_REL_TARGET: float | None = None
 PRECISION_MAX_REL_TARGET: float | None = 0.5
 
 HOME_JOINTS = [70, 10, 10, 90, -80, 15]  # matches record_microscope.py, so rollouts start where demos did
+# Drive the arm to HOME_JOINTS before episode 0. The rollout homes BETWEEN episodes
+# but not before the first one (see home_arm), so without this the first rollout
+# starts from wherever the arm was left.
+HOME_BEFORE_START = True
+HOME_TIMEOUT_S = 30.0
 NUM_EPISODES = 10
 # The rollout runs for a fixed time — the policy cannot end an episode itself — so
 # this must exceed the longest demonstration or a run gets cut off mid-approach.
@@ -80,6 +88,38 @@ DISPLAY_DATA = True
 # False = console log only; the same messages are still written to the terminal.
 PLAY_SOUNDS = False
 # ------------------------------------------------------------------
+
+
+def home_arm() -> None:
+    """Drive the arm to HOME_JOINTS before the rollout starts.
+
+    EpisodicStrategy.run() goes straight into its episode loop -- it homes between
+    episodes (the meca500_home teleop drives the reset phase) but never before
+    episode 0. Every demonstration in the training set started at HOME_JOINTS, so
+    without this the first rollout begins from an out-of-distribution pose, and
+    with MAX_REL_TARGET=None coarse motion is unclamped while the policy works out
+    what to do from a state it has never seen.
+
+    Mirrors reset.py's sequence, including ``cameras={}``: homing needs no camera,
+    and the rig's three streams share one USB bus, so opening them here just to
+    close them again before the rollout re-opens them is worth avoiding.
+    """
+    robot = Meca500(Meca500Config(id="meca500", monitor_mode=False, cameras={}))
+    teleop = Meca500Home(Meca500HomeConfig(id="meca500_home", home=HOME_JOINTS))
+
+    robot.connect()  # activates + homes to factory zero
+    robot.configure()
+    teleop.connect()
+    try:
+        print(f"[home] driving to {HOME_JOINTS} before the first episode")
+        robot.send_action(teleop.get_action())
+        # Block until the motion queue drains, or disconnect() ClearMotion()s the
+        # move mid-flight and the rollout starts from a half-completed pose.
+        robot.robot.WaitIdle(timeout=HOME_TIMEOUT_S)
+        print("[home] reached")
+    finally:
+        teleop.disconnect()
+        robot.disconnect()
 
 
 def main() -> None:
@@ -124,6 +164,11 @@ def main() -> None:
         display_data=DISPLAY_DATA,
         play_sounds=PLAY_SOUNDS,
     )
+
+    # After the config is built (so a bad CKPT or config fails before the arm
+    # moves) and before the rollout takes over the control connection.
+    if HOME_BEFORE_START:
+        home_arm()
 
     rollout(cfg)
 
