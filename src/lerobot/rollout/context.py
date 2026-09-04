@@ -391,7 +391,22 @@ def build_rollout_context(
     # x/y/theta.vel = 9-dim action). Pure-arm robots have no .vel keys, so this is
     # a no-op for them. Without the .vel keys the base velocities are silently
     # dropped from dataset_features[ACTION]/ordered_action_keys and the base never moves.
-    action_features_hw = {k: v for k, v in robot.action_features.items() if k.endswith((".pos", ".vel"))}
+    #
+    # FORK PATCH (meca500): ".state" added. The Meca500 predicts `precision.state`
+    # as a 7th action channel that gates a tighter per-step joint clamp; it is not
+    # a kinematic target, so it ends in neither .pos nor .vel and this filter
+    # dropped it. The failure was silent end to end: precision.state never reached
+    # dataset_features[ACTION], so SyncInferenceEngine.get_action() mapped the
+    # policy's 7-dim output to names and re-selected only the 6 joint keys,
+    # send_action's `action.get("precision.state", 0.0)` read 0.0 every step, and
+    # the gate could never fire. The one diagnostic that would have caught it
+    # (_resolve_action_key_order's length-mismatch warning) is skipped because
+    # ACT checkpoints carry no action_feature_names, so it short-circuits on the
+    # `not policy_action_names` branch first.
+    # If a merge reverts this line, the precision clamp silently stops working.
+    action_features_hw = {
+        k: v for k, v in robot.action_features.items() if k.endswith((".pos", ".vel", ".state"))
+    }
 
     # The action side is always needed: sync inference reads action names from
     # ``dataset_features[ACTION]`` to map policy tensors back to robot actions.

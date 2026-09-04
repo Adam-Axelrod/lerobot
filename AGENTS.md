@@ -106,6 +106,30 @@ All mapped in `pyproject.toml [project.scripts]`:
 - **`benchmarks/`** — Performance benchmarking scripts.
 - **Root files**: `pyproject.toml` (single source of truth for deps, build, tool config), `Makefile` (E2E test targets), `uv.lock`, `CONTRIBUTING.md` & `README.md` (general information).
 
+## Upstream files patched by this fork
+
+Most Meca500 work lives in files upstream does not have, so merges are largely clean.
+These are the exceptions — edits *inside* upstream files, which **conflict on merge and
+several of which fail silently if reverted**. After merging `upstream/main`, check each
+survived (`git diff upstream/main -- src/lerobot/` lists them).
+
+| File | Patch | Symptom if lost |
+|---|---|---|
+| `rollout/context.py` | `action_features_hw` filter accepts `.state` as well as `.pos`/`.vel`, so `precision.state` reaches the robot. Marked `FORK PATCH` | **Silent.** Precision mode never activates during rollout and its tighter joint clamp never applies — no error, because the joints still map correctly by name |
+| `cameras/opencv/camera_opencv.py` | `_configure_exposure_and_focus()` + helpers, called from `_configure_capture_settings()` | **Silent.** Exposure/focus stop being applied, so visual statistics drift between recording and rollout |
+| `cameras/opencv/configuration_opencv.py` | `autofocus` / `focus` / `autoexposure` / `exposure` fields + validation | Loud: `camera_settings.json` fails on unknown fields |
+| `rollout/strategies/episodic.py` | `has_pending_frames()` guard before `save_episode()` | Loud: crash when an episode ends with an empty buffer |
+| `utils/utils.py` | `say()` also catches `subprocess.CalledProcessError` | Loud: crash on Windows TTS failure (only when `play_sounds=True`) |
+| `configs/train.py` | Coerce a `str` `output_dir` to `Path` | Loud: `AttributeError` on path ops |
+| `cameras/utils.py` | Adds `get_cv2_backend()` | Loud: `ImportError` in scripts that use it |
+| `scripts/lerobot_record.py` | Stray blank line only — no behaviour. Safe to drop | None |
+
+The **silent** ones are the dangerous ones: nothing errors, the run looks normal, and the
+defect only shows up in the recorded data.
+
+Everything else is additive (new robots, teleoperators, `camera_settings.*`) or lives in
+`scripts/` — see the per-script docstrings.
+
 ## Notes
 
 - **Mypy is gradual**: strict only for `lerobot.envs`, `lerobot.configs`, `lerobot.optim`, `lerobot.model`, `lerobot.cameras`, `lerobot.motors`, `lerobot.transport`. Add type annotations when modifying these modules.
