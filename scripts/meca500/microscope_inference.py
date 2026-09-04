@@ -30,6 +30,7 @@ Equivalent to:
         --dataset.single_task=<TASK> --dataset.push_to_hub=False
 """
 
+import contextlib
 import sys
 
 # HUB is unused by default but is part of the CONFIG vocabulary below: set
@@ -113,13 +114,32 @@ def home_arm() -> None:
     try:
         print(f"[home] driving to {HOME_JOINTS} before the first episode")
         robot.send_action(teleop.get_action())
-        # Block until the motion queue drains, or disconnect() ClearMotion()s the
-        # move mid-flight and the rollout starts from a half-completed pose.
+        # Block until the motion queue drains, or the teardown below ClearMotion()s
+        # the move mid-flight and the rollout starts from a half-completed pose.
         robot.robot.WaitIdle(timeout=HOME_TIMEOUT_S)
         print("[home] reached")
     finally:
         teleop.disconnect()
-        robot.disconnect()
+        # Release the control socket WITHOUT deactivating. Meca500.disconnect()
+        # calls DeactivateRobot(), which drops the brakes: the arm goes limp and
+        # sags out of the pose we just set, and the rollout's own connect() then
+        # re-runs ActivateAndHome on top. Leaving it activated means the rollout
+        # reconnects to an arm already holding HOME_JOINTS, and its
+        # ActivateAndHome is a fast no-op on an already-homed robot.
+        #
+        # This is still a graceful mecademicpy Disconnect(), not a dropped socket
+        # -- an ungraceful drop faults the controller with "control connection
+        # dropped". Falls back to the full disconnect if anything goes wrong, so
+        # the arm is never left both energised and unreachable.
+        try:
+            robot.robot.Disconnect()
+            robot.robot.WaitDisconnected(timeout=5)
+            robot._connected = False
+            print("[home] control socket released, arm still holding position")
+        except Exception as e:
+            print(f"[home] gentle disconnect failed ({e}); falling back to full disconnect")
+            with contextlib.suppress(Exception):
+                robot.disconnect()
 
 
 def main() -> None:
