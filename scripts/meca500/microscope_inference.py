@@ -46,7 +46,7 @@ from lerobot.utils.import_utils import register_third_party_plugins
 
 # ----------------------------- CONFIG -----------------------------
 USER = "AdamAxelrod"
-RUN = "microscope_pipette"
+RUN = "microscope_pipette_2026-09-02"
 # Which policy to run (see resolve_policy in inference.py):
 #   None       → the FINAL local checkpoint under outputs/train/<RUN>/checkpoints/
 #   "025000"   → that specific local checkpoint, to compare against an earlier step
@@ -66,9 +66,13 @@ TEMPORAL_ENSEMBLE_COEFF: float | None = None
 MAX_REL_TARGET: float | None = None
 PRECISION_MAX_REL_TARGET: float | None = 0.5
 
-HOME_JOINTS = [70, 10, 10, 90, -80, 15]
+HOME_JOINTS = [70, 10, 10, 90, -80, 15]  # matches record_microscope.py, so rollouts start where demos did
 NUM_EPISODES = 10
-EPISODE_TIME_S = 30
+# The rollout runs for a fixed time — the policy cannot end an episode itself — so
+# this must exceed the longest demonstration or a run gets cut off mid-approach.
+# The 2026-09-02 dataset ranges 18.6-32.5s (median 27.0s); 45s leaves headroom for
+# the policy being slower than the operator, plus time to sit at the endpoint.
+EPISODE_TIME_S = 45
 RESET_TIME_S = 10
 FPS = 20
 DISPLAY_DATA = True
