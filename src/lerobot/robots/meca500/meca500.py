@@ -26,6 +26,9 @@ class Meca500(Robot):
         self.robot = mdr.Robot()
         self.cameras = make_cameras_from_configs(config.cameras)
         self._connected = False
+        # Last precision-gate state, so send_action can log the ON/OFF transitions
+        # instead of a line every control step. None = nothing logged yet.
+        self._precision_logged: bool | None = None
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -198,6 +201,19 @@ class Meca500(Robot):
         relative_target = self.config.max_relative_target
         if precision_active and self.config.precision_max_relative_target is not None:
             relative_target = self.config.precision_max_relative_target
+
+        # Report the gate only when it flips. At the control rate this would otherwise
+        # be one line per step; the transitions are what tell you whether the policy
+        # actually learned to assert precision near the microscope. The clamp is
+        # included because that is the safety-relevant consequence: an unset
+        # max_relative_target means coarse motion is unclamped.
+        if precision_active != self._precision_logged:
+            clamp = "unclamped" if relative_target is None else f"max {relative_target} deg/step"
+            logger.info(
+                f"precision mode {'ON' if precision_active else 'OFF'} ({clamp})"
+                f"{'' if self._precision_logged is not None else ' [initial]'}"
+            )
+            self._precision_logged = precision_active
 
         if relative_target is not None:
             present_pos_list = self.robot.GetRtTargetJointPos()
