@@ -61,7 +61,17 @@ TASK = "move_pipette_under_microscope"
 # ACT inference mode:
 #   None             → full-chunk inference (fast, wobbles at chunk boundaries)
 #   float in (0, 1)  → temporal ensembling (smooth, every-step inference)
-TEMPORAL_ENSEMBLE_COEFF: float | None = None
+#
+# The checkpoint has chunk_size=n_action_steps=100, so at 20fps full-chunk mode
+# replans every 5s and executes the chunk open-loop in between. Each new chunk is
+# computed from where the arm actually is by then, so its first action is a step
+# change — which showed up as a burst of "Relative goal position ... clamped"
+# warnings every 5s, decaying over the following few steps as the arm converged.
+# Ensembling runs inference every step (n_action_steps=1 below) and exponentially
+# averages overlapping chunk predictions, so there are no boundaries to jump.
+# 0.01 is the ACT paper's value. Cost: 20 forward passes/sec instead of 0.2 —
+# watch for the loop dropping below FPS, and fall back to n_action_steps≈20 if so.
+TEMPORAL_ENSEMBLE_COEFF: float | None = 0.01
 
 # Per-step joint-delta clamps (degrees). None = unclamped.
 #   MAX_REL_TARGET           applies when precision is off (coarse approach)
