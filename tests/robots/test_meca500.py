@@ -24,6 +24,17 @@ class FakeCamera:
             raise RuntimeError(f"Fake camera {self.name} is not connected")
         return np.zeros((self.height, self.width, 3), dtype=np.uint8)
 
+    def read_latest(self, max_age_ms: int = 500):
+        """Non-blocking peek, as Camera.read_latest defines it.
+
+        Meca500.get_observation() prefers this over async_read() so the control
+        loop never blocks waiting for the next frame. The real Camera base class
+        provides read_latest for every implementation, so a fake standing in for
+        one has to offer it too or the robot falls back to async_read for the
+        wrong reason.
+        """
+        return self.async_read()
+
 
 def test_meca500_connect_with_partial_camera_failure():
     config = Meca500Config()

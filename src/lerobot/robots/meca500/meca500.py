@@ -15,6 +15,12 @@ from .config_meca500 import Meca500Config
 
 logger = logging.getLogger(__name__)
 
+# How stale a buffered camera frame may be before get_observation() stops trusting it
+# and blocks for a fresh one. Loose enough never to trip in normal operation (the rig's
+# cameras run at 30fps, so ~33ms between frames) but tight enough that a stalled capture
+# thread surfaces as a warning instead of the policy quietly acting on an old image.
+CAMERA_MAX_FRAME_AGE_MS = 200
+
 
 class Meca500(Robot):
     config_class = Meca500Config
@@ -170,7 +176,26 @@ class Meca500(Robot):
             start = time.perf_counter()
 
             if cam.is_connected:
-                obs_dict[cam_key] = cam.async_read()
+                # read_latest(), not async_read(): async_read blocks until the NEXT
+                # frame arrives, so at 30fps cameras it costs up to ~33ms of every
+                # control step (measured: 32ms median, 48ms p95). Against a 50ms
+                # budget at 20fps that alone dropped the loop to ~19Hz once
+                # every-step inference (temporal ensembling) took its 15ms.
+                #
+                # This also *reduces* end-to-end latency rather than trading it away:
+                # blocking does not give a fresher image at the moment the action
+                # lands, it just delays the action while the world keeps moving.
+                # Acting now on a ~17ms-old frame beats waiting 33ms for a 0ms-old one.
+                try:
+                    obs_dict[cam_key] = cam.read_latest(max_age_ms=CAMERA_MAX_FRAME_AGE_MS)
+                except (RuntimeError, TimeoutError) as e:
+                    # RuntimeError: no frame buffered yet (first tick after connect).
+                    # TimeoutError: the frame is older than the threshold, i.e. the
+                    # capture thread has stalled. Either way fall back to a blocking
+                    # read so we get a real frame instead of silently reusing a stale
+                    # one -- a hung camera must cost time, not go unnoticed.
+                    logger.warning(f"{self} {cam_key} read_latest fell back to async_read: {e}")
+                    obs_dict[cam_key] = cam.async_read()
             else:
                 logger.warning(
                     f"Camera '{cam_key}' is not connected. Returning a blank frame for observation feature consistency."
