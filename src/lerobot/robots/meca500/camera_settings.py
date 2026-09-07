@@ -85,6 +85,15 @@ def apply_camera_settings(rig: str, cameras: dict, path: Path | None = None) -> 
         ValueError: if the file contains an unknown setting key, or a value the
             camera config rejects (e.g. ``focus`` without ``autofocus=False``).
     """
+    if not cameras:
+        # A deliberately camera-less config (e.g. the homing pre-flight in
+        # microscope_inference.py, or reset.py, which pass cameras={} to skip
+        # OpenCV startup). There is nothing to apply and no drift to detect, so
+        # stay quiet: warning per stored role here would be a false positive on
+        # every such run, and this check only earns its keep if it stays rare.
+        logger.debug(f"No cameras on this {rig!r} config; skipping camera settings.")
+        return cameras
+
     settings = load_settings(path)
     rig_settings = settings.get(rig)
     if not rig_settings:
