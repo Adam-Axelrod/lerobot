@@ -55,7 +55,7 @@ from lerobot.utils.import_utils import register_third_party_plugins
 # Keep it stable only while resuming that same run. microscope_inference.py's RUN
 # must match this to evaluate the resulting checkpoints.
 RUN_NAME = "microscope_pipette_2026-09-02"
-RESUME = True  # True to continue an interrupted run in the same output dir
+RESUME = False  # True to continue an interrupted run in the same output dir
 
 # --- Dataset (Hugging Face Hub repo_id, or a local dataset cached under HF_LEROBOT_HOME) ---
 USER = "AdamAxelrod"
