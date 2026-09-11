@@ -27,7 +27,7 @@ from lerobot.utils.import_utils import register_third_party_plugins
 
 # ----------------------------- CONFIG -----------------------------
 USER = "AdamAxelrod"
-NAME = "microscope_pipette_2026-09-02"
+NAME = "microscope_pipette_2026-09-10"
 TASK = "move_pipette_under_microscope"
 
 NUM_EPISODES = 100
