@@ -68,7 +68,7 @@ PINNED_ARM_CAM_USB_ID = "6&5e564cb&0&0000"
 # VERIFY before trusting a recording: `python scripts/meca500/camera_tool.py` shows
 # each camera live, titled with the role it resolved to. If they are transposed,
 # flipping this constant is the whole fix.
-PINNED_ARM_CAM_ROLE = "wrist_cam"  # -> the other UC60 is overhead_cam
+PINNED_ARM_CAM_ROLE = "overhead_cam"  # -> the other UC60 is wrist_cam
 
 _ARM_ROLES = ("overhead_cam", "wrist_cam")
 
