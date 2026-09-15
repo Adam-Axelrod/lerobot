@@ -50,7 +50,7 @@ from lerobot.utils.import_utils import register_third_party_plugins
 
 # ----------------------------- CONFIG -----------------------------
 USER = "AdamAxelrod"
-RUN = "microscope_pipette_2026-09-02"
+RUN = "microscope_pipette_2026-09-10"
 # Which policy to run (see resolve_policy in inference.py):
 #   None       → the FINAL local checkpoint under outputs/train/<RUN>/checkpoints/
 #   "025000"   → that specific local checkpoint, to compare against an earlier step
@@ -59,8 +59,8 @@ CKPT: str | None = None
 TASK = "move_pipette_under_microscope"
 
 # ACT inference mode:
-#   None             → full-chunk inference (fast, wobbles at chunk boundaries)
-#   float in (0, 1)  → temporal ensembling (smooth, every-step inference)
+#   None    → full-chunk inference (fast, wobbles at chunk boundaries)
+#   float   → temporal ensembling (smooth, every-step inference)
 #
 # The checkpoint has chunk_size=n_action_steps=100, so at 20fps full-chunk mode
 # replans every 5s and executes the chunk open-loop in between. Each new chunk is
@@ -69,16 +69,46 @@ TASK = "move_pipette_under_microscope"
 # warnings every 5s, decaying over the following few steps as the arm converged.
 # Ensembling runs inference every step (n_action_steps=1 below) and exponentially
 # averages overlapping chunk predictions, so there are no boundaries to jump.
-# 0.01 is the ACT paper's value. Cost: 20 forward passes/sec instead of 0.2 —
-# watch for the loop dropping below FPS, and fall back to n_action_steps≈20 if so.
-TEMPORAL_ENSEMBLE_COEFF: float | None = 0.01
+# Cost: 20 forward passes/sec instead of 0.2 — watch for the loop dropping below
+# FPS, and fall back to n_action_steps≈20 if so.
+#
+# THE SIGN MATTERS, and not in the intuitive direction. w_i = exp(-coeff * i)
+# where w_0 weights the OLDEST contributing prediction (see ACTTemporalEnsembler
+# in policies/act/modeling_act.py), so a POSITIVE coeff weights stale predictions
+# MORE. At chunk_size=100/20fps the executed action's mean age is:
+#
+#   +0.01 (the ACT paper's value)  2.88s   freshest prediction gets 0.6% of weight
+#    0.00 (uniform)                2.47s
+#   -0.05                          0.94s   freshest gets 4.9%
+#   -0.10                          0.48s   freshest gets 9.5%
+#
+# +0.01 is a ~3-second low-pass filter. That is why it cured the chunk-boundary
+# wobble, and also why the arm never settled on the target: the policy's "I am on
+# the dot, stop" prediction was being averaged with ~3s of "keep approaching".
+# Measured against the demos, the rollout's fine phase barely decelerated (7.8°
+# then 5.6° over the two halves of precision mode, vs the operator's 3.5° then
+# 0.6°) and still moved 0.56° in its final 2s, where every demonstration was
+# dead still. Negative keeps most of the smoothing while letting the current
+# observation actually drive the action.
+TEMPORAL_ENSEMBLE_COEFF: float | None = -0.05
 
 # Per-step joint-delta clamps (degrees). None = unclamped.
 #   MAX_REL_TARGET           applies when precision is off (coarse approach)
 #   PRECISION_MAX_REL_TARGET applies when the policy predicts precision.state > 0.5
-# Tune after the first checkpoint — start conservative to protect the pipette.
+#
+# PRECISION_MAX_REL_TARGET is set from what the operator actually demonstrated
+# rather than guessed: in microscope_pipette_2026-09-10, per-step joint motion
+# while precision.state was latched had a median of 0.0045 deg and a p95 of
+# 0.056 deg. The previous 0.5 was ~10x looser than the largest fine-phase step in
+# 100 demonstrations, so the clamp never once engaged — it was decoration. 0.06
+# sits just above the demonstrated p95: coarse motion is untouched (it runs
+# unclamped anyway), but once the policy asserts precision it can only creep at
+# the speed a human creeps.
+#
+# This bounds the RATE of the drift, not its DIRECTION. If the policy is heading
+# somewhere wrong it will still go there, just slowly enough to watch and abort.
 MAX_REL_TARGET: float | None = None
-PRECISION_MAX_REL_TARGET: float | None = 0.5
+PRECISION_MAX_REL_TARGET: float | None = 0.06
 
 HOME_JOINTS = [70, 10, 10, 90, -80, 15]  # matches record_microscope.py, so rollouts start where demos did
 # Drive the arm to HOME_JOINTS before episode 0. The rollout homes BETWEEN episodes
@@ -89,9 +119,12 @@ HOME_TIMEOUT_S = 30.0
 NUM_EPISODES = 10
 # The rollout runs for a fixed time — the policy cannot end an episode itself — so
 # this must exceed the longest demonstration or a run gets cut off mid-approach.
-# The 2026-09-02 dataset ranges 18.6-32.5s (median 27.0s); 45s leaves headroom for
-# the policy being slower than the operator, plus time to sit at the endpoint.
-EPISODE_TIME_S = 45
+# The 2026-09-10 dataset (100 episodes) ranges 15.7-43.9s (median 23.7s, p95 31.6s),
+# so 60s leaves headroom for the policy being slower than the operator, plus time to
+# sit at the endpoint. Note this dataset has a much longer tail than 2026-09-02
+# (which topped out at 32.5s): 45s would clear the median comfortably but cut off the
+# slowest demonstrated approaches.
+EPISODE_TIME_S = 60
 RESET_TIME_S = 10
 FPS = 20
 DISPLAY_DATA = True
