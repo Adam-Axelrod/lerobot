@@ -121,7 +121,9 @@ survived (`git diff upstream/main -- src/lerobot/` lists them).
 | `rollout/strategies/episodic.py` | `has_pending_frames()` guard before `save_episode()` | Loud: crash when an episode ends with an empty buffer |
 | `utils/utils.py` | `say()` also catches `subprocess.CalledProcessError` | Loud: crash on Windows TTS failure (only when `play_sounds=True`) |
 | `configs/train.py` | Coerce a `str` `output_dir` to `Path` | Loud: `AttributeError` on path ops |
-| `cameras/utils.py` | Adds `get_cv2_backend()` | Loud: `ImportError` in scripts that use it |
+| `cameras/utils.py` | Adds `get_cv2_backend()`, plus the `basler` branch in `make_cameras_from_configs` | Loud: `ImportError`, or the Basler microscope cam fails to build |
+| `utils/import_utils.py` | Adds `_pypylon_available` | Loud: `ImportError` on `lerobot.cameras.basler` |
+| `pyproject.toml` | Adds the `basler` extra (`pypylon`) | Loud: `pypylon` missing, so the microscope cam cannot connect |
 | `scripts/lerobot_record.py` | Stray blank line only — no behaviour. Safe to drop | None |
 
 The **silent** ones are the dangerous ones: nothing errors, the run looks normal, and the
