@@ -28,6 +28,12 @@ rather than guessed from enumeration order. Guessing is what silently swapped
 overhead and wrist after a replug, and a dataset recorded with two views
 transposed is far more expensive than a loud warning.
 
+This applies only to cameras addressed by an *index*. The Basler microscope camera
+on the ``meca500_microscope_basler`` rig is addressed by serial number and never appears
+in DirectShow enumeration, so it is skipped rather than reported missing - hence the
+``roles`` argument below, which keeps a rig from being warned about a camera it does
+not have.
+
 Windows-only (needs ``pygrabber``/DirectShow, which uses the same device
 enumerator as OpenCV's ``CAP_DSHOW`` backend, so their ordering matches). On any
 other platform, or if enumeration fails, ``resolve_camera_indices`` returns an
@@ -44,6 +50,7 @@ from __future__ import annotations
 import logging
 import platform
 import re
+from collections.abc import Collection
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +78,7 @@ PINNED_ARM_CAM_USB_ID = "6&5e564cb&0&0000"
 PINNED_ARM_CAM_ROLE = "overhead_cam"  # -> the other UC60 is wrist_cam
 
 _ARM_ROLES = ("overhead_cam", "wrist_cam")
+_ALL_ROLES = ("microscope_cam", *_ARM_ROLES)
 
 
 def dshow_devices() -> list[tuple[str, str]]:
@@ -150,15 +158,23 @@ def _resolve_arm_cams(devices: list[tuple[str, str]], resolved: dict[str, int]) 
     resolved[other_role] = next(i for i, _ in arm_cams if i != pinned[0])
 
 
-def resolve_camera_indices() -> dict[str, int]:
+def resolve_camera_indices(roles: Collection[str] | None = None) -> dict[str, int]:
     """Map rig camera roles to their current OpenCV indices.
 
-    Returns a dict with any of ``"microscope_cam"``, ``"overhead_cam"``,
-    ``"wrist_cam"`` that could be resolved unambiguously. Roles that are missing or
-    ambiguous are omitted (with a warning) so the caller falls back to the
-    configured index for those. Returns ``{}`` off Windows or if enumeration fails
-    (e.g. pygrabber not installed).
+    Args:
+        roles: Which roles to look for. Defaults to all of ``"microscope_cam"``,
+            ``"overhead_cam"``, ``"wrist_cam"``. Pass a subset for a rig that does not
+            have all of them - a role that is not asked for is not searched for, and so
+            cannot produce a "camera not found" warning that is always wrong. This is how
+            the Basler rig avoids being told its microscope is missing from DirectShow.
+
+    Returns a dict with any of the requested roles that could be resolved unambiguously.
+    Roles that are missing or ambiguous are omitted (with a warning) so the caller falls
+    back to the configured index for those. Returns ``{}`` off Windows or if enumeration
+    fails (e.g. pygrabber not installed).
     """
+    if roles is None:
+        roles = _ALL_ROLES
     if platform.system() != "Windows":
         return {}
     try:
@@ -170,28 +186,37 @@ def resolve_camera_indices() -> dict[str, int]:
     names = [name for name, _ in devices]
     resolved: dict[str, int] = {}
 
-    micro = [i for i, n in enumerate(names) if MICROSCOPE_DSHOW_NAME in n]
-    if len(micro) == 1:
-        resolved["microscope_cam"] = micro[0]
-    else:
-        logger.warning(
-            f"Expected exactly one {MICROSCOPE_DSHOW_NAME!r} camera, found {len(micro)} in {names}; "
-            f"leaving microscope_cam at its configured index."
-        )
+    if "microscope_cam" in roles:
+        micro = [i for i, n in enumerate(names) if MICROSCOPE_DSHOW_NAME in n]
+        if len(micro) == 1:
+            resolved["microscope_cam"] = micro[0]
+        else:
+            logger.warning(
+                f"Expected exactly one {MICROSCOPE_DSHOW_NAME!r} camera, found {len(micro)} in {names}; "
+                f"leaving microscope_cam at its configured index."
+            )
 
-    _resolve_arm_cams(devices, resolved)
+    if any(role in roles for role in _ARM_ROLES):
+        _resolve_arm_cams(devices, resolved)
     return resolved
 
 
 def apply_resolved_indices(cameras: dict) -> dict:
     """Rewrite each camera config's ``index_or_path`` to its current live index.
 
-    ``cameras`` is a robot config's ``cameras`` dict ({role: OpenCVCameraConfig}).
+    ``cameras`` is a robot config's ``cameras`` dict ({role: CameraConfig}).
     Mutates it in place and returns it. Roles that cannot be resolved keep their
     configured index. Every change is logged so the live mapping is visible at
     startup.
+
+    Only cameras addressed by an index are considered. A config without
+    ``index_or_path`` (a Basler, say) is not searched for and not rewritten: there is no
+    index to resolve, and looking for it would warn about a camera that was never
+    supposed to be on DirectShow.
     """
-    for role, index in resolve_camera_indices().items():
+    index_addressed = {role for role, cam in cameras.items() if hasattr(cam, "index_or_path")}
+
+    for role, index in resolve_camera_indices(index_addressed).items():
         cam = cameras.get(role)
         if cam is None:
             continue

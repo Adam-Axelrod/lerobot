@@ -7,15 +7,20 @@ their real drivers exist.
     python scripts/meca500/camera_tool.py --list        # just the identity table, no windows
     python scripts/meca500/camera_tool.py --verify      # prove autoexposure/autofocus are really off
     python scripts/meca500/camera_tool.py --rig meca500 # the plain 2-camera rig (default: microscope)
+    python scripts/meca500/camera_tool.py --rig meca500_microscope_basler  # Basler microscope cam
     python scripts/meca500/camera_tool.py --cameras wrist_cam,overhead_cam
 
 Replaces the old identify_cameras.py / check_camera.py / verify_camera_settings.py.
 
 WHAT IT SHOWS
-    Every camera the selected rig defines, opened through the *same* OpenCVCamera
-    class the recording scripts use, at the same resolution/codec/exposure/focus.
-    What you see here is what gets recorded - there is no second copy of the setup
-    logic that could drift.
+    Every camera the selected rig defines, opened through the *same* camera classes
+    the recording scripts use, at the same resolution/codec/exposure/focus. What you
+    see here is what gets recorded - there is no second copy of the setup logic that
+    could drift.
+
+    Exposure/focus tuning applies to the USB webcams (OpenCV) only. The microscope is
+    a Basler: its exposure and gain live in the camera's own stored user set, so tune
+    it in the pylon Viewer and "Save User Set". It still previews here.
 
 TUNING (live, in the preview window)
     1..9        select the active camera
@@ -30,10 +35,10 @@ TUNING (live, in the preview window)
     dataset can always be traced back to the settings that produced it.
 
 NOTE ON USB BANDWIDTH
-    The three cameras share one bus and the microscope cam is slow (~22fps at
-    640x360, which is why it and the wrist cam use MJPG). Opening all three at once
-    may fail or crawl. A camera that will not open is reported and skipped rather
-    than aborting the run - use --cameras to preview a subset if the rig is tight.
+    The two UVC webcams share one bus (which is why the wrist cam uses MJPG), and the
+    Basler wants a good chunk of its own. Opening everything at once may fail or
+    crawl. A camera that will not open is reported and skipped rather than aborting
+    the run - use --cameras to preview a subset if the rig is tight.
 """
 
 from __future__ import annotations
@@ -49,7 +54,9 @@ import cv2  # type: ignore
 import matplotlib.pyplot as plt
 import numpy as np
 
+from lerobot.cameras.camera import Camera
 from lerobot.cameras.opencv.camera_opencv import OpenCVCamera
+from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.robots.meca500.camera_settings import (
     SETTINGS_PATH,
     read_tunables,
@@ -62,10 +69,17 @@ from lerobot.robots.meca500_microscope.camera_resolver import (
     resolve_camera_indices,
 )
 from lerobot.robots.meca500_microscope.config_meca500_microscope import Meca500MicroscopeConfig
+from lerobot.robots.meca500_microscope.config_meca500_microscope_basler import (
+    Meca500MicroscopeBaslerConfig,
+)
 
 logger = logging.getLogger(__name__)
 
-RIGS = {"meca500": Meca500Config, "meca500_microscope": Meca500MicroscopeConfig}
+RIGS = {
+    "meca500": Meca500Config,
+    "meca500_microscope": Meca500MicroscopeConfig,
+    "meca500_microscope_basler": Meca500MicroscopeBaslerConfig,
+}
 
 EXPOSURE_STEP = 1  # DSHOW exposure is a log2 scale; 1 step ~= one stop
 FOCUS_STEP = 5
@@ -94,8 +108,11 @@ def print_identity_table(rig: str) -> None:
         print(f"        role now : {role_by_index.get(index, '-')}")
         print(f"        usb id   : {instance_token_of(path)}")
 
-    for role in RIGS[rig]().cameras:
-        if role not in resolved:
+    # Only index-addressed (OpenCV/DirectShow) roles can be resolved here. The Basler is
+    # addressed by serial number and never appears in this enumeration, so flagging it as
+    # UNRESOLVED would be a warning that is always wrong.
+    for role, cam in RIGS[rig]().cameras.items():
+        if hasattr(cam, "index_or_path") and role not in resolved:
             print(f"\n  WARNING: {role} is UNRESOLVED - it falls back to its configured index.")
     print()
 
@@ -103,23 +120,47 @@ def print_identity_table(rig: str) -> None:
 # ------------------------------------------------------------------------ preview
 
 
-def open_cameras(rig: str, roles: list[str]) -> dict[str, OpenCVCamera]:
-    """Connect each requested role through the real OpenCVCamera class.
+def _device_id(cfg) -> str:
+    """How this camera is addressed, for display: an OpenCV index or a Basler serial."""
+    if hasattr(cfg, "index_or_path"):
+        return f"idx {cfg.index_or_path}"
+    if hasattr(cfg, "serial_number"):
+        return f"sn {cfg.serial_number}"
+    return "?"
+
+
+def is_tunable(camera: Camera) -> bool:
+    """Whether exposure/focus can be driven from this tool.
+
+    Only the OpenCV backend exposes the CAP_PROP_* controls this tool pokes. A Basler
+    previews fine but keeps its exposure/gain in the camera's own stored user set, so the
+    tuning keys and the settings file do not apply to it.
+    """
+    return isinstance(camera, OpenCVCamera)
+
+
+def open_cameras(rig: str, roles: list[str]) -> dict[str, Camera]:
+    """Connect each requested role through the real camera class the rig config names.
+
+    Goes through `make_cameras_from_configs` rather than constructing a backend directly,
+    so this keeps working when a role changes backend (as the microscope did, OpenCV ->
+    Basler) instead of silently opening the wrong kind of device.
 
     Cameras that fail to open are reported and skipped: on this rig that usually
     means USB bandwidth, not a config error, and previewing the rest is still useful.
     """
     config = RIGS[rig]()
-    opened: dict[str, OpenCVCamera] = {}
-    for role in roles:
+    cameras = make_cameras_from_configs({role: config.cameras[role] for role in roles})
+
+    opened: dict[str, Camera] = {}
+    for role, camera in cameras.items():
         cam_cfg = config.cameras[role]
-        camera = OpenCVCamera(cam_cfg)
         try:
             camera.connect()
             opened[role] = camera
-            print(f"  opened {role:15s} idx={cam_cfg.index_or_path} {cam_cfg.width}x{cam_cfg.height}")
+            print(f"  opened {role:15s} {_device_id(cam_cfg)} {cam_cfg.width}x{cam_cfg.height}")
         except Exception as e:
-            print(f"  FAILED {role:15s} idx={cam_cfg.index_or_path}: {type(e).__name__}: {e}")
+            print(f"  FAILED {role:15s} {_device_id(cam_cfg)}: {type(e).__name__}: {e}")
     return opened
 
 
@@ -134,12 +175,14 @@ def _set_control(camera: OpenCVCamera, kind: str, value: float) -> None:
     camera._try_set_property(kind, prop, float(value))
 
 
-def _title(role: str, camera: OpenCVCamera, active: bool, dirty: bool) -> str:
+def _title(role: str, camera: Camera, active: bool, dirty: bool) -> str:
     cfg = camera.config
     mark = ">> " if active else "   "
+    if not is_tunable(camera):
+        return f"{mark}{role}  [{_device_id(cfg)}]\nexposure tuned on the camera itself"
     star = " *" if dirty else ""
     focus = "n/a" if cfg.focus is None else cfg.focus
-    return f"{mark}{role}  [idx {cfg.index_or_path}]\nexp={cfg.exposure}  focus={focus}{star}"
+    return f"{mark}{role}  [{_device_id(cfg)}]\nexp={cfg.exposure}  focus={focus}{star}"
 
 
 def preview(rig: str, roles: list[str], allow_tuning: bool) -> None:
@@ -171,6 +214,13 @@ def preview(rig: str, roles: list[str], allow_tuning: bool) -> None:
         camera = cameras[role]
         cfg = camera.config
 
+        if key in ("left", "right", "up", "down") and not is_tunable(camera):
+            print(
+                f"  {role} is a {type(camera).__name__} - exposure/gain live in the camera's own "
+                f"stored user set. Tune it in the pylon Viewer and 'Save User Set'."
+            )
+            return
+
         if key in ("left", "right") and cfg.exposure is not None:
             cfg.exposure += EXPOSURE_STEP if key == "right" else -EXPOSURE_STEP
             _set_control(camera, "exposure", cfg.exposure)
@@ -180,7 +230,9 @@ def preview(rig: str, roles: list[str], allow_tuning: bool) -> None:
             _set_control(camera, "focus", cfg.focus)
             state["dirty"] = True
         elif key == "s":
-            tunables = read_tunables({r: cameras[r].config for r in order})
+            # Roles with no tunable fields would be written as empty objects, which reads as
+            # "tuned to nothing" rather than "not tuned here". Leave them out entirely.
+            tunables = read_tunables({r: cameras[r].config for r in order if is_tunable(cameras[r])})
             save_camera_settings(rig, tunables)
             state["dirty"] = False
             print(f"\nSaved {rig} camera settings to {SETTINGS_PATH}")
@@ -190,6 +242,8 @@ def preview(rig: str, roles: list[str], allow_tuning: bool) -> None:
         elif key == "r":
             fresh = RIGS[rig]().cameras
             for role_name in order:
+                if not is_tunable(cameras[role_name]):
+                    continue
                 saved = fresh[role_name]
                 cameras[role_name].config.exposure = saved.exposure
                 cameras[role_name].config.focus = saved.focus
@@ -262,7 +316,14 @@ def verify(rig: str, roles: list[str]) -> None:
 
     for role, camera in cameras.items():
         cfg = camera.config
-        print(f"\n=== {role} (idx {cfg.index_or_path}) ===")
+        print(f"\n=== {role} ({_device_id(cfg)}) ===")
+
+        if not is_tunable(camera):
+            print("  exposure/gain are stored on the camera itself - nothing to sweep here.")
+            print("  Verify it in the pylon Viewer instead.")
+            with contextlib.suppress(Exception):
+                camera.disconnect()
+            continue
 
         if cfg.exposure is not None:
             print("  exposure sweep (brightness should climb):")

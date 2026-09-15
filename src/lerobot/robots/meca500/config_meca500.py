@@ -72,10 +72,22 @@ class Meca500Config(RobotConfig):
 
     default_joint_vel: float = 25.0
 
+    @property
+    def camera_settings_key(self) -> str:
+        """Which section of camera_settings.json this rig's tuning lives under.
+
+        Defaults to `self.type` (the registered choice name), so a rig picks up its own
+        section with no per-subclass wiring. Override it when a rig variant shares another
+        rig's cameras: a rig that differs only in one camera should read the *same* tuned
+        values for the cameras it has in common, rather than getting a duplicate section
+        that then drifts - the drift this file's settings module exists to prevent.
+        """
+        return self.type
+
     def __post_init__(self) -> None:
         # Apply the tuned exposure/focus for this rig before the base class validates
-        # the camera set. Keyed on `self.type` (the registered choice name), so the
-        # microscope subclass automatically picks up its own section instead of the
-        # base rig's - no per-subclass wiring, and no chance of the two crossing over.
-        apply_camera_settings(self.type, self.cameras)
+        # the camera set. Keyed on `camera_settings_key`, so the microscope subclass
+        # automatically picks up its own section instead of the base rig's - no chance of
+        # the two crossing over.
+        apply_camera_settings(self.camera_settings_key, self.cameras)
         super().__post_init__()

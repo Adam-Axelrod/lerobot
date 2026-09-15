@@ -122,6 +122,19 @@ def apply_camera_settings(rig: str, cameras: dict, path: Path | None = None) -> 
             )
 
         field_names = {f.name for f in dataclasses.fields(cam)}
+
+        if not (TUNABLE_KEYS & field_names):
+            # This camera backend has no software exposure/focus at all (a Basler keeps
+            # them in the camera's own stored user set). That is a different backend, not
+            # a stale role name, so it is a quiet skip rather than the error below - which
+            # is reserved for a config that supports *some* of the keys but not the ones
+            # asked for, i.e. a real mismatch.
+            logger.debug(
+                f"{rig}.{role} is a {type(cam).__name__}, which has no tunable "
+                f"exposure/focus; its stored settings are skipped."
+            )
+            continue
+
         missing = set(overrides) - field_names
         if missing:
             raise ValueError(
