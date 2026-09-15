@@ -240,6 +240,18 @@ class Meca500(Robot):
             )
             self._precision_logged = precision_active
 
+        # Integrate deltas onto the arm's current TARGET pose, not its measured pose.
+        # GetRtTargetJointPos() is where the controller is driving to; GetJoints() is
+        # where the arm has got to so far. Integrating onto the measured pose would
+        # fold the servo's tracking lag back into every step, so a stream of small
+        # deltas would systematically fall behind the trajectory it is meant to trace.
+        if self.config.relative_actions:
+            present_pos_list = self.robot.GetRtTargetJointPos()
+            goal_pos = {
+                f"joint_{i + 1}": present_pos_list[i] + goal_pos.get(f"joint_{i + 1}", 0.0)
+                for i in range(6)
+            }
+
         if relative_target is not None:
             present_pos_list = self.robot.GetRtTargetJointPos()
             present_pos = {f"joint_{i + 1}": p for i, p in enumerate(present_pos_list)}
@@ -255,6 +267,13 @@ class Meca500(Robot):
             float(goal_pos["joint_5"]),
             float(goal_pos["joint_6"]),
         )
+        # Always the ABSOLUTE target that was sent, even in relative_actions mode -
+        # this is what the dataset records, and it is what the arm was actually told
+        # to do. Note the asymmetry: a rollout recorded with relative_actions=True
+        # therefore holds absolute positions, not the deltas the policy emitted, so
+        # it is directly comparable with the teleop datasets but is NOT in the same
+        # action space the policy was trained on. Re-run the delta conversion on it
+        # before using such a rollout for fine-tuning.
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
     def disconnect(self) -> None:

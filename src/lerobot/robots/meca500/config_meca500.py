@@ -46,6 +46,22 @@ class Meca500Config(RobotConfig):
         }
     )
 
+    # Interpret incoming `joint_N.pos` action values as per-step DELTAS (degrees to
+    # move this step) rather than absolute joint targets. Must match the dataset the
+    # policy was trained on - see scripts/meca500/convert_to_delta_actions.py.
+    #
+    # Why this exists: the SpaceMouse teleop drives the arm by Cartesian velocity
+    # (MoveLinVelWrf) and its get_action() only reads GetJoints() back, so a recorded
+    # "action" is a position READBACK, identical to observation.state in 97.4% of
+    # frames of microscope_pipette_2026-09-10. A policy trained on that learns to
+    # predict where the arm already is, and commanding that produces no motion. The
+    # per-step difference of those positions is the real control signal, and it is
+    # also ~86x larger relative to its own normalization scale, which is what lifts
+    # fine corrections above the policy's output floor.
+    #
+    # `precision.state` is never differenced: it is a gate, not a position.
+    relative_actions: bool = False
+
     max_relative_target: float | dict[str, float] | None = None
 
     # Tighter per-step joint-delta clamp applied at deployment when the policy's
