@@ -14,7 +14,7 @@ problem is in the integration; if it fails, the error is the whole story.
     python scripts/meca500/basler_probe.py --serial 40012345 --save frame.png
 
 Copy the serial number from `--list` into MICROSCOPE_CAMERA_SERIAL in
-src/lerobot/robots/meca500_microscope/config_meca500_microscope.py.
+src/lerobot/robots/meca500_microscope/basler_microscope_camera.py.
 
 Requires the pylon Camera Software Suite (for the drivers) plus `pip install pypylon`. With
 no camera to hand, set PYLON_CAMEMU=1 to make Basler's emulator show up as real devices.
@@ -67,7 +67,7 @@ def list_devices() -> int:
         print(f"  device class : {device.GetDeviceClass()}")
         print(f"  user name    : {user_name}")
         print()
-    print("Copy the serial into MICROSCOPE_CAMERA_SERIAL in config_meca500_microscope.py.\n")
+    print("Copy the serial into MICROSCOPE_CAMERA_SERIAL in basler_microscope_camera.py.\n")
     return 0
 
 

@@ -1,19 +1,12 @@
 from dataclasses import dataclass, field
 
 from lerobot.cameras import CameraConfig
-from lerobot.cameras.basler import BaslerCameraConfig
 from lerobot.cameras.configs import Cv2Backends
 from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.robots import RobotConfig
+from lerobot.robots.meca500_microscope.basler_microscope_camera import basler_microscope_camera
 from lerobot.robots.meca500_microscope.camera_resolver import apply_resolved_indices
 from lerobot.robots.meca500_microscope.config_meca500_microscope import Meca500MicroscopeConfig
-
-# Serial number of the Basler microscope camera, as printed on its label. Find it with:
-#     python scripts/meca500/basler_probe.py --list
-# Unlike the USB webcams there is no index to resolve: pylon addresses devices by serial,
-# so this value is stable across replugs, ports and reboots. If it is wrong, the camera
-# fails to connect with an error listing the serials that *were* found.
-MICROSCOPE_CAMERA_SERIAL = "REPLACE_ME"
 
 
 @RobotConfig.register_subclass("meca500_microscope_basler")
@@ -37,14 +30,12 @@ class Meca500MicroscopeBaslerConfig(Meca500MicroscopeConfig):
     driven through pypylon, so it never appears in DirectShow enumeration and is addressed
     by serial number instead of by index.
 
-    NOTE: for the Basler, ``width``/``height`` are the **output** frame size, not a sensor
-    ROI. Writing Width/Height on a Basler crops the sensor rather than scaling it, which on
-    a microscope would throw away most of the field of view, so BaslerCamera grabs the full
-    sensor and downscales to the size below. Pick a width/height matching the sensor's own
-    aspect ratio, or the image is anisotropically squashed - check what the sensor reports:
-        python scripts/meca500/basler_probe.py --serial <serial>
-    Exposure/gain are not set here; the camera keeps its stored user set (tune it in the
-    pylon Viewer and "Save User Set"), which is why it has no entry in camera_settings.json.
+    The Basler itself - serial, binning and output size - is defined once in
+    basler_microscope_camera.py and shared with the one-camera ``meca500_basler`` rig, so the
+    same physical camera cannot end up producing differently-shaped pixels on the two rigs.
+    See that module for the frame-rate constraints (binning 2 is required to clear 5.8 fps,
+    and 20 fps needs exposure under ~45 ms). Exposure/gain are not set here; the camera keeps
+    its stored user set, which is why it has no entry in camera_settings.json.
     """
 
     cameras: dict[str, CameraConfig] = field(
@@ -77,15 +68,8 @@ class Meca500MicroscopeBaslerConfig(Meca500MicroscopeConfig):
                 autoexposure=False,
                 exposure=-6,
             ),
-            "microscope_cam": BaslerCameraConfig(
-                serial_number=MICROSCOPE_CAMERA_SERIAL,
-                fps=30,
-                # Output size (full sensor, downscaled - see the class docstring). 4:3 here;
-                # revisit once the sensor's native aspect ratio is confirmed with
-                # `basler_probe.py --serial <serial>`.
-                width=640,
-                height=480,
-            ),
+            # Shared with the meca500_basler rig - see basler_microscope_camera.py.
+            "microscope_cam": basler_microscope_camera(),
         }
     )
 
