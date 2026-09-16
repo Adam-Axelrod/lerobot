@@ -1,6 +1,10 @@
 """Drive the Meca500 to a fixed home pose, then disconnect.
 
-Workflow: edit HOME_JOINTS below, then `python reset.py`.
+Workflow: set RIG below to the bench you are on, then `python reset.py`. The pose itself
+comes from HOME_JOINTS in rigs.py, shared with record and teleop.
+
+Useful for checking a NEW bench's home pose is actually clear of the microscope and the
+pipette holder before committing to a run - record drives here between every episode.
 
 Uses the `meca500_home` teleop to source the target pose and `Meca500.send_action`
 to execute it. The Meca500 wrapper is opened with `monitor_mode=False` so it
@@ -11,24 +15,21 @@ Bota teleop owns the control connection).
 import logging
 import time
 
-from lerobot.robots.meca500.config_meca500 import Meca500Config
-from lerobot.robots.meca500.meca500 import Meca500
+from rigs import require_home_joints, rig_config
+
+from lerobot.robots.utils import make_robot_from_config
 from lerobot.teleoperators.meca500_home.config_meca500_home import Meca500HomeConfig
 from lerobot.teleoperators.meca500_home.meca500_home import Meca500Home
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.utils import init_logging
 
 # ----------------------------- CONFIG -----------------------------
-# Pick the pose for the rig you are actually on — they are NOT interchangeable.
-# Driving to the wrong one parks the arm somewhere the trained policy has never
-# seen, which is worse than not resetting at all. Keep these in sync with the
-# HOME_JOINTS in the corresponding record_*/[microscope_]inference scripts.
-#
-#   microscope rig : [70, 10, 10, 90, -80, 15]   (record_microscope.py,
-#                                                 microscope_inference.py)
-#   plain rig      : [0.0, 0.0, 0.0, 0.0, 90.0, 0.0]  (record.py, inference.py)
-HOME_JOINTS = [70, 10, 10, 90, -80, 15]
-MOVE_TIMEOUT_S = 30.0  # max wait for the arm to reach HOME_JOINTS
+# Which bench you are on. The pose itself lives per-rig in rigs.py, so this script and
+# record/teleop cannot disagree about where "home" is - they used to each keep their own
+# copy, and driving to another bench's pose parks the arm somewhere on a DIFFERENT desk.
+RIG = "meca500_basler"
+
+MOVE_TIMEOUT_S = 30.0  # max wait for the arm to reach the home pose
 # ------------------------------------------------------------------
 
 
@@ -36,10 +37,14 @@ def main() -> None:
     init_logging()
     register_third_party_plugins()
 
+    # Refuses (with instructions) if this bench has no measured pose, rather than
+    # silently driving to another rig's.
+    home = require_home_joints(RIG)
+
     # Robot in control mode (not monitor) so it activates, homes, and accepts MoveJoints.
     # No cameras needed for a reset — drop them to skip OpenCV startup.
-    robot = Meca500(Meca500Config(id="meca500", monitor_mode=False, cameras={}))
-    teleop = Meca500Home(Meca500HomeConfig(id="meca500_home", home=HOME_JOINTS))
+    robot = make_robot_from_config(rig_config(RIG, monitor_mode=False, cameras={}))
+    teleop = Meca500Home(Meca500HomeConfig(id="meca500_home", home=home))
 
     robot.connect()       # activates + homes to factory zero
     robot.configure()     # sets joint velocity / blending defaults

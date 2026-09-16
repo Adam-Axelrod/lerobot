@@ -62,24 +62,15 @@ from lerobot.robots.meca500.camera_settings import (
     read_tunables,
     save_camera_settings,
 )
-from lerobot.robots.meca500.config_meca500 import Meca500Config
 from lerobot.robots.meca500_microscope.camera_resolver import (
     dshow_devices,
     instance_token_of,
     resolve_camera_indices,
 )
-from lerobot.robots.meca500_microscope.config_meca500_microscope import Meca500MicroscopeConfig
-from lerobot.robots.meca500_microscope.config_meca500_microscope_basler import (
-    Meca500MicroscopeBaslerConfig,
-)
+from rigs import RIGS
 
 logger = logging.getLogger(__name__)
 
-RIGS = {
-    "meca500": Meca500Config,
-    "meca500_microscope": Meca500MicroscopeConfig,
-    "meca500_microscope_basler": Meca500MicroscopeBaslerConfig,
-}
 
 EXPOSURE_STEP = 1  # DSHOW exposure is a log2 scale; 1 step ~= one stop
 FOCUS_STEP = 5
@@ -99,7 +90,13 @@ def print_identity_table(rig: str) -> None:
         print(f"Could not enumerate DirectShow devices: {type(e).__name__}: {e}")
         return
 
-    resolved = resolve_camera_indices()
+    # Ask only about the roles THIS rig addresses by index. Resolving all of them
+    # regardless would announce that the VMS700 and the two UC60s are missing whenever the
+    # rig does not have them - on meca500_basler, every line of it a false alarm. That is
+    # precisely what camera_resolver's `roles` argument exists to prevent.
+    cameras = RIGS[rig]().cameras
+    index_roles = [role for role, cam in cameras.items() if hasattr(cam, "index_or_path")]
+    resolved = resolve_camera_indices(index_roles) if index_roles else {}
     role_by_index = {index: role for role, index in resolved.items()}
 
     print(f"\n{len(devices)} camera(s) visible to DirectShow (index == OpenCV index):\n")
@@ -108,11 +105,20 @@ def print_identity_table(rig: str) -> None:
         print(f"        role now : {role_by_index.get(index, '-')}")
         print(f"        usb id   : {instance_token_of(path)}")
 
-    # Only index-addressed (OpenCV/DirectShow) roles can be resolved here. The Basler is
-    # addressed by serial number and never appears in this enumeration, so flagging it as
-    # UNRESOLVED would be a warning that is always wrong.
-    for role, cam in RIGS[rig]().cameras.items():
-        if hasattr(cam, "index_or_path") and role not in resolved:
+    # Serial-addressed cameras (the Basler) never appear in the DirectShow enumeration, so
+    # without this the table stays silent about them - actively misleading on a rig whose
+    # only camera is one, where it reports "1 camera" and does not mean that one.
+    serial_cams = {role: cam for role, cam in cameras.items() if hasattr(cam, "serial_number")}
+    if serial_cams:
+        print()
+        print(f'  {len(serial_cams)} camera(s) addressed by serial (not in DirectShow, nothing to resolve):')
+        for role, cam in serial_cams.items():
+            print(f'  [sn {cam.serial_number}] {role}')
+
+    # Only index-addressed roles can go UNRESOLVED; flagging a serial-addressed camera
+    # would be a warning that is always wrong.
+    for role in index_roles:
+        if role not in resolved:
             print(f"\n  WARNING: {role} is UNRESOLVED - it falls back to its configured index.")
     print()
 

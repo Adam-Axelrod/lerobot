@@ -1,6 +1,7 @@
-"""Record a SpaceMouse-teleop dataset on the Meca500 microscope/pipette rig.
+"""Record a SpaceMouse-teleop dataset on a Meca500 microscope/pipette rig.
 
-Cameras: microscope (index 0) + overhead (index 1) + wrist (index 3). The operator drives
+Works on either bench - set RIG in the CONFIG block below. The rig owns the camera set,
+so nothing else here changes when the laptop moves between setups. The operator drives
 coarsely (gain_tr/gain_rot) until the pipette is under the microscope, then presses
 **Enter** to toggle precision mode — the SpaceMouse gains drop to gain_tr_fine/
 gain_rot_fine for fine positioning (press Enter again to toggle back to coarse). The
@@ -19,18 +20,38 @@ scripts/meca500/camera_tool.py (it saves them; nothing to paste here).
 """
 
 from record import record_with_reset
+from rigs import axis_signs, require_home_joints, rig_config
 
-from lerobot.robots.meca500_microscope.config_meca500_microscope import Meca500MicroscopeConfig
 from lerobot.scripts.lerobot_record import DatasetRecordConfig, RecordConfig
 from lerobot.teleoperators.meca500_spacemouse.config_meca500_spacemouse import Meca500SpacemouseConfig
 from lerobot.utils.import_utils import register_third_party_plugins
 
 # ----------------------------- CONFIG -----------------------------
+# Which bench this run is on - the ONLY line to change when the laptop moves between
+# setups. The rig determines the camera set; see scripts/meca500/rigs.py for the list.
+#   "meca500_microscope"  bench 1: UC60 overhead + wrist + the VMS700 microscope cam
+#   "meca500_basler"      bench 2: the Basler microscope cam only (no arm cams yet)
+RIG = "meca500_basler"
+
 USER = "AdamAxelrod"
-NAME = "microscope_pipette_2026-09-10"
+
+# One dataset per rig, keyed off RIG so switching bench cannot append episodes recorded
+# with one camera set onto a dataset recorded with another. That mistake is unrecoverable
+# after the fact - the frames are already interleaved and the shapes may not even differ -
+# so the name is derived rather than being a second constant to remember to edit.
+DATASETS = {
+    "meca500_microscope": "microscope_pipette_2026-09-10",
+    "meca500_basler": "basler_pipette_2026-09-16",
+}
+NAME = DATASETS[RIG]
 TASK = "move_pipette_under_microscope"
 
 NUM_EPISODES = 100
+# On meca500_basler the Basler caps the achievable rate: it needs binning=2 (set in the rig
+# config) to clear 5.8 fps at all, and then cannot exceed 1/exposure. 20 fps therefore needs
+# the camera's exposure under ~45 ms - it was auto-exposing to 90.9 ms (i.e. 11 fps) when
+# this was measured. Check with `python scripts/meca500/basler_probe.py --serial 40585204`
+# and buy the headroom with more illumination or gain, saved into the camera's user set.
 FPS = 20
 EPISODE_TIME_S = 120
 RESET_TIME_S = 60
@@ -57,23 +78,29 @@ GAIN_TR_FINE = 5.0  # mm/s  translation
 GAIN_ROT_FINE = 3.0  # deg/s rotation
 
 # Auto-home target (executed between episodes; also resets the precision toggle).
-HOME_JOINTS = [70, 10, 10, 90, -80, 15]
+# Lives per-rig in rigs.py, NOT here: it is a property of the bench, and a pose copied
+# from the other one would drive the arm into a different desk between every episode.
 HOME_TIMEOUT_S = 30.0
 
-# Camera exposure/focus is NOT configured here — it lives in
-# src/lerobot/robots/meca500/camera_settings.json and is applied automatically by
-# Meca500MicroscopeConfig. Tune it with `python scripts/meca500/camera_tool.py`.
+# Camera exposure/focus is NOT configured here - the UC60/VMS700 cams read
+# src/lerobot/robots/meca500/camera_settings.json (tune with camera_tool.py), and the
+# Basler keeps exposure/gain in its own stored user set (tune in the pylon Viewer).
+# Which cameras exist at all is the rig's business - see RIG above.
 # ------------------------------------------------------------------
 
 
 def main() -> None:
     register_third_party_plugins()
 
+    # Refuses (with instructions) if this bench's home pose has not been measured yet,
+    # rather than silently inheriting the other bench's.
+    home_joints = require_home_joints(RIG)
+
     cfg = RecordConfig(
         # monitor_mode=True (default) — teleop owns activation. Camera indices are
         # resolved by USB identity and exposure/focus loaded from camera_settings.json,
         # both inside __post_init__.
-        robot=Meca500MicroscopeConfig(id="meca500_microscope"),
+        robot=rig_config(RIG),
         dataset=DatasetRecordConfig(
             repo_id=f"{USER}/{NAME}",
             single_task=TASK,
@@ -89,7 +116,8 @@ def main() -> None:
             gain_rot=GAIN_ROT,
             gain_tr_fine=GAIN_TR_FINE,
             gain_rot_fine=GAIN_ROT_FINE,
-            home_joints=HOME_JOINTS,
+            axis_signs=axis_signs(RIG),
+            home_joints=home_joints,
             home_timeout_s=HOME_TIMEOUT_S,
         ),
         display_data=DISPLAY_DATA,
