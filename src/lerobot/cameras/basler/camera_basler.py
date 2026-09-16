@@ -112,6 +112,8 @@ class BaslerCamera(Camera):
         self.fps = config.fps
         self.color_mode = config.color_mode
         self.binning = config.binning
+        self.reverse_x = config.reverse_x
+        self.reverse_y = config.reverse_y
         self.warmup_s = config.warmup_s
 
         self.camera: Any | None = None  # pylon.InstantCamera
@@ -271,14 +273,49 @@ class BaslerCamera(Camera):
         cam.TriggerMode.TrySetValue("Off")
 
         if self.binning > 1:
-            applied = cam.BinningHorizontal.TrySetValue(self.binning)
-            applied &= cam.BinningVertical.TrySetValue(self.binning)
-            if not applied:
+            # Write each axis, then judge success by reading the values back rather than by
+            # what TrySetValue returned. On some models (the acA5472-17ucMED among them)
+            # BinningVertical is read-only and slaved to BinningHorizontal: one write sets
+            # both axes, but TrySetValue on the vertical node still reports False. Trusting
+            # that return value warns "binning was NOT applied" on a camera that is visibly
+            # binning, which is worse than staying quiet - it sends you hunting a bandwidth
+            # problem that has already been fixed. An out-of-range value raises instead of
+            # returning False, so the writes are guarded too.
+            for node in (cam.BinningHorizontal, cam.BinningVertical):
+                try:
+                    node.TrySetValue(self.binning)
+                except Exception:  # out of range, or not writable on this model
+                    pass
+
+            applied = (
+                cam.BinningHorizontal.GetValueOrDefault(1),
+                cam.BinningVertical.GetValueOrDefault(1),
+            )
+            if applied != (self.binning, self.binning):
                 # Binning is asked for to fit the link's bandwidth. Silently not applying it
                 # means the frame rate quietly stays where it was, with nothing to explain it.
                 logger.warning(
-                    f"{self} does not support binning={self.binning}; it was NOT applied and the "
-                    f"full-resolution bandwidth still applies."
+                    f"{self} does not support binning={self.binning} (it reports horizontal="
+                    f"{applied[0]}, vertical={applied[1]}); the full-resolution bandwidth "
+                    f"may still apply."
+                )
+
+        # Mirror on the sensor. Free (it only changes readout order) and it happens before the
+        # downscale, so unlike an OpenCV flip afterwards it costs nothing per frame. Applied
+        # before the ROI writes because on some models reversal is about the ROI window.
+        for node_name, wanted in (("ReverseX", self.reverse_x), ("ReverseY", self.reverse_y)):
+            try:
+                node = getattr(cam, node_name)
+                node.TrySetValue(wanted)
+                got = node.GetValueOrDefault(False)
+            except Exception:
+                # Node absent on this model. Not reversing when none was asked for is the
+                # correct outcome, so only the wanted=True case falls through to the warning.
+                got = False
+            if got != wanted:
+                logger.warning(
+                    f"{self} could not set {node_name}={wanted} (it reports {got}); the image "
+                    f"orientation is NOT what the config asks for."
                 )
 
         # Full sensor. Offsets shrink first: with a large ROI still in place there is no room
@@ -315,6 +352,11 @@ class BaslerCamera(Camera):
         resulting_node = cam.ResultingAcquisitionFrameRate if sfnc2 else cam.ResultingFrameRateAbs
         resulting_fps = resulting_node.GetValueOrDefault(float("nan"))
 
+        # Read for the rate check below, and for the log line: when a camera turns out to be
+        # slower than asked, exposure is the first thing worth knowing.
+        exposure_node = cam.ExposureTime if sfnc2 else cam.ExposureTimeAbs
+        exposure_us = exposure_node.GetValueOrDefault(float("nan"))
+
         logger.info(
             f"{self} sensor {self.capture_width}x{self.capture_height} "
             f"(binning={self.binning}, pixel format={cam.PixelFormat.GetValueOrDefault('unknown')}) "
@@ -323,12 +365,29 @@ class BaslerCamera(Camera):
 
         # A camera that cannot sustain the requested rate starves the control loop, and the
         # only other symptom is read_latest() falling back to async_read() on every step.
-        # `resulting_fps == resulting_fps` filters the NaN the node returns when unsupported.
-        if self.fps is not None and resulting_fps == resulting_fps and resulting_fps < self.fps * 0.95:
-            logger.warning(
-                f"{self} can only sustain {resulting_fps:.1f} fps, below the requested {self.fps} fps. "
-                f"Reduce the exposure time, or enable binning to cut the bandwidth per frame."
-            )
+        if self.fps is not None:
+            # `sustainable == sustainable` is the NaN test; the node returns NaN when the
+            # model does not support it.
+            sustainable = resulting_fps
+            note = ""
+            if sustainable != sustainable:
+                # Fall back to the exposure ceiling: a sensor cannot deliver frames faster
+                # than 1/exposure, whatever the link can carry. This matters because a dim
+                # optical path - swapping to a higher-magnification objective, say - pushes
+                # auto-exposure up until that ceiling falls below the requested rate, and on
+                # a model with no ResultingAcquisitionFrameRate the old NaN check skipped the
+                # warning entirely. The first symptom was then a TimeoutError from async_read
+                # hundreds of ms later, which says nothing about exposure being the cause.
+                if exposure_us == exposure_us and exposure_us > 0:
+                    sustainable = 1_000_000.0 / exposure_us
+                    note = f" Exposure is {exposure_us / 1000:.1f} ms, which alone caps it at 1/exposure."
+
+            if sustainable == sustainable and sustainable < self.fps * 0.95:
+                logger.warning(
+                    f"{self} can only sustain {sustainable:.1f} fps, below the requested "
+                    f"{self.fps} fps.{note} Shorten the exposure (more illumination, or let "
+                    f"GainAuto trade gain for time), or enable binning to cut bandwidth per frame."
+                )
 
     def _setup_converter(self) -> None:
         """Builds the RGB8 output converter.

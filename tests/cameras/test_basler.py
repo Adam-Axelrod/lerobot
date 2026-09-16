@@ -28,6 +28,8 @@ reaching the dataset writer is tagged as a depth map and silently written as TIF
 import time
 from types import SimpleNamespace
 
+import logging
+
 import numpy as np
 import pytest
 
@@ -149,7 +151,10 @@ class FakeGrabResult:
 class FakeInstantCamera:
     """A Basler device: nodes, open/close state, and a grab engine that hands out frames."""
 
-    def __init__(self, device_info, sensor_frame, sfnc2=True, max_fps=30.0):
+    def __init__(
+        self, device_info, sensor_frame, sfnc2=True, max_fps=30.0, exposure_us=10_000.0,
+        resulting_rate=True,
+    ):
         self.device_info = device_info
         self.sensor_frame = sensor_frame
         self._sfnc2 = sfnc2
@@ -177,7 +182,9 @@ class FakeInstantCamera:
         self.AcquisitionFrameRateEnable = FakeParameter(False)
 
         rate = FakeParameter(max_fps, minimum=1.0, maximum=max_fps)
-        resulting = FakeParameter(max_fps)
+        # Some models have no resulting-rate node at all (the acA5472-17ucMED is one), in
+        # which case the camera must fall back to the exposure ceiling to judge the rate.
+        resulting = FakeParameter(max_fps) if resulting_rate else FakeParameter(valid=False)
         # SFNC 2.x (USB3) and SFNC 1.x (GigE) name these differently; whichever set this
         # model does not speak is a placeholder, as it would be on real hardware.
         if sfnc2:
@@ -190,6 +197,17 @@ class FakeInstantCamera:
             self.ResultingFrameRateAbs = resulting
             self.AcquisitionFrameRate = FakeParameter(valid=False)
             self.ResultingAcquisitionFrameRate = FakeParameter(valid=False)
+
+        # Exposure bounds the rate at 1/exposure whatever the link can carry, so it is the
+        # fallback when the model reports no resulting-rate node. Read-only, as it is on a
+        # real camera while ExposureAuto is running.
+        exposure = FakeParameter(exposure_us, writable=False)
+        if sfnc2:
+            self.ExposureTime = exposure
+            self.ExposureTimeAbs = FakeParameter(valid=False)
+        else:
+            self.ExposureTimeAbs = exposure
+            self.ExposureTime = FakeParameter(valid=False)
 
     def Open(self):  # noqa: N802
         self._open = True
@@ -266,12 +284,17 @@ class FakeTlFactory:
         self.sfnc2 = True
         self.max_fps = 30.0
         self.open_raises = False
+        self.exposure_us = 10_000.0
+        self.resulting_rate = True
 
     def EnumerateDevices(self, filters=None):  # noqa: N802
         return list(self.devices)
 
     def CreateDevice(self, device_info):  # noqa: N802
-        camera = FakeInstantCamera(device_info, self.sensor_frame, self.sfnc2, self.max_fps)
+        camera = FakeInstantCamera(
+            device_info, self.sensor_frame, self.sfnc2, self.max_fps,
+            self.exposure_us, self.resulting_rate,
+        )
         if self.open_raises:
             camera.Open = lambda: (_ for _ in ()).throw(FakeGenericException("device is exclusively opened"))
         return camera
@@ -700,3 +723,35 @@ def test_find_cameras_survives_a_device_it_cannot_open(fake_pylon):
     assert found[0]["id"] == SERIAL
     assert found[0]["default_stream_profile"] is None
     assert "could not open" in found[0]["error"]
+
+
+def test_slow_exposure_is_warned_about_when_the_camera_reports_no_resulting_rate(
+    fake_pylon, make_camera, caplog
+):
+    """A dim optical path must be diagnosed at connect, not as a timeout much later.
+
+    Exposure bounds the frame rate at 1/exposure no matter what the link can carry, so a
+    500 ms exposure caps the camera at 2 fps. On a model with no ResultingAcquisitionFrameRate
+    node there is nothing else to check it against, and the first symptom used to be a
+    TimeoutError out of async_read, which says nothing about exposure being the cause.
+    """
+    fake_pylon.resulting_rate = False
+    fake_pylon.exposure_us = 500_000.0  # 500 ms -> 2 fps, as a dim objective produces
+
+    with caplog.at_level(logging.WARNING, logger="lerobot.cameras.basler.camera_basler"):
+        make_camera(fps=30)
+
+    warnings = [r.message for r in caplog.records if r.levelname == "WARNING"]
+    assert any("can only sustain 2.0 fps" in m for m in warnings), warnings
+    assert any("Exposure is 500.0 ms" in m for m in warnings), warnings
+
+
+def test_no_rate_warning_when_exposure_allows_the_requested_rate(fake_pylon, make_camera, caplog):
+    """The fallback must not cry wolf: 10 ms allows 100 fps, comfortably above 30."""
+    fake_pylon.resulting_rate = False
+    fake_pylon.exposure_us = 10_000.0
+
+    with caplog.at_level(logging.WARNING, logger="lerobot.cameras.basler.camera_basler"):
+        make_camera(fps=30)
+
+    assert not [r for r in caplog.records if "can only sustain" in r.message]

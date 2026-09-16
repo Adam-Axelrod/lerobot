@@ -44,6 +44,8 @@ class BaslerCameraConfig(CameraConfig):
         binning: Sensor-side binning factor (1 = off, 2 = 2x2, ...). Combines neighbouring
             pixels on the camera, which cuts bus bandwidth and improves low-light SNR at the
             cost of resolution. Leave at 1 unless the link cannot sustain the full sensor.
+        reverse_x: Mirror the image left-right, on the sensor (`ReverseX`).
+        reverse_y: Mirror the image top-bottom, on the sensor (`ReverseY`).
         warmup_s: Time spent reading frames before returning from connect (in seconds).
 
     Note:
@@ -56,12 +58,24 @@ class BaslerCameraConfig(CameraConfig):
 
         Exposure and gain are deliberately not configurable here. The camera keeps whatever
         is in its persistent user set - tune it in the pylon Viewer and `Save User Set`.
+
+        `reverse_x`/`reverse_y` ARE configured here rather than left to the user set, unlike
+        exposure and gain, because they are structural: they change what a pixel coordinate
+        means, so a dataset is only interpretable alongside the orientation that recorded it.
+        Keeping them on the dataclass puts them in version control next to the rig. They are
+        applied on the sensor, so they cost nothing and happen before the downscale.
+
+        `reverse_x` + `reverse_y` together is a 180-degree rotation, so prefer them over
+        `rotation=ROTATE_180` (same result, no CPU). `rotation` remains the only way to get
+        90 or 270 degrees, which swap the axes rather than mirroring them.
     """
 
     serial_number: str
     color_mode: ColorMode = ColorMode.RGB
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     binning: int = 1
+    reverse_x: bool = False
+    reverse_y: bool = False
     warmup_s: int = 1
 
     def __post_init__(self) -> None:
@@ -76,6 +90,12 @@ class BaslerCameraConfig(CameraConfig):
 
         if not isinstance(self.binning, int) or self.binning < 1:
             raise ValueError(f"`binning` must be an integer >= 1, but {self.binning} is provided.")
+
+        # Guard against a truthy non-bool (e.g. reverse_x=1) silently working here but not
+        # round-tripping through a config file as the same type.
+        for name in ("reverse_x", "reverse_y"):
+            if not isinstance(getattr(self, name), bool):
+                raise ValueError(f"`{name}` must be a bool, but {getattr(self, name)!r} is provided.")
 
         if (self.width is None) != (self.height is None):
             raise ValueError(
