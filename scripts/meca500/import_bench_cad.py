@@ -84,21 +84,23 @@ def fit_base_frame(kin, link_files) -> tuple[np.ndarray, float]:
         p = sample_surface(v * 1000.0, f, 3.0, rng)
         urdf.append(p @ frames[i][:3, :3].T + frames[i][:3, 3])
     urdf = np.vstack(urdf)
-    cad = trimesh.util.concatenate([trimesh.load_mesh(f) for f in link_files.values()]).sample(150000)
+    cad = trimesh.util.concatenate([trimesh.load_mesh(f) for f in link_files.values()]).sample(60000)
     tree = cKDTree(cad)
 
-    best = None
-    for yaw in np.radians(np.arange(0, 360, 2)):
+    def score(yaw):
         r = rot_z(yaw)
         t = cad.mean(axis=0) - r @ urdf.mean(axis=0)
-        for _ in range(8):  # translation-only ICP: URDF hulls sit inside the CAD shells
+        for _ in range(5):  # translation-only ICP: URDF hulls sit inside the CAD shells
             w = urdf @ r.T + t
             _, idx = tree.query(w)
             t += np.median(cad[idx] - w, axis=0)
-        d = np.median(tree.query(urdf @ r.T + t)[0])
-        if best is None or d < best[0]:
-            best = (d, r, t)
-    d, r, t = best
+        return np.median(tree.query(urdf @ r.T + t)[0]), r, t, yaw
+
+    # Coarse 10-degree sweep, then 1-degree refinement around the best. Only the yaw is kept;
+    # the translation is replaced by geometry below.
+    best = min((score(y) for y in np.radians(np.arange(0, 360, 10))), key=lambda s: s[0])
+    best = min((score(best[3] + np.radians(a)) for a in range(-9, 10)), key=lambda s: s[0])
+    d, r, t, _ = best
     # The ICP above settles the yaw, but a median-distance fit is biased (the URDF's convex
     # collision hulls sit inside the CAD shells). Take the translation from geometry instead:
     # z = 0 is the base's bottom face, and link 1's outline is centred on the J1 axis in the
@@ -175,7 +177,10 @@ def main() -> None:
 
     # tool -> FRF
     t_frf_brf = np.linalg.inv(kin.link_frames(np.zeros(6))[-1] @ LINK6_TO_FLANGE)
-    t_frf_cad = t_frf_brf @ t_brf_cad
+    # The CAD's tool angle about the flange axis is not trusted (see bench.yaml); apply the
+    # measured correction from calibrate_tip.py on top of it.
+    rot_deg = float(bench.section("tool").get("flange_rotation_deg", 0.0))
+    t_frf_cad = make_transform(rot_z(np.radians(rot_deg))) @ t_frf_brf @ t_brf_cad
     parts = {part_name(f): trimesh.load_mesh(f) for f in tool_files}
     for m in parts.values():
         m.apply_transform(t_frf_cad)
@@ -189,6 +194,7 @@ def main() -> None:
         x = np.cross([1.0, 0.0, 0.0], axis)
     x /= np.linalg.norm(x)
     tip_pose = matrix_to_pose(make_transform(np.column_stack([x, np.cross(axis, x), axis]), tip))
+    print(f"tool rotated {rot_deg:+.2f} deg about the flange axis (tool.flange_rotation_deg)")
     print(
         f"tool: {list(parts)} -> tool.stl; tip {np.round(tip, 2).tolist()} mm in the FRF "
         f"({np.linalg.norm(tip):.1f} mm from the flange), pipette {np.degrees(np.arccos(axis[2])):.1f} deg "

@@ -40,6 +40,12 @@ tool:
   # Tool points closer than this to the tip are not collision-checked: the tip touches
   # the dish by design.
   tip_exempt_mm: 10
+  # Rotation of the whole tool about the flange axis (FRF z), degrees, applied by
+  # import_bench_cad.py on top of the CAD. The CAD fixes the tool's SHAPE but not the angle it
+  # is bolted to the flange at - and with the tip ~106 mm off the flange axis, 10 deg of error
+  # moves the tip ~18 mm. UNKNOWN until measured: run calibrate_tip.py on the arm, which
+  # writes this value, then re-run import_bench_cad.py.
+  flange_rotation_deg: 0.0
 
 safety:
   link_margin_mm: 15        # clearance required for the arm links
@@ -72,10 +78,9 @@ approach:
   # demo end pose ([-53.32, 51.85, 19.53, 128.56, 69.73, -126.21]) was with a different
   # pipette, so it would put this tip somewhere else. calibrate_scope.py prints the joints
   # at every surface (z) sample - paste one of those here.
-  # PROVISIONAL (2026-10-13, new pipette holder): suggest_touch_pose.py with the dish assumed at
-  # z = 32.5 (no calibration yet); best pose with J5 on home's side of the wrist singularity,
-  # tool 11.4 mm beyond its margin. Replace with a measured pose before touching the dish.
-  touch_nominal_joints: [-39.08, 50.05, 56.8, 111.72, 87.59, -10.95]
+  # Cleared: depends on tool.flange_rotation_deg, which is not measured yet (calibrate_tip.py).
+  # Then: import_bench_cad.py -> suggest_touch_pose.py (provisional) or calibrate_scope.py.
+  touch_nominal_joints: null
   touch_rot_jitter_deg: 2
   gate_back_mm: [15, 40]       # straight final approach along the pipette axis
   pretouch_back_mm: [1, 4]     # precision phase length

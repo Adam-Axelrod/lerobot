@@ -30,7 +30,61 @@ ELEVATIONS_DEG = range(15, 76, 10)  # pipette angle below horizontal
 AZIMUTHS_DEG = range(0, 360, 20)  # direction the pipette points, in the base frame
 ROLLS_DEG = range(0, 360, 30)  # rotation of the tool about the pipette axis
 SHOW = 8
+# The tip must be able to back out this far along the pipette from the touch pose - the
+# planner's straight final approach - staying clear and this far inside every joint limit.
+# A touch pose that is clear on its own but sits against a joint limit is unreachable.
+CORRIDOR_MM = 60.0
+CORRIDOR_STEP_MM = 3.0
+JOINT_LIMIT_MARGIN_DEG = 8.0
 # -----------------------------------------------------------------
+
+
+def corridor_ok(kin, checker, target, q) -> bool:
+    """Back the tip out along the pipette axis, IK seeded step to step; all clear and off-limits."""
+    axis = target[:3, 2]
+    for d in np.arange(CORRIDOR_STEP_MM, CORRIDOR_MM + 1e-9, CORRIDOR_STEP_MM):
+        t = target.copy()
+        t[:3, 3] = target[:3, 3] - axis * d
+        q = kin.ik(t, q, max_iters=100)
+        if q is None:
+            return False
+        if np.any(q < kin.lower + JOINT_LIMIT_MARGIN_DEG) or np.any(q > kin.upper - JOINT_LIMIT_MARGIN_DEG):
+            return False
+        if checker.clearance(q).min_mm < 0:
+            return False
+    return True
+
+
+def suggest_start(kin, checker, q_touch, max_lift_mm: float = 150.0, step_mm: float = 3.0):
+    """Walk from the touch pose: back out along the pipette, then straight up, IK seeded step to
+    step so the start is on the touch pose's IK branch. Returns the highest clear pose reached
+    (joints, lift, clearance) or None."""
+    t = kin.tip(q_touch)
+    axis = t[:3, 2]
+    q = q_touch
+    for d in np.arange(step_mm, CORRIDOR_MM + 1e-9, step_mm):
+        tt = t.copy()
+        tt[:3, 3] = t[:3, 3] - axis * d
+        q = kin.ik(tt, q, max_iters=100)
+        if q is None:
+            return None
+    base = t[:3, 3] - axis * CORRIDOR_MM
+    best = None
+    for lift in np.arange(step_mm, max_lift_mm + 1e-9, step_mm):
+        tt = t.copy()
+        tt[:3, 3] = base + [0, 0, lift]
+        q = kin.ik(tt, q, max_iters=100)
+        if (
+            q is None
+            or np.any(q < kin.lower + JOINT_LIMIT_MARGIN_DEG)
+            or np.any(q > kin.upper - JOINT_LIMIT_MARGIN_DEG)
+        ):
+            break
+        c = checker.clearance(q).min_mm
+        if c < 0:
+            break
+        best = (q, lift, c)
+    return best
 
 
 def main() -> None:
@@ -65,7 +119,7 @@ def main() -> None:
             if q is None or abs(q[4]) < 10:
                 continue
             c = checker.clearance(q)
-            if c.min_mm >= 0:
+            if c.min_mm >= 0 and corridor_ok(kin, checker, target, q):
                 results.append((c.min_mm, el, az, roll, q, c))
             break
         print(f"\r  {n} candidates, {len(results)} clear", end="", flush=True)
@@ -93,6 +147,17 @@ def main() -> None:
     print("\nPaste into bench.yaml (approach.touch_nominal_joints), PROVISIONAL until checked on the arm:")
     print(f"  touch_nominal_joints: {[round(float(v), 2) for v in best[4]]}")
     print(f"  tip pose: {np.round(matrix_to_pose(kin.tip(best[4])), 2).tolist()}")
+
+    start = suggest_start(kin, checker, best[4])
+    if start is None:
+        print("\nNo start pose found by backing out and lifting from that touch pose.")
+    else:
+        q, lift, c = start
+        print(
+            f"\nMatching start (tip backed out {CORRIDOR_MM:.0f} mm along the pipette, lifted {lift:.0f} mm; "
+            f"same IK branch as the touch pose, {c:.1f} mm clear):"
+        )
+        print(f"  start.nominal_joints: {[round(float(v), 2) for v in q]}")
 
 
 if __name__ == "__main__":
