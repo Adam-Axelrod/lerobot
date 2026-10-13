@@ -18,6 +18,17 @@ This means, especially for anything touching hardware (`robots/`, `cameras/`, `t
 - **Cameras use the Windows OpenCV backends** (DSHOW/MSMF), not V4L2/AVFoundation. Backend-specific values (e.g. the `CAP_PROP_AUTO_EXPOSURE` magic numbers, camera indices) must match Windows behavior. macOS is **not** a reliable proxy for testing camera focus/exposure.
 - **macOS-side checks are best-effort only.** Tests and quick scripts may be run on the Mac for convenience, but hardware behavior is only authoritative on the Windows laptop. Don't conclude a hardware/camera change "works" from macOS results alone.
 
+## Meca500 benches: what the user means by each name
+
+There are two physical benches. The user refers to them by these names:
+
+| User says | Bench | Microscope camera | Rigs (`scripts/meca500/rigs.py`) |
+|---|---|---|---|
+| **"the original setup"** | bench 1 | cheap VMS700 USB microscope | `meca500_microscope` (also `meca500`, arm cams only) |
+| **"Huanyu's setup"** | bench 2 | expensive Basler acA5472-17ucMED | `meca500_basler` (scope only), `meca500_microscope_basler` (+ arm cams) |
+
+Bench 2's robot base is rotated 180° about vertical relative to bench 1, so per-bench values (`HOME_JOINTS`, `AXIS_SIGNS`, rollout clamps, any collision/obstacle model) are never interchangeable. Select a bench with the `RIG =` constant at the top of each script, never by forking scripts.
+
 ## Tech Stack
 
 Python 3.12+ · PyTorch · Hugging Face (datasets, Hub, accelerate) · draccus (config/CLI) · Gymnasium (envs) · uv (package management)
