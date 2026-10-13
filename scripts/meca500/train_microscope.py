@@ -17,6 +17,17 @@ precision channel's stats so you can confirm it's present and actually toggles
 demos, the flag never fires and the model can't learn it — the startup check
 warns loudly if the full dataset never reaches precision.state=1.
 
+Action representation
+---------------------
+`DELTA_ACTIONS` declares whether the dataset's action channel holds per-step joint
+DELTAS or absolute joint targets, and the startup check fails the run if the dataset
+disagrees. Deltas exist because the SpaceMouse teleop records a position readback
+rather than a command (`get_action()` returns `GetJoints()`), so an absolute dataset's
+action equals its own observation.state in 97.4% of frames -- a policy trained on it
+learns to predict where the arm already is, and commands no motion. Build a delta
+dataset with scripts/meca500/convert_to_delta_actions.py, and deploy the resulting
+checkpoint with `Meca500Config(relative_actions=True)`.
+
 Subset training
 ---------------
 SUBSET_FRACTION < 1.0 trains on a random subset of whole episodes (seeded by
@@ -34,6 +45,8 @@ import re
 import sys
 from pathlib import Path
 
+import numpy as np
+
 # Import the policies package so every built-in architecture registers itself
 # with PreTrainedConfig's choice registry (act, diffusion, vqbet, tdmpc, ...).
 import lerobot.policies  # noqa: F401
@@ -42,6 +55,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.scripts.lerobot_train import train
+from lerobot.transforms import ImageTransformsConfig
 from lerobot.utils.import_utils import register_third_party_plugins
 
 # ----------------------------- CONFIG -----------------------------
@@ -54,13 +68,28 @@ from lerobot.utils.import_utils import register_third_party_plugins
 #     OVERWRITTEN if it already exists on the Hub
 # Keep it stable only while resuming that same run. microscope_inference.py's RUN
 # must match this to evaluate the resulting checkpoints.
-RUN_NAME = "microscope_pipette_2026-09-10"
+RUN_NAME = "basler_pipette_2026-09-16_delta"
 RESUME = False  # True to continue an interrupted run in the same output dir
 
 # --- Dataset (Hugging Face Hub repo_id, or a local dataset cached under HF_LEROBOT_HOME) ---
 USER = "AdamAxelrod"
-NAME = "microscope_pipette_2026-09-10"
+NAME = "basler_pipette_2026-09-16_delta"
 TASK = "move_pipette_under_microscope"  # informational; used for the run/model name
+
+# What the dataset's action channel means. This is a DECLARATION of intent, checked
+# against the dataset at startup (see _report_action_representation) - it does not
+# convert anything. Build a delta dataset with:
+#
+#     python scripts/meca500/convert_to_delta_actions.py
+#
+#   True  -> actions are per-step joint DELTAS. Deploy with
+#            Meca500Config(relative_actions=True).
+#   False -> actions are absolute joint targets (the original recordings).
+#
+# Getting this pair wrong is the one failure mode that bites hard: a delta-trained
+# policy deployed with relative_actions=False sends ~0.005 deg ABSOLUTE joint targets
+# and drives the arm into its lower limits.
+DELTA_ACTIONS = True
 
 # --- Architecture ---
 # Any registered policy type: "act", "diffusion", "vqbet", "tdmpc", "pi0", "smolvla", ...
@@ -70,7 +99,40 @@ ARCHITECTURE = "act"
 # Per-architecture hyper-parameter overrides (optional). Left empty, each policy
 # uses its own sensible training preset. Examples for ACT:
 #   POLICY_KWARGS = {"chunk_size": 100, "n_action_steps": 100, "dim_model": 512}
-POLICY_KWARGS: dict = {}
+#
+# chunk_size 100 -> 30 (5 s -> 1.5 s at 20fps). With per-step deltas the far end of a
+# long chunk is close to unpredictable noise, and under L1 the model answers that by
+# predicting ~0 there, spending capacity on steps it cannot know. A shorter horizon
+# puts that capacity on the near future, which is the part that actually gets
+# executed: microscope_inference.py runs n_action_steps=1 with temporal ensembling,
+# so only element 0 is ever sent to the arm.
+#
+# Deliberately NOT changed yet, so this run stays interpretable:
+#   vision_backbone     - resnet50+dilation is 25M params on ~50k frames (overfit risk),
+#                         and it raises resolution, not the 1.8-sigma tip contrast that
+#                         is the real perception limit.
+#   precision-phase loss weighting - needs an ACT loss change; would confound this run.
+POLICY_KWARGS: dict = {"chunk_size": 30, "n_action_steps": 30}
+
+# --- Image augmentation ---
+# Off by default upstream. Kept ON here, but note the justification is different from the
+# 2026-09-10 run's: that one cited a MEASURED train/rollout brightness shift on the wrist
+# cam, and this rig has no wrist cam - the dataset is a single microscope view.
+#
+# The reason it still earns its place is that the Basler runs ExposureAuto and GainAuto
+# continuously against a fixed AutoTargetBrightness, so the absolute brightness of a frame
+# depends on what is in the field of view at the time rather than being pinned. Between a
+# recording session and a rollout the lamp, the objective or the dish can all move that.
+# ColorJitter brightness (0.8, 1.2) hedges it. This is a hedge, not a correction of a
+# measured shift - if a rollout ever shows one, measure it and revisit the range.
+#
+# AFFINE IS ZEROED ON PURPOSE. The upstream default includes RandomAffine with
+# translate=(0.05, 0.05) at equal weight - up to 32px of image shift with the target
+# action left unchanged. For a policy whose whole remaining job is resolving a ~50px
+# tip-to-dot offset, that trains in exactly the invariance we need it NOT to have.
+# Weight 0 drops a transform entirely (ImageTransforms skips weight <= 0).
+USE_IMAGE_TRANSFORMS = True
+GEOMETRIC_TRANSFORMS = ("affine",)  # zeroed: they move the image without moving the action
 
 # --- Random subset of the dataset ---
 # 1.0 = train on every episode. e.g. 0.5 = a random half of the episodes.
@@ -116,6 +178,7 @@ def build_episode_subset(repo_id: str) -> tuple[list[int] | None, int]:
     meta = LeRobotDatasetMetadata(repo_id)
     total = meta.total_episodes
 
+    _report_action_representation(meta)
     _report_precision_channel(meta)
 
     if SUBSET_FRACTION >= 1.0:
@@ -167,6 +230,73 @@ def _report_precision_channel(meta: LeRobotDatasetMetadata) -> None:
             "[precision] WARNING: precision.state never reaches 1 anywhere in the dataset. "
             "There are no precision-mode frames to learn from — check your recordings."
         )
+
+
+def build_image_transforms() -> ImageTransformsConfig:
+    """Upstream's transform set with the geometric ones removed.
+
+    Photometric jitter teaches invariance to lighting, which is what we want. Geometric
+    jitter teaches invariance to *position*, which for a visuomotor policy is the signal
+    itself - the image moves and the supervised action does not, so the model learns that
+    a shifted target needs no change of action.
+    """
+    cfg = ImageTransformsConfig(enable=USE_IMAGE_TRANSFORMS)
+    for name in GEOMETRIC_TRANSFORMS:
+        if name not in cfg.tfs:
+            raise ValueError(
+                f"GEOMETRIC_TRANSFORMS names {name!r}, which is not in the transform set "
+                f"({sorted(cfg.tfs)}). Upstream must have renamed it - check before training, "
+                f"because silently failing to zero it trains in a positional invariance."
+            )
+        cfg.tfs[name].weight = 0.0
+
+    if USE_IMAGE_TRANSFORMS:
+        kept = sorted(n for n, t in cfg.tfs.items() if t.weight > 0)
+        print(f"[augment] enabled, up to {cfg.max_num_transforms} of {kept}")
+        print(f"[augment] zeroed (geometric): {sorted(GEOMETRIC_TRANSFORMS)}")
+    else:
+        print("[augment] disabled")
+    return cfg
+
+
+def _report_action_representation(meta: LeRobotDatasetMetadata) -> None:
+    """Check the dataset's action channel is the representation DELTA_ACTIONS claims.
+
+    Absolute joint targets span the workspace (std ~25 deg); per-step deltas are
+    ~0.3 deg and centred on zero. The two are trivially separable, and confusing them
+    is the one mistake here with a hardware consequence, so it is worth failing early
+    rather than discovering it when the arm hits a joint limit.
+    """
+    stats = meta.stats.get("action", {})
+    names = list(meta.features.get("action", {}).get("names") or [])
+    joints = [i for i, n in enumerate(names) if n.endswith(".pos")]
+    if not joints or "std" not in stats:
+        print("[actions] could not inspect the action channel; skipping the delta check.")
+        return
+
+    std = float(np.mean([stats["std"][i] for i in joints]))
+    mean = float(np.mean([abs(stats["mean"][i]) for i in joints]))
+    looks_delta = std < 5.0 and mean < 1.0
+    print(
+        f"[actions] joint action std={std:.3f} deg, |mean|={mean:.3f} deg "
+        f"-> looks like {'DELTAS' if looks_delta else 'ABSOLUTE targets'}"
+    )
+
+    if looks_delta != DELTA_ACTIONS:
+        raise SystemExit(
+            f"\n  DELTA_ACTIONS={DELTA_ACTIONS} but {meta.repo_id!r} holds "
+            f"{'per-step deltas' if looks_delta else 'absolute joint targets'} "
+            f"(std={std:.3f} deg).\n"
+            f"  Fix whichever is wrong:\n"
+            f"    - to train on deltas:   NAME must point at a dataset built by\n"
+            f"                            scripts/meca500/convert_to_delta_actions.py\n"
+            f"    - to train on absolutes: set DELTA_ACTIONS = False\n"
+        )
+
+    if DELTA_ACTIONS:
+        print("[actions] REMINDER: deploy this checkpoint with Meca500Config(relative_actions=True).")
+        print("[actions] With it False the arm receives ~0.005 deg absolute targets and drives")
+        print("[actions] into its lower joint limits.")
 
 
 def find_wandb_run_id(run_name: str) -> str | None:
@@ -235,6 +365,7 @@ def main() -> None:
             repo_id=f"{USER}/{NAME}",
             episodes=episodes,
             video_backend=VIDEO_BACKEND,
+            image_transforms=build_image_transforms(),
         ),
         policy=build_policy_config(),
         output_dir=f"outputs/train/{RUN_NAME}",
