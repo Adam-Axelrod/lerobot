@@ -190,3 +190,6 @@ outputs/
 *.urdf
 *.xml
 *.part
+
+# Automated-collection signed-distance caches (rebuilt from the bench STLs on demand)
+assets/benches/**/.sdf_cache_*.npz

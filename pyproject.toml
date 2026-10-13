@@ -216,6 +216,9 @@ intelrealsense = [
 # runtimes, but USB3/GigE devices additionally need the drivers from the pylon Camera
 # Software Suite installer. No macOS wheel is used here: the rig is Windows-only.
 basler = ["pypylon>=26.6,<27.0 ; sys_platform != 'darwin'"]
+# Meca500 automated data collection: trimesh loads/voxelises the bench's obstacle STLs,
+# scipy turns the voxels into a signed-distance grid for collision checking.
+meca500-autocollect = ["trimesh>=4.0,<5.0", "lerobot[scipy-dep]"]
 phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0", "lerobot[scipy-dep]"]
 
 # Policies
@@ -325,6 +328,7 @@ all = [
     "lerobot[kinematics]",
     "lerobot[intelrealsense]",
     "lerobot[basler]",
+    "lerobot[meca500-autocollect]",
     "lerobot[diffusion]",
     "lerobot[multi_task_dit]",
     "lerobot[wallx]",
