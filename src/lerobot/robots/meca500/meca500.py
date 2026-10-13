@@ -35,6 +35,8 @@ class Meca500(Robot):
         # Last precision-gate state, so send_action can log the ON/OFF transitions
         # instead of a line every control step. None = nothing logged yet.
         self._precision_logged: bool | None = None
+        # Whether the "this action is absolute, not a delta" note has been logged.
+        self._absolute_action_logged: bool = False
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -82,6 +84,18 @@ class Meca500(Robot):
                 monitor_mode=self.config.monitor_mode,
             )
             if not self.config.monitor_mode:
+                # A Meca500 latches its error state across connections: once a command
+                # has been rejected (a joint-limit violation, say), every later command
+                # returns MX_ST_ALREADY_ERR until the error is explicitly cleared, and
+                # ActivateAndHome() is no exception. Clearing it here is what lets
+                # reset.py recover an arm that a previous run left faulted, instead of
+                # needing the web interface.
+                if self.robot.GetStatusRobot().error_status:
+                    logger.warning("Robot is in an error state; resetting it before activating.")
+                    self.robot.ResetError()
+                    self.robot.WaitErrorReset(timeout=10)
+                    self.robot.ResumeMotion()
+
                 logger.info("Homing robot...")
                 self.robot.ActivateAndHome()
                 self.robot.WaitHomed(timeout=60)
@@ -240,17 +254,46 @@ class Meca500(Robot):
             )
             self._precision_logged = precision_active
 
-        # Integrate deltas onto the arm's current TARGET pose, not its measured pose.
-        # GetRtTargetJointPos() is where the controller is driving to; GetJoints() is
-        # where the arm has got to so far. Integrating onto the measured pose would
-        # fold the servo's tracking lag back into every step, so a stream of small
-        # deltas would systematically fall behind the trajectory it is meant to trace.
+        # Relative interpretation applies ONLY to actions in the policy's action space.
+        #
+        # This robot is driven by two kinds of caller, and they disagree about what a
+        # joint value means. The policy emits per-step DELTAS. The rollout also drives
+        # it with ABSOLUTE joint targets, in at least three places that are not
+        # obviously related: the reset loop's home teleop (rollout/strategies/
+        # episodic.py), the smooth-handover slide and return_to_initial_position
+        # (rollout/strategies/core.py). A robot-wide "everything is relative" mode adds
+        # the home pose to the current pose, which on 2026-09-16 commanded joint_2 to
+        # 81.2 + 10 = 91.2 deg against a (-70, 90) limit and faulted the controller.
+        #
+        # `precision.state` separates them reliably: it is part of the policy's action
+        # space and no homing path emits it (Meca500Home.get_action returns pose keys
+        # only, and both core.py slides interpolate over observation pose keys). So the
+        # test is "does this action carry every action_features key", not a guess about
+        # magnitudes - a delta and an absolute target are not distinguishable by size.
+        #
+        # Integrate onto the current TARGET pose, not the measured one:
+        # GetRtTargetJointPos() is where the controller is driving to, GetJoints() is
+        # where the arm has got to. Integrating onto the measured pose would fold servo
+        # lag into every step, so a stream of small deltas would fall progressively
+        # behind the trajectory it is meant to trace.
         if self.config.relative_actions:
-            present_pos_list = self.robot.GetRtTargetJointPos()
-            goal_pos = {
-                f"joint_{i + 1}": present_pos_list[i] + goal_pos.get(f"joint_{i + 1}", 0.0)
-                for i in range(6)
-            }
+            is_policy_action = set(self.action_features).issubset(action)
+            if is_policy_action:
+                present_pos_list = self.robot.GetRtTargetJointPos()
+                goal_pos = {
+                    f"joint_{i + 1}": present_pos_list[i] + goal_pos.get(f"joint_{i + 1}", 0.0)
+                    for i in range(6)
+                }
+            elif self._absolute_action_logged is not True:
+                # Loud once, not every step: silently switching interpretation is
+                # exactly how the arm ends up somewhere nobody predicted.
+                logger.info(
+                    f"{self} relative_actions is on, but this action carries only "
+                    f"{sorted(action)} and not the full policy action space "
+                    f"{sorted(self.action_features)}. Treating it as ABSOLUTE joint "
+                    f"targets - this is the homing/reset path, which is correct."
+                )
+                self._absolute_action_logged = True
 
         if relative_target is not None:
             present_pos_list = self.robot.GetRtTargetJointPos()

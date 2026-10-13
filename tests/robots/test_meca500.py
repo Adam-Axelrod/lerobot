@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 
 from lerobot.robots.meca500.config_meca500 import Meca500Config
 from lerobot.robots.meca500.meca500 import Meca500
@@ -66,7 +67,9 @@ def test_send_action_relative_mode_integrates_onto_target_pose():
     """
     present = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
     robot = _mock_robot(Meca500Config(monitor_mode=False, relative_actions=True), present)
-    action = {f"joint_{i + 1}.pos": 0.5 for i in range(6)}
+    # precision.state is what marks this as a policy action rather than a homing one;
+    # a real policy action always carries it (see Meca500.action_features).
+    action = {f"joint_{i + 1}.pos": 0.5 for i in range(6)} | {"precision.state": 0.0}
 
     sent = robot.send_action(action)
 
@@ -81,7 +84,7 @@ def test_send_action_relative_mode_zero_delta_holds_position():
     present = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
     robot = _mock_robot(Meca500Config(monitor_mode=False, relative_actions=True), present)
 
-    robot.send_action({f"joint_{i + 1}.pos": 0.0 for i in range(6)})
+    robot.send_action({f"joint_{i + 1}.pos": 0.0 for i in range(6)} | {"precision.state": 0.0})
 
     assert robot.robot.MoveJoints.call_args[0] == tuple(present)
 
@@ -93,9 +96,84 @@ def test_send_action_relative_mode_clamp_bounds_the_delta():
         Meca500Config(monitor_mode=False, relative_actions=True, max_relative_target=0.06), present
     )
 
-    robot.send_action({f"joint_{i + 1}.pos": 5.0 for i in range(6)})
+    robot.send_action({f"joint_{i + 1}.pos": 5.0 for i in range(6)} | {"precision.state": 0.0})
 
     assert robot.robot.MoveJoints.call_args[0] == (0.06,) * 6
+
+
+def test_relative_mode_treats_homing_actions_as_absolute():
+    """The regression that faulted the arm on 2026-09-16.
+
+    The rollout drives this robot with ABSOLUTE joint targets during homing and reset
+    (episodic.py's reset loop via Meca500Home, plus core.py's handover slide and
+    return_to_initial_position), while the policy sends deltas. Adding the home pose to
+    the current pose commanded joint_2 to 81.2 + 10 = 91.2 deg against a (-70, 90)
+    limit. Homing actions carry pose keys only; the policy's carry precision.state too.
+    """
+    present = [81.2] * 6
+    robot = _mock_robot(Meca500Config(monitor_mode=False, relative_actions=True), present)
+
+    # exactly what Meca500Home.get_action() returns: pose keys, no precision.state
+    home = [70.0, 10.0, 10.0, 90.0, -80.0, 15.0]
+    robot.send_action({f"joint_{i + 1}.pos": home[i] for i in range(6)})
+
+    sent = robot.robot.MoveJoints.call_args[0]
+    assert sent == tuple(home), f"home must be sent as-is, not added to the current pose (got {sent})"
+    assert sent[1] != pytest.approx(91.2), "joint_2 was driven past its limit again"
+
+
+def test_relative_mode_still_integrates_a_full_policy_action():
+    """The discriminator must not break the case it exists for."""
+    present = [81.2] * 6
+    robot = _mock_robot(Meca500Config(monitor_mode=False, relative_actions=True), present)
+
+    action = {f"joint_{i + 1}.pos": 0.25 for i in range(6)}
+    action["precision.state"] = 0.0  # what makes it a policy action
+    robot.send_action(action)
+
+    assert robot.robot.MoveJoints.call_args[0] == pytest.approx((81.45,) * 6)
+
+
+def test_absolute_mode_is_unaffected_by_the_discriminator():
+    """With relative_actions off, both shapes of action are absolute targets."""
+    present = [81.2] * 6
+    robot = _mock_robot(Meca500Config(monitor_mode=False, relative_actions=False), present)
+
+    robot.send_action({f"joint_{i + 1}.pos": 5.0 for i in range(6)})
+    assert robot.robot.MoveJoints.call_args[0] == (5.0,) * 6
+
+    robot.send_action({**{f"joint_{i + 1}.pos": 5.0 for i in range(6)}, "precision.state": 1.0})
+    assert robot.robot.MoveJoints.call_args[0] == (5.0,) * 6
+
+
+def test_connect_clears_a_latched_error_before_activating():
+    """A faulted Meca500 rejects every command until the error is reset.
+
+    Without this, reset.py cannot recover an arm a previous run left in error -
+    ActivateAndHome() itself returns MX_ST_ALREADY_ERR.
+    """
+    robot = Meca500(Meca500Config(monitor_mode=False, cameras={}))
+    robot.cameras = {}
+    robot.robot = MagicMock()
+    robot.robot.GetStatusRobot.return_value = MagicMock(error_status=True)
+
+    robot.connect()
+
+    robot.robot.ResetError.assert_called_once()
+    robot.robot.ResumeMotion.assert_called_once()
+    robot.robot.ActivateAndHome.assert_called_once()
+
+
+def test_connect_does_not_reset_a_healthy_robot():
+    robot = Meca500(Meca500Config(monitor_mode=False, cameras={}))
+    robot.cameras = {}
+    robot.robot = MagicMock()
+    robot.robot.GetStatusRobot.return_value = MagicMock(error_status=False)
+
+    robot.connect()
+
+    robot.robot.ResetError.assert_not_called()
+    robot.robot.ActivateAndHome.assert_called_once()
 
 
 def test_send_action_relative_mode_ignores_precision_gate_as_a_joint():
