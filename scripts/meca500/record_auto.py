@@ -1,0 +1,272 @@
+"""Record microscope pipetting demos with no human: a scripted expert drives the arm to a
+digital target drawn on the microscope feed.
+
+Per episode:
+    1. plan  - sample a start pose, a target pixel and a randomised path; IK + collision-check
+               every frame (autocollect/planner.py). Nothing moves until a plan passes.
+    2. transit (NOT recorded) - back the tip out along the pipette, then a collision-checked
+               joint move to the new start.
+    3. record - the marker appears at the target pixel; the scripted teleop replays the plan
+               as absolute MoveJoints targets, one per frame, ending with the tip touching the
+               dish on the marker in precision mode.
+
+The dataset schema is identical to the SpaceMouse recordings (joint_1..6.pos +
+precision.state, microscope_cam), but the action is the COMMANDED target rather than a
+position readback. Train on the delta version as usual:
+    python scripts/meca500/convert_to_delta_actions.py   (point it at this dataset)
+
+Each episode's seed, target pixel, start pose and clearance go to autocollect_episodes.jsonl
+in the dataset folder (NOT dataset features, so nothing leaks into the policy's inputs),
+next to a copy of the bench config and scope calibration used.
+
+Bring-up order (STAGE below): "hover" first - stops 5 mm above the dish at half speed -
+and watch a few episodes with a hand on the e-stop; then "touch" on a dummy dish; then
+unattended batches. Keys as in record: right arrow ends an episode early (it is then
+discarded), left arrow re-records, Esc stops.
+
+Prerequisites: check_kinematics.py passes, the bench has its STLs + tool + calibration,
+check_demos_clearance.py finds no demo collisions, plan_preview.py looks right.
+"""
+
+import contextlib
+import json
+import logging
+import shutil
+import sys
+import time
+from dataclasses import replace
+
+import numpy as np
+from rigs import rig_config
+
+from lerobot.common.control_utils import sanity_check_dataset_name, sanity_check_dataset_robot_compatibility
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
+from lerobot.datasets.video_utils import VideoEncodingManager
+from lerobot.processor import (
+    RobotProcessorPipeline,
+    make_default_processors,
+    observation_to_transition,
+    transition_to_observation,
+)
+from lerobot.robots.meca500.autocollect.bench import BenchConfig, PlannerLimits
+from lerobot.robots.meca500.autocollect.overlay import TargetOverlayStep
+from lerobot.robots.meca500.autocollect.planner import Planner, PlanningError
+from lerobot.robots.utils import make_robot_from_config
+from lerobot.scripts.lerobot_record import record_loop
+from lerobot.teleoperators.meca500_scripted.config_meca500_scripted import Meca500ScriptedConfig
+from lerobot.teleoperators.meca500_scripted.meca500_scripted import Meca500Scripted
+from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.feature_utils import combine_feature_dicts
+from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.keyboard_input import init_keyboard_listener, is_headless
+from lerobot.utils.utils import init_logging, log_say
+
+# ----------------------------- CONFIG -----------------------------
+RIG = "meca500_basler"
+USER = "AdamAxelrod"
+NAME = "basler_auto_2026-10"  # one dataset per rig and target style - never mix
+TASK = "move_pipette_to_target"
+NUM_EPISODES = 50
+RESUME = False  # append to an existing local dataset of the same NAME
+PUSH_TO_HUB = False
+DISPLAY_DATA = True
+
+# "hover": touch target raised 5 mm and every speed halved - for watching the first runs.
+# "touch": the real thing.
+STAGE = "hover"
+HOVER_RAISE_MM = 5.0
+
+# Refuse to collect with a calibration worse than this: its residual is the label noise of
+# every episode (the gap between marker and where the tip lands).
+MAX_CALIBRATION_RESIDUAL_PX = 5.0
+# The arm must reach each start within this before recording begins.
+START_TOLERANCE_DEG = 0.2
+SETTLE_TIMEOUT_S = 30.0
+
+# Per-step clamps on the robot side, a backstop above what the planner already enforces
+# (motion.max_joint_step_deg / max_joint_step_precision_deg in bench.yaml).
+MAX_REL_TARGET = 1.5
+PRECISION_MAX_REL_TARGET = 0.15
+# Seeds are SEED_BASE + episode index, so a resumed dataset never repeats an episode.
+SEED_BASE = 1_000_000
+# -----------------------------------------------------------------
+
+
+def build_planner(bench: BenchConfig) -> Planner:
+    kin = bench.kinematics()
+    calib = bench.calibration()
+    if calib.residual_px_rms > MAX_CALIBRATION_RESIDUAL_PX:
+        sys.exit(
+            f"Scope calibration residual {calib.residual_px_rms:.2f} px > {MAX_CALIBRATION_RESIDUAL_PX}. "
+            "Re-run calibrate_scope.py."
+        )
+    limits = PlannerLimits.from_bench(bench)
+    if STAGE == "hover":
+        limits = replace(
+            limits,
+            touch_offset_mm=limits.touch_offset_mm + HOVER_RAISE_MM,
+            coarse_speed_mm_s=tuple(v / 2 for v in limits.coarse_speed_mm_s),
+            gate_speed_mm_s=tuple(v / 2 for v in limits.gate_speed_mm_s),
+            precision_speed_mm_s=tuple(v / 2 for v in limits.precision_speed_mm_s),
+            transit_speed_deg_s=limits.transit_speed_deg_s / 2,
+        )
+    elif STAGE != "touch":
+        sys.exit(f"STAGE must be 'hover' or 'touch', not {STAGE!r}")
+    return Planner(kin, bench.collision_checker(kin), calib, limits)
+
+
+def wait_settled(robot, target, timeout_s: float) -> np.ndarray:
+    """Block until the arm has finished its queued moves; return where it actually is."""
+    robot.robot.WaitIdle(timeout=timeout_s)
+    q = np.array(robot.robot.GetRtJointPos())
+    err = np.abs(q - np.asarray(target)).max()
+    if err > START_TOLERANCE_DEG:
+        raise RuntimeError(
+            f"Arm settled {err:.3f} deg from its planned pose (> {START_TOLERANCE_DEG}); stopping."
+        )
+    return q
+
+
+def run_plan(robot, teleop, joints, precision, fps, events, processors, dataset=None, display=False):
+    teleop.load_plan(joints, precision)
+    teleop_proc, robot_proc, obs_proc = processors
+    record_loop(
+        robot=robot,
+        events=events,
+        fps=fps,
+        teleop_action_processor=teleop_proc,
+        robot_action_processor=robot_proc,
+        robot_observation_processor=obs_proc,
+        teleop=teleop,
+        dataset=dataset,
+        control_time_s=len(joints) / fps,
+        single_task=TASK,
+        display_data=display,
+    )
+
+
+def main() -> None:
+    init_logging()
+    register_third_party_plugins()
+    bench = BenchConfig.load(RIG)
+    planner = build_planner(bench)
+    fps = planner.lim.fps
+    repo_id = f"{USER}/{NAME}"
+
+    robot = make_robot_from_config(
+        rig_config(
+            RIG,
+            monitor_mode=False,
+            relative_actions=False,
+            max_relative_target=MAX_REL_TARGET,
+            precision_max_relative_target=PRECISION_MAX_REL_TARGET,
+        )
+    )
+    teleop = Meca500Scripted(Meca500ScriptedConfig(id="meca500_scripted"))
+
+    overlay = TargetOverlayStep(camera_key=bench.camera_key, style=bench.target_style())
+    teleop_proc, robot_proc, _ = make_default_processors()
+    obs_proc = RobotProcessorPipeline(
+        steps=[overlay], to_transition=observation_to_transition, to_output=transition_to_observation
+    )
+    processors = (teleop_proc, robot_proc, obs_proc)
+
+    features = combine_feature_dicts(
+        aggregate_pipeline_dataset_features(
+            pipeline=teleop_proc,
+            initial_features=create_initial_features(action=robot.action_features),
+            use_videos=True,
+        ),
+        aggregate_pipeline_dataset_features(
+            pipeline=obs_proc,
+            initial_features=create_initial_features(observation=robot.observation_features),
+            use_videos=True,
+        ),
+    )
+    root = HF_LEROBOT_HOME / repo_id
+    if RESUME:
+        dataset = LeRobotDataset.resume(repo_id, root=root, image_writer_threads=4)
+        sanity_check_dataset_robot_compatibility(dataset, robot, fps, features)
+    else:
+        if root.exists():
+            sys.exit(f"{root} already exists. Set RESUME = True to append, or choose a new NAME.")
+        sanity_check_dataset_name(repo_id, None)
+        dataset = LeRobotDataset.create(
+            repo_id, fps, robot_type=robot.name, features=features, use_videos=True, image_writer_threads=4
+        )
+    prov = root / "autocollect"
+    prov.mkdir(exist_ok=True)
+    shutil.copy(bench.root / "bench.yaml", prov / f"bench_{STAGE}.yaml")
+    shutil.copy(bench.calibration_path(), prov / "scope_calibration.json")
+    meta_path = root / "autocollect_episodes.jsonl"
+
+    robot.connect()
+    robot.configure()
+    teleop.connect()
+    listener, events = init_keyboard_listener()
+    try:
+        q_now = np.array(robot.robot.GetRtJointPos())
+        retreat = False  # the first move starts from wherever the arm was left, not the dish
+        with VideoEncodingManager(dataset):
+            recorded = 0
+            while recorded < NUM_EPISODES and not events["stop_recording"]:
+                ep = dataset.num_episodes
+                try:
+                    plan = planner.sample_episode(SEED_BASE + ep)
+                    transit = planner.plan_transit(q_now, plan.start_joints, retreat=retreat)
+                except PlanningError as e:
+                    logging.error(str(e))
+                    break
+
+                overlay.set_target(None)
+                log_say(f"Moving to start of episode {ep}", False)
+                run_plan(robot, teleop, transit, np.zeros(len(transit)), fps, events, processors)
+                wait_settled(robot, plan.start_joints, SETTLE_TIMEOUT_S)
+                if events["stop_recording"]:
+                    break
+
+                overlay.set_target(plan.target_px)
+                log_say(f"Recording episode {ep}", False)
+                events["exit_early"] = False
+                t0 = time.perf_counter()
+                run_plan(
+                    robot, teleop, plan.joints, plan.precision, fps, events, processors, dataset, DISPLAY_DATA
+                )
+                q_now = np.array(robot.robot.GetRtJointPos())
+                retreat = True
+
+                if robot.robot.GetStatusRobot().error_status:
+                    raise RuntimeError("Robot reported an error during the episode; stopping.")
+                if events["rerecord_episode"] or events["exit_early"] or events["stop_recording"]:
+                    # A cut-short scripted episode is not a demonstration - it never reached
+                    # the target - so it is discarded rather than saved.
+                    events["rerecord_episode"] = events["exit_early"] = False
+                    dataset.clear_episode_buffer()
+                    logging.info(f"Episode {ep} discarded.")
+                    continue
+
+                dataset.save_episode()
+                recorded += 1
+                with meta_path.open("a") as f:
+                    f.write(json.dumps({"episode_index": ep, "stage": STAGE, **plan.meta()}) + "\n")
+                logging.info(
+                    f"episode {ep}: {plan.duration_s:.1f}s planned, {time.perf_counter() - t0:.1f}s wall, "
+                    f"target px {np.round(plan.target_px, 1).tolist()}, clearance {plan.clearance.min_mm:.1f} mm"
+                )
+
+        if PUSH_TO_HUB:
+            dataset.push_to_hub(private=True)
+    finally:
+        overlay.set_target(None)
+        with contextlib.suppress(Exception):
+            robot.disconnect()
+        with contextlib.suppress(Exception):
+            teleop.disconnect()
+        if not is_headless() and listener is not None:
+            with contextlib.suppress(Exception):
+                listener.stop()
+
+
+if __name__ == "__main__":
+    main()
