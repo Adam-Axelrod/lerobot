@@ -124,6 +124,9 @@ class EpisodicStrategy(RolloutStrategy):
                     # Reset policy state at episode start (discard leftover hidden state / queue)
                     self._engine.reset()
                     self._interpolator.reset()
+                    # FORK PATCH: let stateful observation steps start a new episode too
+                    # (the Meca500 digital-target overlay draws a fresh target here).
+                    ctx.processors.robot_observation_processor.reset()
                     # A reset interpolator re-primes over two consecutive inference
                     # ticks, exactly like loop start-up, so exempt the group that
                     # spans them instead of reporting a healthy episode as slow.

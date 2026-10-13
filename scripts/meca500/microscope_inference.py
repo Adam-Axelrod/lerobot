@@ -44,6 +44,7 @@ Equivalent to:
 
 import contextlib
 import sys
+from pathlib import Path
 
 # HUB is unused by default but is part of the CONFIG vocabulary below: set
 # CKPT = HUB to run the pushed Hub model instead of a local checkpoint.
@@ -169,6 +170,14 @@ DISPLAY_DATA = True
 # Spoken phase announcements ("Recording episode 3", "Reset the environment").
 # False = console log only; the same messages are still written to the terminal.
 PLAY_SOUNDS = False
+
+# Digital target (automated-collection models only). When True, a random target is drawn
+# on the microscope feed at the start of every episode - same marker, same sampling region
+# as scripts/meca500/record_auto.py, from assets/benches/<RIG>/ - and after the run each
+# episode's final tip position is compared with its target (in px and um). Leave False for
+# checkpoints trained on the sticker datasets: they have never seen the marker.
+TARGET_OVERLAY = False
+TARGET_SEED = 0
 # ------------------------------------------------------------------
 
 
@@ -191,9 +200,7 @@ def home_arm() -> None:
     # to a robot in relative mode they would be ADDED to the current pose - homing to
     # [70, 10, 10, 90, -80, 15] from anywhere near there would command roughly double
     # it, straight past the joint limits. Only the policy speaks deltas.
-    robot = make_robot_from_config(
-        rig_config(RIG, monitor_mode=False, cameras={}, relative_actions=False)
-    )
+    robot = make_robot_from_config(rig_config(RIG, monitor_mode=False, cameras={}, relative_actions=False))
     teleop = Meca500Home(Meca500HomeConfig(id="meca500_home", home=HOME_JOINTS))
 
     robot.connect()  # activates + homes to factory zero
@@ -228,6 +235,91 @@ def home_arm() -> None:
             print(f"[home] gentle disconnect failed ({e}); falling back to full disconnect")
             with contextlib.suppress(Exception):
                 robot.disconnect()
+
+
+def make_target_overlay():
+    """The record_auto marker, drawing a fresh random target at each episode start."""
+    import numpy as np
+
+    from lerobot.processor import RobotProcessorPipeline, observation_to_transition, transition_to_observation
+    from lerobot.robots.meca500.autocollect.bench import BenchConfig, PlannerLimits
+    from lerobot.robots.meca500.autocollect.overlay import TargetOverlayStep
+
+    bench = BenchConfig.load(RIG)
+    calib = bench.calibration()
+    margin = PlannerLimits.from_bench(bench).target_edge_margin_px
+    rng = np.random.default_rng(TARGET_SEED)
+    targets: list[tuple[float, float]] = []
+
+    def sample():
+        w, h = calib.image_size
+        px = (float(rng.uniform(margin, w - 1 - margin)), float(rng.uniform(margin, h - 1 - margin)))
+        targets.append(px)
+        print(f"[target] episode {len(targets) - 1}: pixel ({px[0]:.1f}, {px[1]:.1f})")
+        return px
+
+    step = TargetOverlayStep(camera_key=bench.camera_key, style=bench.target_style(), sampler=sample)
+    pipeline = RobotProcessorPipeline(
+        steps=[step], to_transition=observation_to_transition, to_output=transition_to_observation
+    )
+    return pipeline, targets, bench
+
+
+def report_target_errors(repo_prefix: str, targets, bench) -> None:
+    """Final tip position of each recorded rollout episode vs its target, in px and um.
+
+    The order of ``targets`` is the order episodes STARTED; a re-recorded episode (left
+    arrow) draws a new target, so after a re-record the pairing is off by one - the report
+    says so rather than guessing.
+    """
+    import glob
+    import json
+
+    import numpy as np
+    import pandas as pd
+
+    from lerobot.utils.constants import HF_LEROBOT_HOME
+
+    roots = sorted(glob.glob(str(HF_LEROBOT_HOME / f"{repo_prefix}*")), key=lambda p: Path(p).stat().st_mtime)
+    if not roots or not targets:
+        print("[target] no rollout dataset or targets to evaluate.")
+        return
+    root = Path(roots[-1])
+    files = sorted(glob.glob(str(root / "data" / "*" / "*.parquet")))
+    df = pd.concat(
+        pd.read_parquet(f, columns=["observation.state", "episode_index", "frame_index"]) for f in files
+    )
+    last = df.sort_values("frame_index").groupby("episode_index").tail(1).sort_values("episode_index")
+    kin, calib = bench.kinematics(), bench.calibration()
+    if len(last) != len(targets):
+        print(
+            f"[target] {len(targets)} targets drawn but {len(last)} episodes saved (re-records?) - "
+            "pairing in order anyway; check by eye."
+        )
+    rows = []
+    for (_, r), px in zip(last.iterrows(), targets, strict=False):
+        tip = kin.tip(np.asarray(r["observation.state"])[:6])[:3, 3]
+        tip_px = calib.xy_to_pixel(tip[:2])[0]
+        err_px = float(np.linalg.norm(tip_px - px))
+        rows.append(
+            {
+                "episode_index": int(r["episode_index"]),
+                "target_px": px,
+                "tip_px": tip_px.round(2).tolist(),
+                "error_px": round(err_px, 2),
+                "error_um": round(err_px * calib.mm_per_px * 1000, 1),
+                "tip_height_above_surface_mm": round(float(tip[2] - calib.surface_z_mm), 3),
+            }
+        )
+        print(
+            f"[target] episode {rows[-1]['episode_index']}: {err_px:.1f} px = {rows[-1]['error_um']:.0f} um, "
+            f"tip {rows[-1]['tip_height_above_surface_mm']:+.3f} mm from the surface"
+        )
+    (root / "target_errors.json").write_text(json.dumps(rows, indent=2))
+    errs = np.array([r["error_px"] for r in rows])
+    print(
+        f"[target] median {np.median(errs):.1f} px, max {errs.max():.1f} px -> {root / 'target_errors.json'}"
+    )
 
 
 def check_action_representation(policy_path) -> None:
@@ -323,10 +415,15 @@ def main() -> None:
 
     # After the config is built (so a bad CKPT or config fails before the arm
     # moves) and before the rollout takes over the control connection.
+    obs_processor, targets, bench = make_target_overlay() if TARGET_OVERLAY else (None, [], None)
+
     if HOME_BEFORE_START:
         home_arm()
 
-    rollout(cfg)
+    rollout(cfg, robot_observation_processor=obs_processor)
+
+    if TARGET_OVERLAY:
+        report_target_errors(cfg.dataset.repo_id, targets, bench)
 
 
 if __name__ == "__main__":

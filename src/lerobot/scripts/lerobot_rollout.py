@@ -217,8 +217,13 @@ logger = logging.getLogger(__name__)
 
 
 @parser.wrap()
-def rollout(cfg: RolloutConfig):
-    """Main entry point for policy deployment."""
+def rollout(cfg: RolloutConfig, robot_observation_processor=None):
+    """Main entry point for policy deployment.
+
+    FORK PATCH: ``robot_observation_processor`` lets a caller insert observation steps (the
+    Meca500 digital-target overlay) between the robot and the policy/dataset. None keeps the
+    upstream default.
+    """
     init_logging()
 
     if cfg.display_data:
@@ -238,7 +243,7 @@ def rollout(cfg: RolloutConfig):
         shutdown_event = LinkedEvent(shutdown_event)
 
     logger.info("Building rollout context...")
-    ctx = build_rollout_context(cfg, shutdown_event)
+    ctx = build_rollout_context(cfg, shutdown_event, robot_observation_processor=robot_observation_processor)
 
     strategy = create_strategy(cfg.strategy)
     logger.info("Rollout strategy: %s", cfg.strategy.type)
