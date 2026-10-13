@@ -121,19 +121,20 @@ const groups = {};
 for (const [p,[label,color,op,vis]] of Object.entries(GROUPS)) {
   const g = new THREE.Group(); g.visible = vis; scene.add(g);
   groups[p] = {g, mat: new THREE.MeshStandardMaterial({color, transparent: op<1, opacity: op,
-    depthWrite: op>=1, side: THREE.DoubleSide, metalness: 0.05, roughness: 0.7})};
+    depthWrite: op>=1, side: THREE.DoubleSide, metalness: 0.05, roughness: 0.7}),
+    line: new THREE.LineBasicMaterial({color, transparent: op<1, opacity: op})};
   const l = document.createElement('label');
   l.innerHTML = `<input type="checkbox" ${vis?'checked':''}><span class="sw" style="background:${color}"></span>${label}`;
   l.querySelector('input').onchange = e => g.visible = e.target.checked; document.getElementById('ui').appendChild(l);
 }
 const bytes = Uint8Array.from(atob('__GLB__'), c => c.charCodeAt(0));
 new GLTFLoader().parse(bytes.buffer, '', gltf => {
-  const meshes = []; gltf.scene.traverse(o => { if (o.isMesh) meshes.push(o); });
+  const meshes = []; gltf.scene.traverse(o => { if (o.isMesh || o.isLine) meshes.push(o); });
   for (const o of meshes) {
     const p = Object.keys(groups).find(k => o.name.startsWith(k) || (o.parent && o.parent.name.startsWith(k)));
     if (!p) continue;
     o.updateWorldMatrix(true, false); const m = o.clone(); m.matrix.copy(o.matrixWorld);
-    m.matrix.decompose(m.position, m.quaternion, m.scale); m.material = groups[p].mat; groups[p].g.add(m);
+    m.matrix.decompose(m.position, m.quaternion, m.scale); m.material = o.isLine ? groups[p].line : groups[p].mat; groups[p].g.add(m);
   }
 });
 addEventListener('resize', () => { cam.aspect = innerWidth/innerHeight; cam.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
@@ -141,23 +142,26 @@ addEventListener('resize', () => { cam.aspect = innerWidth/innerHeight; cam.upda
 </script></body></html>"""
 
 
-def main() -> None:
+def write_html(scene: trimesh.Scene, out: Path, groups: dict, title: str, open_browser: bool = True) -> Path:
+    """Embed ``scene`` in a self-contained HTML viewer. Nodes are grouped by name prefix."""
     import json
 
-    scene = build_scene()
     glb = scene.export(file_type="glb")
-    groups = {k: list(v) for k, v in GROUPS.items()}
     html = (
-        HTML.replace("__TITLE__", f"{RIG} collision model")
-        .replace("__GROUPS__", json.dumps(groups))
+        HTML.replace("__TITLE__", title)
+        .replace("__GROUPS__", json.dumps({k: list(v) for k, v in groups.items()}))
         .replace("__GLB__", base64.b64encode(glb).decode())
     )
-    out = REPO / OUT
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")
     print(f"Wrote {out} ({out.stat().st_size // 1024} KB)")
-    if "--no-open" not in sys.argv:
+    if open_browser:
         webbrowser.open(out.as_uri())
+    return out
+
+
+def main() -> None:
+    write_html(build_scene(), REPO / OUT, GROUPS, f"{RIG} collision model", "--no-open" not in sys.argv)
 
 
 if __name__ == "__main__":

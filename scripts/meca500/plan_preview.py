@@ -3,9 +3,9 @@
 Plans N_EPISODES with the real bench model and reports what recording would do: how often
 samples are rejected (and why), episode lengths, per-frame joint steps against the human
 demos, and the tightest clearance to any obstacle. Then writes a 3D scene,
-``assets/benches/<RIG>/preview.glb``, with the obstacles, the arm at the start and touch
-pose of the first few episodes and every planned tip path - open it in Windows 3D Viewer,
-Blender or Fusion 360 (Insert > Insert Mesh) and look before letting the arm move.
+``assets/benches/<RIG>/preview.html`` (opens in the browser; preview.glb beside it for Blender/Fusion) with the obstacles, the arm at the start and touch
+pose of the first few episodes and every planned tip path.
+Look at it before letting the arm move.
 
 Until the scope is calibrated, SYNTHETIC_CALIBRATION stands in a fake field of view
 around the nominal touch point, so the geometry can be previewed early. Recording refuses
@@ -25,7 +25,7 @@ from lerobot.robots.meca500.autocollect.planner import Planner, PlanningError
 
 # ----------------------------- CONFIG -----------------------------
 RIG = "meca500_basler"
-N_EPISODES = 200
+N_EPISODES = 100
 SEED0 = 0
 SHOW_ARMS = 3  # draw the arm at start/touch for this many episodes
 # Used only if the bench has no scope_calibration.json yet.
@@ -57,12 +57,12 @@ def export_scene(bench, kin, plans, path: Path) -> None:
         m.apply_transform(trimesh.transformations.rotation_matrix(np.radians(b.get("yaw_deg", 0)), [0, 0, 1]))
         m.apply_translation(b["center"])
         m.visual.face_colors = [150, 150, 150, 200]
-        scene.add_geometry(m, node_name=b.get("name", "box"))
+        scene.add_geometry(m, node_name="obstacle_" + b.get("name", "box"))
     for c in bench.section("obstacles").get("cylinders", []):
         m = trimesh.creation.cylinder(radius=c["radius"], height=c["height"])
         m.apply_translation(np.asarray(c["base"]) + [0, 0, c["height"] / 2])
         m.visual.face_colors = [150, 150, 150, 200]
-        scene.add_geometry(m, node_name=c.get("name", "cylinder"))
+        scene.add_geometry(m, node_name="obstacle_" + c.get("name", "cylinder"))
 
     link_names = [kin.base_link] + [j.child for j in kin.joints]
     link_meshes = {}
@@ -92,9 +92,10 @@ def export_scene(bench, kin, plans, path: Path) -> None:
         tube = trimesh.load_path(tips)
         scene.add_geometry(tube, node_name=f"path_{k}")
         if k < SHOW_ARMS:
-            add_arm(plan.joints[0], [60, 120, 220, 160], f"ep{k}_start")
-            add_arm(plan.joints[-1], [60, 200, 90, 160], f"ep{k}_touch")
+            add_arm(plan.joints[0], [60, 120, 220, 160], f"start{k}")
+            add_arm(plan.joints[-1], [60, 200, 90, 160], f"touch{k}")
     scene.export(path)
+    return scene
 
 
 def main() -> None:
@@ -157,9 +158,16 @@ def main() -> None:
         f"({worst.clearance.where} vs {worst.clearance.obstacle}, seed {worst.seed}); median {np.median(clear):.1f}"
     )
 
-    out = bench.root / "preview.glb"
-    export_scene(bench, kin, plans, out)
-    print(f"\nScene written to {out}")
+    from scene_viewer import write_html
+
+    scene = export_scene(bench, kin, plans, bench.root / "preview.glb")
+    groups = {
+        "obstacle": ("obstacles", "#9aa3ad", 0.85, True),
+        "path": ("planned tip paths", "#e61e1e", 0.8, True),
+        "start": (f"arm at start (first {SHOW_ARMS})", "#3c78e6", 0.45, True),
+        "touch": (f"arm at touch (first {SHOW_ARMS})", "#3cc85a", 0.6, True),
+    }
+    write_html(scene, bench.root / "preview.html", groups, f"{RIG}: {len(plans)} planned episodes")
 
 
 if __name__ == "__main__":

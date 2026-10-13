@@ -1,0 +1,92 @@
+"""Search for collision-free "tip on the optical axis" poses for a bench. No robot needed.
+
+The planner needs ``approach.touch_nominal_joints``: a natural pose with the tip touching
+the dish. Rather than guess, this sweeps the pipette's approach direction (azimuth and
+elevation) and its roll about its own axis, with the tip fixed on the optical axis at the
+dish surface. It solves IK for each candidate and ranks the reachable ones by clearance to
+the obstacles (the tip's own exempt length excluded). The best few are printed ready to
+paste into bench.yaml.
+
+The dish height comes from the scope calibration once it exists; until then
+SURFACE_Z_FALLBACK is used, so treat the result as provisional and re-run after
+calibrate_scope.py. Re-check the chosen pose on the arm with hover-mode recording before
+touching anything.
+"""
+
+import itertools
+import sys
+
+import numpy as np
+from rigs import require_home_joints
+
+from lerobot.robots.meca500.autocollect.bench import BenchConfig
+from lerobot.robots.meca500.autocollect.kinematics import axis_angle, make_transform, matrix_to_pose
+
+# ----------------------------- CONFIG -----------------------------
+RIG = "meca500_basler"
+OPTICAL_AXIS_XY = (237.5, -85.5)
+SURFACE_Z_FALLBACK = 32.5  # stage top (31) + ~1.5 mm dish bottom; replaced by the calibration
+ELEVATIONS_DEG = range(15, 76, 10)  # pipette angle below horizontal
+AZIMUTHS_DEG = range(0, 360, 20)  # direction the pipette points, in the base frame
+ROLLS_DEG = range(0, 360, 30)  # rotation of the tool about the pipette axis
+SHOW = 8
+# -----------------------------------------------------------------
+
+
+def main() -> None:
+    bench = BenchConfig.load(RIG)
+    kin = bench.kinematics()
+    checker = bench.collision_checker(kin)
+    try:
+        surface = bench.calibration().surface_z_mm
+        print(f"Dish surface from the scope calibration: z = {surface:.3f} mm")
+    except FileNotFoundError:
+        surface = SURFACE_Z_FALLBACK
+        print(f"No scope calibration yet - assuming the dish surface at z = {surface} mm (PROVISIONAL).")
+    p_tip = np.array([*OPTICAL_AXIS_XY, surface])
+    home = np.asarray(require_home_joints(RIG), float)
+    seeds = [home, np.array([-60.0, 45, 20, 120, 70, -120]), np.array([-30.0, 30, 30, 0, 60, 0]), np.zeros(6)]
+
+    results = []
+    n = 0
+    for el, az, roll in itertools.product(ELEVATIONS_DEG, AZIMUTHS_DEG, ROLLS_DEG):
+        n += 1
+        e, a = np.radians(el), np.radians(az)
+        z = np.array(
+            [np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), -np.sin(e)]
+        )  # pipette axis, into the dish
+        x0 = np.cross([0, 0, 1], z)
+        x0 /= np.linalg.norm(x0)
+        x = axis_angle(z, np.radians(roll)) @ x0
+        r = np.column_stack([x, np.cross(z, x), z])
+        target = make_transform(r, p_tip)
+        for seed in seeds:
+            q = kin.ik(target, seed, max_iters=150)
+            if q is None or abs(q[4]) < 10:
+                continue
+            c = checker.clearance(q)
+            if c.min_mm >= 0:
+                results.append((c.min_mm, el, az, roll, q, c))
+            break
+        print(f"\r  {n} candidates, {len(results)} clear", end="", flush=True)
+    print()
+    if not results:
+        sys.exit("No collision-free touch pose found - check the obstacles, margins and tool.")
+
+    results.sort(key=lambda r: -r[0])
+    print(
+        f"\nTop {SHOW} by clearance beyond the margins (links {checker.link_margin_mm}, tool {checker.tool_margin_mm} mm):"
+    )
+    for clr, el, az, roll, q, c in results[:SHOW]:
+        print(
+            f"  {clr:5.1f} mm ({c.where} vs {c.obstacle})  elevation {el:2d}  azimuth {az:3d}  roll {roll:3d}  "
+            f"joints {[round(float(v), 2) for v in q]}"
+        )
+    best = results[0]
+    print("\nPaste into bench.yaml (approach.touch_nominal_joints), PROVISIONAL until checked on the arm:")
+    print(f"  touch_nominal_joints: {[round(float(v), 2) for v in best[4]]}")
+    print(f"  tip pose: {np.round(matrix_to_pose(kin.tip(best[4])), 2).tolist()}")
+
+
+if __name__ == "__main__":
+    main()

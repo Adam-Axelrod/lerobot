@@ -72,7 +72,10 @@ approach:
   # demo end pose ([-53.32, 51.85, 19.53, 128.56, 69.73, -126.21]) was with a different
   # pipette, so it would put this tip somewhere else. calibrate_scope.py prints the joints
   # at every surface (z) sample - paste one of those here.
-  touch_nominal_joints: null
+  # PROVISIONAL (2026-10-13): best of suggest_touch_pose.py with the dish assumed at z = 32.5
+  # (no calibration yet): pipette 35 deg below horizontal, tool 11.5 mm beyond its margin.
+  # Replace with a measured pose (calibrate_scope.py) before touching the dish.
+  touch_nominal_joints: [-54.43, 14.59, 50.51, 98.3, 41.47, -23.66]
   touch_rot_jitter_deg: 2
   gate_back_mm: [15, 40]       # straight final approach along the pipette axis
   pretouch_back_mm: [1, 4]     # precision phase length
