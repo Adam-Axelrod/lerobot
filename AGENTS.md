@@ -136,6 +136,9 @@ survived (`git diff upstream/main -- src/lerobot/` lists them).
 | `utils/import_utils.py` | Adds `_pypylon_available` | Loud: `ImportError` on `lerobot.cameras.basler` |
 | `pyproject.toml` | Adds the `basler` extra (`pypylon`) | Loud: `pypylon` missing, so the microscope cam cannot connect |
 | `scripts/lerobot_record.py` | Stray blank line only — no behaviour. Safe to drop | None |
+| `scripts/lerobot_rollout.py` | `rollout(cfg, robot_observation_processor=None)` passes a caller's observation pipeline to `build_rollout_context`. Marked `FORK PATCH` | Loud: `TypeError` when `microscope_inference.py` runs with `TARGET_OVERLAY = True` |
+| `rollout/strategies/episodic.py` | Also calls `robot_observation_processor.reset()` at each episode start. Marked `FORK PATCH` | **Silent.** The digital target never moves between rollout episodes, so an evaluation tests one target over and over |
+| `pyproject.toml` (2) | Adds the `meca500-autocollect` extra (`trimesh`, `scipy`) | Loud: `ImportError` building the bench's obstacle grid |
 
 The **silent** ones are the dangerous ones: nothing errors, the run looks normal, and the
 defect only shows up in the recorded data.

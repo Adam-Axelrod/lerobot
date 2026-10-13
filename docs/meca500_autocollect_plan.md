@@ -226,3 +226,45 @@ Keyboard events still work: the right arrow ends an episode early, Esc stops the
   per-step changes within the demo-derived limits. Visual check in the 3D viewer.
 - **On the robot.** The cautious first runs from phase 5, then a recorded dataset that loads, converts to
   deltas and passes `train_microscope.py`'s startup check on the action representation.
+
+## Status (2026-10-13)
+
+**Built and tested (no robot or CAD needed):**
+- `src/lerobot/robots/meca500/autocollect/` has five modules:
+  - `kinematics.py`: forward kinematics from the URDF, plus damped-least-squares IK. FK reproduces the
+    Meca's documented zero pose (190, 0, 308) mm with Euler (0, 90, 0).
+  - `collision.py`: box, cylinder and mesh-grid obstacle fields; the registration transform; the
+    tip exemption.
+  - `calibration.py`: the affine pixel ↔ XY fit.
+  - `overlay.py`: the marker drawing and the processor step.
+  - `planner.py`.
+- `meca500_scripted` teleop.
+- 24 unit and integration tests in `tests/robots/test_meca500_autocollect.py`. One runs `record_loop`
+  end-to-end on a mocked arm and checks that the recorded action equals the plan and the frame
+  carries the marker.
+- Scripts in `scripts/meca500/`: `check_kinematics.py`, `check_demos_clearance.py`,
+  `calibrate_scope.py`, `register_bench.py`, `plan_preview.py`, `record_auto.py`.
+  `microscope_inference.py` also gains `TARGET_OVERLAY`, which is off by default.
+- `assets/benches/_template/` and `assets/benches/meca500_basler/bench.yaml`.
+  - The start and touch poses come from the 51 Basler demos.
+  - A pivot estimate from the demos' end poses puts the tip about 118 mm from the flange at
+    [96.9, -3.2, 67.6] mm in the FRF, with the dish near z ≈ 21 mm. This is only a cross-check for
+    the CAD.
+
+**Departures from the plan above:**
+- Bench folders are keyed by rig name directly, so `rigs.py` needs no `BENCH_DIRS`.
+- The rollout overlay needed two small `FORK PATCH`es to upstream files, recorded in AGENTS.md:
+  - `rollout()` takes an observation processor;
+  - the episodic strategy calls its `reset()` at each episode start.
+- `record_auto.py` discards an episode that is cut short instead of saving it.
+- The robot's torque-limit and work-zone backstops are **not wired in yet**. Their thresholds need
+  tuning on the arm.
+
+**Waiting on the user, in order:**
+1. Run `check_kinematics.py` on the arm.
+2. Export the Fusion STLs and `tool.stl`, and fill in `tool.tip_pose_in_flange` and the registration
+   points.
+3. Run `check_demos_clearance.py`, then `register_bench.py`.
+4. Run `calibrate_scope.py`.
+5. Run `plan_preview.py`.
+6. Run `record_auto.py`, first with `STAGE = "hover"`.
