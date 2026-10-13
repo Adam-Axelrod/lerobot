@@ -193,3 +193,5 @@ outputs/
 
 # Automated-collection signed-distance caches (rebuilt from the bench STLs on demand)
 assets/benches/**/.sdf_cache_*.npz
+# ...but the bench meshes ARE the collision model, so version them (overrides *.stl above)
+!assets/benches/**/*.stl

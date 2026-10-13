@@ -1,5 +1,5 @@
 # Automated-collection config for Huanyu's setup (bench 2, rig meca500_basler).
-# Waiting on: the Fusion STLs (obstacles/, tool.stl), tip_pose_in_flange, the scope calibration.
+# Waiting on: the scope calibration and a touch pose measured with the current pipette.
 #
 # Units: mm and degrees. Frame: the robot's base reference frame (BRF) - origin at the
 # bottom-centre of the Meca500 base, z up, x/y as the robot reports them in GetPose().
@@ -8,7 +8,12 @@
 obstacles:
   # STLs relative to this folder, one per body (frame, stage, illuminator column, lamp head,
   # ...). Closed (watertight) bodies, mm, BRF. Do NOT include the robot or the tool.
-  meshes: []
+  # From cad/huanyu_setup/export/ (Fusion: top-level Save As Mesh, one file per body),
+  # shifted into the BRF: the CAD robot's J1 axis is at CAD (-147.5, 85.5, 0), no rotation
+  # (URDF links at zero joints overlay the CAD links to ~1 mm median).
+  # Optical axis (stage + plate holes) at BRF (237.5, -85.5); the illuminator's underside is
+  # at z = 95 on that axis and z = 60 within 20 mm of it; stage top at z = 31.
+  meshes: [obstacles/base_plate.stl, obstacles/translation_stage.stl, obstacles/illuminator.stl]
   sdf_pitch_mm: 2.0
   # Optional primitives, for anything quick to measure or that moves (e.g. the dish).
   # boxes:     [{name: lamp_head, center: [x, y, z], size: [dx, dy, dz], yaw_deg: 0}]
@@ -19,20 +24,19 @@ obstacles:
 tool:
   # Holder + pipette as one STL in the FLANGE frame (Meca FRF: origin on the flange face,
   # z out of the flange), mm. Optional but strongly recommended.
-  # Extracted from the Fusion assembly (Meca500.stl at zero joints: every body beyond the
-  # flange face), re-expressed in the FRF. 58 bodies: holder, clamp and a 150 mm pipette
-  # tilted 44 deg off the flange axis.
+  # cad/huanyu_setup/export/tool_*.stl (F/T sensor + mount, wrist camera mount, pipette
+  # holder + attachment, 150 mm pipette tilted 44 deg off the flange axis), re-expressed in the FRF.
   mesh: tool.stl
   # Tip frame in the flange frame, as a Meca pose [x, y, z, alpha, beta, gamma].
   # Its z axis must point ALONG the pipette, out of the tip. If the robot's TRF is already
   # set to the tip, this is the same pose as SetTrf().
-  # From the CAD: tip at the pipette's free end, ~163 mm straight out along the flange axis;
+  # From the CAD: tip at the pipette's free end, ~149 mm straight out along the flange axis;
   # z along the pipette (clamp end -> tip). NOT yet checked on the arm - the CAD's
   # rotation of the tool about the flange axis cannot be read off a zero-pose model,
   # because J4 and J6 are collinear there.
   # (Huanyu's basler_pipette_2026-09-16 demos used a DIFFERENT pipette: their end poses
   # imply a tip ~118 mm out, so they say nothing about this one.)
-  tip_pose_in_flange: [-1.0, 0.7, 162.6, 33.42, 30.55, -18.54]
+  tip_pose_in_flange: [-0.5, 0.25, 149.39, 34.72, 28.96, -18.54]
   # Tool points closer than this to the tip are not collision-checked: the tip touches
   # the dish by design.
   tip_exempt_mm: 10
