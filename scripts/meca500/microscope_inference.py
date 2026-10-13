@@ -17,14 +17,26 @@ per-step joint motion to PRECISION_MAX_REL_TARGET instead of MAX_REL_TARGET, so 
 arm "scales down its own movements" under the microscope. Tune both (values are
 joint-space degrees per step).
 
+Action representation
+---------------------
+RELATIVE_ACTIONS must match the dataset the checkpoint was trained on: a policy
+trained on scripts/meca500/convert_to_delta_actions.py output emits per-step joint
+DELTAS, which the robot integrates onto its current target pose. A mismatch is
+checked at startup (check_action_representation) and refuses to run, because
+driving a delta policy in absolute mode commands ~0.005 deg joint angles on the
+first step. Note that home_arm() deliberately stays absolute - the homing teleop
+speaks joint angles, not deltas.
+
 Workflow: edit the CONFIG block below, then `python microscope_inference.py`.
 Ctrl-C to stop, edit CKPT (or anything else), up-arrow, run again.
 
 Equivalent to:
     lerobot-rollout --strategy.type=episodic \
-        --robot.type=meca500_microscope --robot.monitor_mode=False \
+        --robot.type=<RIG> --robot.monitor_mode=False \
+        --robot.relative_actions=<RELATIVE_ACTIONS> \
+        --robot.max_relative_target=<MAX_REL_TARGET> \
         --robot.precision_max_relative_target=<PRECISION_MAX_REL_TARGET> \
-        --teleop.type=meca500_home --teleop.home=[0,0,0,0,90,0] \
+        --teleop.type=meca500_home --teleop.home=<HOME_JOINTS for RIG> \
         --policy.path=outputs/train/<RUN>/checkpoints/<CKPT>/pretrained_model \
         --dataset.repo_id=<USER>/rollout_<RUN>_<CKPT> \
         --dataset.single_task=<TASK> --dataset.push_to_hub=False
@@ -36,12 +48,11 @@ import sys
 # HUB is unused by default but is part of the CONFIG vocabulary below: set
 # CKPT = HUB to run the pushed Hub model instead of a local checkpoint.
 from inference import HUB, resolve_policy  # noqa: F401
+from rigs import require_home_joints, rig_config
 
 from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.robots.meca500.config_meca500 import Meca500Config
-from lerobot.robots.meca500.meca500 import Meca500
-from lerobot.robots.meca500_microscope.config_meca500_microscope import Meca500MicroscopeConfig
+from lerobot.robots.utils import make_robot_from_config
 from lerobot.rollout.configs import EpisodicStrategyConfig, RolloutConfig
 from lerobot.scripts.lerobot_rollout import rollout
 from lerobot.teleoperators.meca500_home.config_meca500_home import Meca500HomeConfig
@@ -50,7 +61,23 @@ from lerobot.utils.import_utils import register_third_party_plugins
 
 # ----------------------------- CONFIG -----------------------------
 USER = "AdamAxelrod"
+
+# Which bench this rollout runs on. The rig owns the camera set, and it MUST match the
+# rig the checkpoint was trained against.
+#
+# THIS RUN NEEDS BENCH 1, NOT THE BASLER BENCH. microscope_pipette_2026-09-10 takes
+# THREE visual inputs - overhead_cam, wrist_cam and microscope_cam (the VMS700) - so it
+# cannot load against a microscope-only rig at all: make_policy fails on the input
+# features before anything touches the arm. Running it means moving the robot's network
+# cable to bench 1 and having both UC60 webcams and the VMS700 connected.
+RIG = "meca500_microscope"
 RUN = "microscope_pipette_2026-09-10"
+
+# This checkpoint PREDATES the delta conversion - it was trained on absolute joint
+# targets, so the robot must pass them through unchanged. check_action_representation()
+# reads the checkpoint's own training dataset at startup and refuses to run on a
+# mismatch, so this pairing cannot silently go wrong in either direction.
+RELATIVE_ACTIONS = False
 # Which policy to run (see resolve_policy in inference.py):
 #   None       → the FINAL local checkpoint under outputs/train/<RUN>/checkpoints/
 #   "025000"   → that specific local checkpoint, to compare against an earlier step
@@ -62,55 +89,68 @@ TASK = "move_pipette_under_microscope"
 #   None    → full-chunk inference (fast, wobbles at chunk boundaries)
 #   float   → temporal ensembling (smooth, every-step inference)
 #
-# The checkpoint has chunk_size=n_action_steps=100, so at 20fps full-chunk mode
-# replans every 5s and executes the chunk open-loop in between. Each new chunk is
-# computed from where the arm actually is by then, so its first action is a step
-# change — which showed up as a burst of "Relative goal position ... clamped"
-# warnings every 5s, decaying over the following few steps as the arm converged.
 # Ensembling runs inference every step (n_action_steps=1 below) and exponentially
-# averages overlapping chunk predictions, so there are no boundaries to jump.
-# Cost: 20 forward passes/sec instead of 0.2 — watch for the loop dropping below
-# FPS, and fall back to n_action_steps≈20 if so.
+# averages overlapping chunk predictions, so there are no chunk boundaries to jump
+# at. Cost: 20 forward passes/sec instead of one per chunk — watch the loop rate.
+# This checkpoint has chunk_size=100 (5s at 20fps), so each pass is dearer than the
+# chunk_size=30 models; the 2026-09-10 run measured 19.7Hz against a 20Hz target.
 #
-# THE SIGN MATTERS, and not in the intuitive direction. w_i = exp(-coeff * i)
-# where w_0 weights the OLDEST contributing prediction (see ACTTemporalEnsembler
-# in policies/act/modeling_act.py), so a POSITIVE coeff weights stale predictions
-# MORE. At chunk_size=100/20fps the executed action's mean age is:
+# THE SIGN MATTERS, and not in the intuitive direction. w_i = exp(-coeff * i) where
+# w_0 weights the OLDEST contributing prediction (see ACTTemporalEnsembler in
+# policies/act/modeling_act.py), so a POSITIVE coeff weights stale predictions MORE.
+# At chunk_size=100 the executed action's mean age is:
 #
-#   +0.01 (the ACT paper's value)  2.88s   freshest prediction gets 0.6% of weight
-#    0.00 (uniform)                2.47s
-#   -0.05                          0.94s   freshest gets 4.9%
-#   -0.10                          0.48s   freshest gets 9.5%
+#   +0.01   2.88s   (freshest prediction gets 0.6% of the weight)
+#   -0.05   0.94s   (freshest gets 4.9%)
+#   -0.10   0.48s   (freshest gets 9.5%)
 #
-# +0.01 is a ~3-second low-pass filter. That is why it cured the chunk-boundary
-# wobble, and also why the arm never settled on the target: the policy's "I am on
-# the dot, stop" prediction was being averaged with ~3s of "keep approaching".
-# Measured against the demos, the rollout's fine phase barely decelerated (7.8°
-# then 5.6° over the two halves of precision mode, vs the operator's 3.5° then
-# 0.6°) and still moved 0.56° in its final 2s, where every demonstration was
-# dead still. Negative keeps most of the smoothing while letting the current
-# observation actually drive the action.
-TEMPORAL_ENSEMBLE_COEFF: float | None = -0.05
+# +0.01 here, which is the OPPOSITE of the right answer for every delta model, and
+# deliberately so. This checkpoint was trained on absolute actions that - because the
+# SpaceMouse teleop records a position readback rather than a command - were identical
+# to observation.state in 97.4% of frames. So every prediction it ensembles is an
+# estimate of "where the arm already is", and a recency-weighted average of those
+# commands no motion: at -0.05 this model crawled at 0.010 deg/step with straightness
+# 0.04 (undirected jitter) and never arrived. It only moves at all because a
+# ~3-second-stale forecast differs from the present pose.
+#
+# That is to say: this model is driven by prediction lag, not by anything it learned.
+# +0.01 is the setting under which it does the most, not a setting that is correct.
+# Do not carry this value over to a delta checkpoint.
+TEMPORAL_ENSEMBLE_COEFF: float | None = 0.01
 
 # Per-step joint-delta clamps (degrees). None = unclamped.
 #   MAX_REL_TARGET           applies when precision is off (coarse approach)
 #   PRECISION_MAX_REL_TARGET applies when the policy predicts precision.state > 0.5
 #
-# PRECISION_MAX_REL_TARGET is set from what the operator actually demonstrated
-# rather than guessed: in microscope_pipette_2026-09-10, per-step joint motion
-# while precision.state was latched had a median of 0.0045 deg and a p95 of
-# 0.056 deg. The previous 0.5 was ~10x looser than the largest fine-phase step in
-# 100 demonstrations, so the clamp never once engaged — it was decoration. 0.06
-# sits just above the demonstrated p95: coarse motion is untouched (it runs
-# unclamped anyway), but once the policy asserts precision it can only creep at
-# the speed a human creeps.
+# In absolute mode the clamp bounds |goal - present|, which is the per-step motion -
+# the same quantity a delta clamp bounds, so the numbers are measured the same way.
+# RE-MEASURE THESE PER DATASET; they are not portable between benches. Per-step joint
+# motion over the 100 episodes of microscope_pipette_2026-09-10:
 #
-# This bounds the RATE of the drift, not its DIRECTION. If the policy is heading
-# somewhere wrong it will still go there, just slowly enough to watch and abort.
-MAX_REL_TARGET: float | None = None
-PRECISION_MAX_REL_TARGET: float | None = 0.06
+#              p50      p95      p99      max
+#   coarse     0.5352   1.5985   2.2433   4.5757
+#   precision  0.0045   0.0562   0.0805   0.1805
+#
+# Note these are ~3x larger than the Basler bench's (coarse max 4.58 vs 1.34), which
+# is exactly why the values below differ from the ones this file carried for the
+# basler run - the old bench simply moves further per step.
+#
+# The rule is "allow anything a human did, block anything they did not": 5.0 sits just
+# above the largest coarse step demonstrated here, 0.2 just above the largest fine one.
+# So neither clamp touches demonstrated behaviour, and both catch a runaway. If the
+# pipette is fragile enough that you would rather lose the top of the demonstrated
+# range than risk a lunge, 0.06 (the fine p95) is the conservative setting — it will
+# engage regularly and slow convergence.
+#
+# This bounds the RATE of an error, not its DIRECTION. A policy heading somewhere
+# wrong still goes there, just slowly enough to watch and abort.
+MAX_REL_TARGET: float | None = 5.0
+PRECISION_MAX_REL_TARGET: float | None = 0.2
 
-HOME_JOINTS = [70, 10, 10, 90, -80, 15]  # matches record_microscope.py, so rollouts start where demos did
+# From rigs.py, so rollouts start exactly where the demos did. Taking it from the rig
+# rather than copying it is what stops this file drifting from record_microscope.py -
+# a rollout homing to the other bench's pose would start every episode off-distribution.
+HOME_JOINTS = require_home_joints(RIG)
 # Drive the arm to HOME_JOINTS before episode 0. The rollout homes BETWEEN episodes
 # but not before the first one (see home_arm), so without this the first rollout
 # starts from wherever the arm was left.
@@ -119,11 +159,9 @@ HOME_TIMEOUT_S = 30.0
 NUM_EPISODES = 10
 # The rollout runs for a fixed time — the policy cannot end an episode itself — so
 # this must exceed the longest demonstration or a run gets cut off mid-approach.
-# The 2026-09-10 dataset (100 episodes) ranges 15.7-43.9s (median 23.7s, p95 31.6s),
-# so 60s leaves headroom for the policy being slower than the operator, plus time to
-# sit at the endpoint. Note this dataset has a much longer tail than 2026-09-02
-# (which topped out at 32.5s): 45s would clear the median comfortably but cut off the
-# slowest demonstrated approaches.
+# microscope_pipette_2026-09-10 (100 episodes) ranges 15.7-43.9s (median 23.7s, p95
+# 31.6s), so 60s is ~1.4x the longest demonstration. This dataset has a much longer
+# tail than the Basler one, which is why it needs 60s where that needed 45.
 EPISODE_TIME_S = 60
 RESET_TIME_S = 10
 FPS = 20
@@ -148,7 +186,14 @@ def home_arm() -> None:
     and the rig's three streams share one USB bus, so opening them here just to
     close them again before the rollout re-opens them is worth avoiding.
     """
-    robot = Meca500(Meca500Config(id="meca500", monitor_mode=False, cameras={}))
+    # relative_actions stays False here no matter what RELATIVE_ACTIONS says, and that
+    # is not an oversight: Meca500Home.get_action() returns ABSOLUTE joint angles. Fed
+    # to a robot in relative mode they would be ADDED to the current pose - homing to
+    # [70, 10, 10, 90, -80, 15] from anywhere near there would command roughly double
+    # it, straight past the joint limits. Only the policy speaks deltas.
+    robot = make_robot_from_config(
+        rig_config(RIG, monitor_mode=False, cameras={}, relative_actions=False)
+    )
     teleop = Meca500Home(Meca500HomeConfig(id="meca500_home", home=HOME_JOINTS))
 
     robot.connect()  # activates + homes to factory zero
@@ -185,10 +230,57 @@ def home_arm() -> None:
                 robot.disconnect()
 
 
+def check_action_representation(policy_path) -> None:
+    """Fail if RELATIVE_ACTIONS disagrees with the data the checkpoint was trained on.
+
+    Reads the dataset the checkpoint records in its train_config.json and inspects its
+    action statistics: absolute joint targets span the workspace (std ~25 deg), per-step
+    deltas are ~0.3 deg and centred near zero. Getting this pair wrong is the one
+    mistake here with an immediate hardware consequence - a delta policy driven in
+    absolute mode commands ~0.005 deg joint angles, i.e. "go to zero", on the first
+    step - so it is checked before anything energises the arm.
+
+    Never blocks the run on its own uncertainty: if the dataset is not available
+    locally it warns and continues, rather than making a missing cache fatal.
+    """
+    import json
+
+    import numpy as np
+
+    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+
+    try:
+        repo_id = json.loads((policy_path / "train_config.json").read_text())["dataset"]["repo_id"]
+        meta = LeRobotDatasetMetadata(repo_id)
+        stats, names = meta.stats["action"], list(meta.features["action"]["names"])
+        joints = [i for i, n in enumerate(names) if n.endswith(".pos")]
+        std = float(np.mean([stats["std"][i] for i in joints]))
+        mean = float(np.mean([abs(stats["mean"][i]) for i in joints]))
+    except Exception as e:
+        print(f"[actions] could not verify the action representation ({e}); trusting RELATIVE_ACTIONS.")
+        return
+
+    looks_delta = std < 5.0 and mean < 1.0
+    print(
+        f"[actions] {repo_id} -> joint action std={std:.3f} deg, |mean|={mean:.3f} deg "
+        f"-> {'DELTAS' if looks_delta else 'ABSOLUTE targets'}; RELATIVE_ACTIONS={RELATIVE_ACTIONS}"
+    )
+    if looks_delta != RELATIVE_ACTIONS:
+        raise SystemExit(
+            f"\n  REFUSING TO RUN: the checkpoint was trained on "
+            f"{'per-step deltas' if looks_delta else 'absolute joint targets'} but "
+            f"RELATIVE_ACTIONS={RELATIVE_ACTIONS}.\n"
+            f"  Set RELATIVE_ACTIONS = {looks_delta} (or point RUN at a checkpoint that matches).\n"
+            f"  Running as configured would command "
+            f"{'~0.005 deg absolute joint angles on the first step' if looks_delta else 'joint deltas of tens of degrees'}.\n"
+        )
+
+
 def main() -> None:
     register_third_party_plugins()
 
     label, policy_path = resolve_policy(USER, RUN, CKPT)
+    check_action_representation(policy_path)
 
     policy_overrides: list[str] = []
     if TEMPORAL_ENSEMBLE_COEFF is not None:
@@ -205,9 +297,10 @@ def main() -> None:
     policy.pretrained_path = policy_path
 
     cfg = RolloutConfig(
-        robot=Meca500MicroscopeConfig(
-            id="meca500_microscope",
+        robot=rig_config(
+            RIG,
             monitor_mode=False,
+            relative_actions=RELATIVE_ACTIONS,
             max_relative_target=MAX_REL_TARGET,
             precision_max_relative_target=PRECISION_MAX_REL_TARGET,
         ),
