@@ -8,7 +8,8 @@ pan, scroll to zoom; the checkboxes toggle each group.
 Groups:
     obstacles   the bench's obstacle meshes (what the planner avoids)
     model       our robot (URDF collision meshes) + tool at ZERO joints
-    cad robot   the robot exactly as exported from Fusion (if CAD_ROBOT_DIR is set)
+    cad robot   the robot + tool exactly as exported from Fusion (placed with the frame
+                import_bench_cad.py saved in cad_frame.json)
                 - should sit on top of "model"; anywhere they differ, the model is wrong
     home        our robot + tool at HOME_JOINTS
     markers     the optical axis (red line) and the tip at zero joints (red dot)
@@ -28,10 +29,7 @@ from lerobot.robots.meca500.autocollect.kinematics import LINK6_TO_FLANGE, load_
 
 # ----------------------------- CONFIG -----------------------------
 RIG = "meca500_basler"
-# The Fusion export's robot links and where the robot's base frame sits in that CAD frame
-# (see bench.yaml). None to leave the CAD robot out.
-CAD_ROBOT_DIR = Path("cad/huanyu_setup/export")
-CAD_BRF_ORIGIN = (-147.5, 85.5, 0.0)
+SHOW_CAD_ROBOT = True  # overlay the raw Fusion robot + tool (needs import_bench_cad.py run)
 OPTICAL_AXIS_XY = (237.5, -85.5)
 OUT = Path("cad/huanyu_setup/scene_viewer.html")
 # -----------------------------------------------------------------
@@ -39,7 +37,6 @@ OUT = Path("cad/huanyu_setup/scene_viewer.html")
 REPO = Path(__file__).resolve().parents[2]
 
 GROUPS = {  # name prefix -> (label, colour, opacity, visible by default)
-    "obstacle": ("obstacles", "#9aa3ad", 0.85, True),
     "model": ("model (zero joints)", "#3c78e6", 0.55, True),
     "tool": ("model tool", "#3cc85a", 1.0, True),
     "cad": ("CAD robot", "#f08c28", 1.0, True),
@@ -48,12 +45,24 @@ GROUPS = {  # name prefix -> (label, colour, opacity, visible by default)
 }
 
 
+OBSTACLE_PALETTE = ["#8d939b", "#d4a017", "#2a9d8f", "#e07a5f", "#6d597a", "#81b29a"]
+
+
+def obstacle_groups(bench) -> dict:
+    """One toggleable, distinctly coloured group per obstacle mesh (node name obstacle_<stem>)."""
+    stems = [Path(rel).stem for rel in bench.section("obstacles").get("meshes", [])]
+    return {
+        f"obstacle_{stem}": (stem.replace("_", " "), OBSTACLE_PALETTE[i % len(OBSTACLE_PALETTE)], 1.0, True)
+        for i, stem in enumerate(stems)
+    }
+
+
 def build_scene() -> trimesh.Scene:
     bench = BenchConfig.load(RIG)
     kin = bench.kinematics()
     scene = trimesh.Scene()
-    for i, rel in enumerate(bench.section("obstacles").get("meshes", [])):
-        scene.add_geometry(trimesh.load_mesh(bench.root / rel), node_name=f"obstacle_{i}_{Path(rel).stem}")
+    for rel in bench.section("obstacles").get("meshes", []):
+        scene.add_geometry(trimesh.load_mesh(bench.root / rel), node_name=f"obstacle_{Path(rel).stem}")
 
     names = [kin.base_link] + [j.child for j in kin.joints]
     links = {n: load_stl(kin.link_meshes[n]) for n in names if n in kin.link_meshes}
@@ -79,12 +88,18 @@ def build_scene() -> trimesh.Scene:
     add_arm(np.zeros(6), "model")
     add_arm(require_home_joints(RIG), "home")
 
-    if CAD_ROBOT_DIR is not None:
-        cad_dir = REPO / CAD_ROBOT_DIR
-        for f in sorted(cad_dir.glob("meca500_link*.stl")) + sorted(cad_dir.glob("tool_*.stl")):
+    frame = bench.root / "cad_frame.json"
+    if SHOW_CAD_ROBOT and frame.exists():
+        import json
+
+        from import_bench_cad import classify, part_name
+
+        info = json.loads(frame.read_text(encoding="utf-8"))
+        links, tool_files, _ = classify(sorted((REPO / info["cad_dir"]).glob("*.stl")))
+        for f in [*links.values(), *tool_files]:
             m = trimesh.load_mesh(f)
-            m.apply_translation(-np.asarray(CAD_BRF_ORIGIN))
-            scene.add_geometry(m, node_name=f"cad_{f.stem}")
+            m.apply_transform(np.array(info["t_brf_cad"]))
+            scene.add_geometry(m, node_name=f"cad_{part_name(f)}")
 
     x, y = OPTICAL_AXIS_XY
     scene.add_geometry(
@@ -114,14 +129,16 @@ const scene = new THREE.Scene(); scene.background = new THREE.Color('#f4f5f7');
 const cam = new THREE.PerspectiveCamera(40, innerWidth/innerHeight, 1, 10000); cam.up.set(0,0,1);
 cam.position.set(-450,-650,550);
 const ctl = new OrbitControls(cam, renderer.domElement); ctl.target.set(100,-60,120); ctl.update();
-scene.add(new THREE.HemisphereLight(0xffffff, 0x666666, 2.2));
+scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f99, 1.6));
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 const d = new THREE.DirectionalLight(0xffffff, 1.5); d.position.set(300,-400,800); scene.add(d);
 scene.add(new THREE.AxesHelper(100));
 const groups = {};
 for (const [p,[label,color,op,vis]] of Object.entries(GROUPS)) {
   const g = new THREE.Group(); g.visible = vis; scene.add(g);
   groups[p] = {g, mat: new THREE.MeshStandardMaterial({color, transparent: op<1, opacity: op,
-    depthWrite: op>=1, side: THREE.DoubleSide, metalness: 0.05, roughness: 0.7}),
+    depthWrite: op>=1, side: THREE.DoubleSide, metalness: 0.0, roughness: 0.8, flatShading: true,
+    polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 4 * (Object.keys(GROUPS).length - Object.keys(GROUPS).indexOf(p))}),
     line: new THREE.LineBasicMaterial({color, transparent: op<1, opacity: op})};
   const l = document.createElement('label');
   l.innerHTML = `<input type="checkbox" ${vis?'checked':''}><span class="sw" style="background:${color}"></span>${label}`;
@@ -134,7 +151,8 @@ new GLTFLoader().parse(bytes.buffer, '', gltf => {
     const p = Object.keys(groups).find(k => o.name.startsWith(k) || (o.parent && o.parent.name.startsWith(k)));
     if (!p) continue;
     o.updateWorldMatrix(true, false); const m = o.clone(); m.matrix.copy(o.matrixWorld);
-    m.matrix.decompose(m.position, m.quaternion, m.scale); m.material = o.isLine ? groups[p].line : groups[p].mat; groups[p].g.add(m);
+    m.matrix.decompose(m.position, m.quaternion, m.scale); if (m.isMesh && !m.geometry.attributes.normal) m.geometry.computeVertexNormals();
+    m.material = o.isLine ? groups[p].line : groups[p].mat; groups[p].g.add(m);
   }
 });
 addEventListener('resize', () => { cam.aspect = innerWidth/innerHeight; cam.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
@@ -161,7 +179,8 @@ def write_html(scene: trimesh.Scene, out: Path, groups: dict, title: str, open_b
 
 
 def main() -> None:
-    write_html(build_scene(), REPO / OUT, GROUPS, f"{RIG} collision model", "--no-open" not in sys.argv)
+    groups = {**obstacle_groups(BenchConfig.load(RIG)), **GROUPS}
+    write_html(build_scene(), REPO / OUT, groups, f"{RIG} collision model", "--no-open" not in sys.argv)
 
 
 if __name__ == "__main__":

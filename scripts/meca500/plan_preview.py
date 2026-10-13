@@ -48,10 +48,10 @@ def export_scene(bench, kin, plans, path: Path) -> None:
     import trimesh
 
     scene = trimesh.Scene()
-    for i, p in enumerate(bench.section("obstacles").get("meshes", [])):
+    for p in bench.section("obstacles").get("meshes", []):
         m = trimesh.load_mesh(bench.root / p)
         m.visual.face_colors = [150, 150, 150, 200]
-        scene.add_geometry(m, node_name=f"obstacle_{i}")
+        scene.add_geometry(m, node_name=f"obstacle_{Path(p).stem}")
     for b in bench.section("obstacles").get("boxes", []):
         m = trimesh.creation.box(extents=b["size"])
         m.apply_transform(trimesh.transformations.rotation_matrix(np.radians(b.get("yaw_deg", 0)), [0, 0, 1]))
@@ -158,11 +158,12 @@ def main() -> None:
         f"({worst.clearance.where} vs {worst.clearance.obstacle}, seed {worst.seed}); median {np.median(clear):.1f}"
     )
 
-    from scene_viewer import write_html
+    from scene_viewer import obstacle_groups, write_html
 
     scene = export_scene(bench, kin, plans, bench.root / "preview.glb")
     groups = {
-        "obstacle": ("obstacles", "#9aa3ad", 0.85, True),
+        **obstacle_groups(bench),
+        "obstacle": ("other obstacles", "#9aa3ad", 0.85, True),
         "path": ("planned tip paths", "#e61e1e", 0.8, True),
         "start": (f"arm at start (first {SHOW_ARMS})", "#3c78e6", 0.45, True),
         "touch": (f"arm at touch (first {SHOW_ARMS})", "#3cc85a", 0.6, True),

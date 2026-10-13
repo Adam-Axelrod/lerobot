@@ -13,7 +13,7 @@ obstacles:
   # (URDF links at zero joints overlay the CAD links to ~1 mm median).
   # Optical axis (stage + plate holes) at BRF (237.5, -85.5); the illuminator's underside is
   # at z = 95 on that axis and z = 60 within 20 mm of it; stage top at z = 31.
-  meshes: [obstacles/base_plate.stl, obstacles/translation_stage.stl, obstacles/illuminator.stl]
+  meshes: [obstacles/base.stl, obstacles/illuminator.stl, obstacles/translation_stage.stl]
   sdf_pitch_mm: 2.0
   # Optional primitives, for anything quick to measure or that moves (e.g. the dish).
   # boxes:     [{name: lamp_head, center: [x, y, z], size: [dx, dy, dz], yaw_deg: 0}]
@@ -36,7 +36,7 @@ tool:
   # because J4 and J6 are collinear there.
   # (Huanyu's basler_pipette_2026-09-16 demos used a DIFFERENT pipette: their end poses
   # imply a tip ~118 mm out, so they say nothing about this one.)
-  tip_pose_in_flange: [-0.5, 0.25, 149.39, 34.72, 28.96, -18.54]
+  tip_pose_in_flange: [-36.01, 99.61, 62.2, -86.88, -19.97, -80.94]
   # Tool points closer than this to the tip are not collision-checked: the tip touches
   # the dish by design.
   tip_exempt_mm: 10
@@ -72,10 +72,10 @@ approach:
   # demo end pose ([-53.32, 51.85, 19.53, 128.56, 69.73, -126.21]) was with a different
   # pipette, so it would put this tip somewhere else. calibrate_scope.py prints the joints
   # at every surface (z) sample - paste one of those here.
-  # PROVISIONAL (2026-10-13): best of suggest_touch_pose.py with the dish assumed at z = 32.5
-  # (no calibration yet): pipette 35 deg below horizontal, tool 11.5 mm beyond its margin.
-  # Replace with a measured pose (calibrate_scope.py) before touching the dish.
-  touch_nominal_joints: [-54.43, 14.59, 50.51, 98.3, 41.47, -23.66]
+  # PROVISIONAL (2026-10-13, new pipette holder): suggest_touch_pose.py with the dish assumed at
+  # z = 32.5 (no calibration yet); best pose with J5 on home's side of the wrist singularity,
+  # tool 11.4 mm beyond its margin. Replace with a measured pose before touching the dish.
+  touch_nominal_joints: [-39.08, 50.05, 56.8, 111.72, 87.59, -10.95]
   touch_rot_jitter_deg: 2
   gate_back_mm: [15, 40]       # straight final approach along the pipette axis
   pretouch_back_mm: [1, 4]     # precision phase length

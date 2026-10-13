@@ -73,6 +73,13 @@ def main() -> None:
     if not results:
         sys.exit("No collision-free touch pose found - check the obstacles, margins and tool.")
 
+    # Keep the wrist on the same side as home: crossing J5 = 0 (the wrist singularity) is
+    # something the planner refuses, so a touch pose on the other side could never be reached.
+    same = [r for r in results if np.sign(r[4][4]) == np.sign(home[4])]
+    if same:
+        results = same
+    else:
+        print("WARNING: no clear pose with J5 on the same side as home - the planner will reject these.")
     results.sort(key=lambda r: -r[0])
     print(
         f"\nTop {SHOW} by clearance beyond the margins (links {checker.link_margin_mm}, tool {checker.tool_margin_mm} mm):"
