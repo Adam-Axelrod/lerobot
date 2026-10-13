@@ -19,14 +19,20 @@ obstacles:
 tool:
   # Holder + pipette as one STL in the FLANGE frame (Meca FRF: origin on the flange face,
   # z out of the flange), mm. Optional but strongly recommended.
-  mesh: null
+  # Extracted from the Fusion assembly (Meca500.stl at zero joints: every body beyond the
+  # flange face), re-expressed in the FRF. 58 bodies: holder, clamp and a 150 mm pipette
+  # tilted 44 deg off the flange axis.
+  mesh: tool.stl
   # Tip frame in the flange frame, as a Meca pose [x, y, z, alpha, beta, gamma].
   # Its z axis must point ALONG the pipette, out of the tip. If the robot's TRF is already
   # set to the tip, this is the same pose as SetTrf().
-  # Pivot estimate from the demo end poses (check_demos_clearance.py, ~mm accuracy, NOT a
-  # substitute for the CAD): tip at about [96.9, -3.2, 67.6] mm in the FRF, ~118 mm out,
-  # touching the dish near z = 21 mm in the BRF. Use it to sanity-check the CAD value.
-  tip_pose_in_flange: null
+  # From the CAD: tip at the pipette's free end, ~163 mm straight out along the flange axis;
+  # z along the pipette (clamp end -> tip). NOT yet checked on the arm - the CAD's
+  # rotation of the tool about the flange axis cannot be read off a zero-pose model,
+  # because J4 and J6 are collinear there.
+  # (Huanyu's basler_pipette_2026-09-16 demos used a DIFFERENT pipette: their end poses
+  # imply a tip ~118 mm out, so they say nothing about this one.)
+  tip_pose_in_flange: [-1.0, 0.7, 162.6, 33.42, 30.55, -18.54]
   # Tool points closer than this to the tip are not collision-checked: the tip touches
   # the dish by design.
   tip_exempt_mm: 10
@@ -58,8 +64,11 @@ target:
   style: {radius_px: 14, thickness_px: 2, cross_px: 6, color: [0, 255, 0], outline_color: [0, 0, 0]}
 
 approach:
-  # Medoid end pose of the 51 basler_pipette_2026-09-16 demos (check_demos_clearance.py).
-  touch_nominal_joints: [-53.32, 51.85, 19.53, 128.56, 69.73, -126.21]
+  # A natural "tip touching the dish" pose WITH THE CURRENT PIPETTE. Not set: the medoid
+  # demo end pose ([-53.32, 51.85, 19.53, 128.56, 69.73, -126.21]) was with a different
+  # pipette, so it would put this tip somewhere else. calibrate_scope.py prints the joints
+  # at every surface (z) sample - paste one of those here.
+  touch_nominal_joints: null
   touch_rot_jitter_deg: 2
   gate_back_mm: [15, 40]       # straight final approach along the pipette axis
   pretouch_back_mm: [1, 4]     # precision phase length

@@ -8,7 +8,8 @@ Basler feed is shown. At each calibration point:
 
 Spread ~12 points over the whole field of view, corners included. Keys (image window focused):
 
-    z   record the dish-surface height (tip touching the dish) - do this at a few places
+    z   record the dish-surface height (tip touching the dish) - do this at a few places;
+        it also prints the joints, one of which becomes approach.touch_nominal_joints
     f   fit and report residuals; afterwards a cyan cross shows where the fit thinks the
         tip is, live - it should sit on the tip as you jog anywhere in the field
     u   undo the last point
@@ -116,6 +117,9 @@ def main() -> None:
             if key == ord("z"):
                 surface_z.append(tip[2])
                 print(f"  surface z sample {len(surface_z)}: {tip[2]:.4f} mm")
+                print(
+                    f"    joints {[round(float(j), 2) for j in q]}  <- usable as approach.touch_nominal_joints"
+                )
             elif key == ord("u") and pixels:
                 pixels.pop()
                 xys.pop()

@@ -32,6 +32,10 @@ DATASET = "AdamAxelrod/basler_pipette_2026-09-16"
 # Check every Nth frame (1 = all). Consecutive frames are nearly identical, so 2-5 loses
 # nothing and keeps the run to seconds.
 FRAME_STRIDE = 2
+# Include the bench's tool (holder + pipette) in the check. Only valid if the demos were
+# recorded with the SAME tool - Huanyu's basler_pipette_2026-09-16 used a different
+# pipette, so for that dataset only the arm links are checked.
+CHECK_TOOL = False
 # -----------------------------------------------------------------
 
 
@@ -88,7 +92,7 @@ def main() -> None:
     b = np.concatenate([-f[:3, 3] for f in flanges])
     sol, *_ = np.linalg.lstsq(a, b, rcond=None)
     tips = np.array([f[:3, :3] @ sol[:3] + f[:3, 3] for f in flanges])
-    print("Pivot estimate from the demo end poses (cross-check for the CAD, ~mm accuracy):")
+    print("Pivot estimate from the demo end poses - the tip of the pipette USED IN THESE DEMOS (~mm):")
     print(f"  tip in flange frame  {fmt(sol[:3])} mm  (|t| = {np.linalg.norm(sol[:3]):.1f} mm)")
     print(f"  touch point (BRF)    {fmt(sol[3:])} mm  - z is roughly the dish surface")
     print(f"  residual tip spread  {fmt(tips.std(axis=0))} mm std\n")
@@ -101,6 +105,8 @@ def main() -> None:
     # ---- model check
     try:
         checker = bench.collision_checker(kin)
+        if not CHECK_TOOL:
+            checker.points.tool_points = None
     except (ValueError, FileNotFoundError) as e:
         print(f"Collision check skipped: {e}")
         return
