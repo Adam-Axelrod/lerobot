@@ -6,9 +6,10 @@ planned path goes near the illuminator it must agree with the controller:
 
     predicted = inv(WRF) @ FK_flange(joints) @ TRF      vs      GetRtTargetCartPos()
 
-The TARGET joints and pose are read, not the measured ones: monitor mode may not send commands,
-and only the target values are streamed by default (GetRtJointPos would have to query the
-controller). Samples are only taken while the arm is still, where the two are the same.
+Monitor mode may not send commands, so everything is read from the robot's cyclic stream:
+the TARGET joints and pose (always streamed; the measured ones are not by default), with
+synchronous_update=False - GetRtTarget*() default to True, i.e. query the controller, which
+monitor mode refuses. Samples are only taken while the arm is still, where target = measured.
 
 This connects in MONITOR mode (never moves the arm, never takes the control connection),
 so run it in a second terminal while jogging with teleoperate_microscope.py. It samples
@@ -64,14 +65,14 @@ def main() -> None:
     rows, last_sample, still_since, prev = [], None, None, None
     try:
         while len(rows) < N_SAMPLES:
-            q = np.array(meca.GetRtTargetJointPos())
+            q = np.array(meca.GetRtTargetJointPos(synchronous_update=False))
             now = time.monotonic()
             if prev is None or np.abs(q - prev).max() > STILL_TOL_DEG:
                 still_since = now
             prev = q
             moved = last_sample is None or np.abs(q - last_sample).sum() > MIN_CHANGE_DEG
             if moved and now - still_since >= STILL_S:
-                cart = pose_to_matrix(meca.GetRtTargetCartPos())
+                cart = pose_to_matrix(meca.GetRtTargetCartPos(synchronous_update=False))
                 pred = np.linalg.inv(wrf) @ kin.flange(q) @ trf
                 dp = float(np.linalg.norm(pred[:3, 3] - cart[:3, 3]))
                 dr = float(np.degrees(np.linalg.norm(rotation_log(pred[:3, :3] @ cart[:3, :3].T))))
