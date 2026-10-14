@@ -37,7 +37,7 @@ import time
 from dataclasses import replace
 
 import numpy as np
-from rigs import rig_config
+from rigs import require_home_joints, rig_config
 
 from lerobot.common.control_utils import sanity_check_dataset_name, sanity_check_dataset_robot_compatibility
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -84,6 +84,9 @@ MAX_CALIBRATION_RESIDUAL_PX = 5.0
 # The arm must reach each start within this before recording begins.
 START_TOLERANCE_DEG = 0.2
 SETTLE_TIMEOUT_S = 30.0
+# Before episode 0 the arm drives to HOME_JOINTS (rigs.py) itself. If the tip starts lower than
+# this above the dish, the pipette is backed out along its own axis before the joint move.
+RETREAT_BELOW_MM = 40.0
 
 # Per-step clamps on the robot side, a backstop above what the planner already enforces
 # (motion.max_joint_step_deg / max_joint_step_precision_deg in bench.yaml).
@@ -159,6 +162,36 @@ def wait_settled(robot, target, timeout_s: float) -> np.ndarray:
     return q
 
 
+def go_home(robot, teleop, planner, home, events, processors) -> np.ndarray:
+    """Drive to ``home`` before anything else, along a collision-checked path.
+
+    If the tip starts low - within RETREAT_BELOW_MM of the dish, e.g. straight after a
+    calibration - the pipette is first backed out along its own axis, so a joint-space move
+    cannot drag the tip across the dish or the stage opening's edge. Refuses (rather than
+    guessing) when no collision-free route home exists.
+    """
+    q_now = np.array(robot.robot.GetRtJointPos())
+    if np.abs(q_now - home).max() < START_TOLERANCE_DEG:
+        logging.info("Already at home.")
+        return q_now
+    tip_height = planner.kin.tip(q_now)[2, 3] - planner.calib.surface_z_mm
+    retreat = tip_height < RETREAT_BELOW_MM
+    try:
+        path = planner.plan_transit(q_now, home, retreat=retreat)
+    except PlanningError as e:
+        raise RuntimeError(
+            f"No collision-free path home from the current pose ({e}). Jog the arm clear of the "
+            "microscope with teleoperate_microscope.py, press H, close teleop, then rerun."
+        ) from e
+    log_say(
+        f"Moving home first (tip {tip_height:.0f} mm above the dish"
+        f"{', backing out along the pipette' if retreat else ''})",
+        False,
+    )
+    run_plan(robot, teleop, path, np.zeros(len(path)), planner.lim.fps, events, processors)
+    return wait_settled(robot, home, SETTLE_TIMEOUT_S)
+
+
 def run_plan(robot, teleop, joints, precision, fps, events, processors, dataset=None, display=False):
     teleop.load_plan(joints, precision)
     teleop_proc, robot_proc, obs_proc = processors
@@ -186,6 +219,7 @@ def main() -> None:
     register_third_party_plugins()
     bench = BenchConfig.load(RIG)
     planner = build_planner(bench)
+    home = np.asarray(require_home_joints(RIG), dtype=float)
     fps = planner.lim.fps
     repo_id = f"{USER}/{NAME}"
 
@@ -253,8 +287,8 @@ def main() -> None:
     listener, events = init_keyboard_listener()
     try:
         make_ready(robot.robot)
-        q_now = np.array(robot.robot.GetRtJointPos())
-        retreat = False  # the first move starts from wherever the arm was left, not the dish
+        q_now = go_home(robot, teleop, planner, home, events, processors)
+        retreat = False  # the first episode's transit starts from home, not the dish
         with VideoEncodingManager(dataset):
             recorded = 0
             while recorded < NUM_EPISODES and not events["stop_recording"]:

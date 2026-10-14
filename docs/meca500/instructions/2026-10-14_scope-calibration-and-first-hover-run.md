@@ -103,10 +103,11 @@ Using your calibration and touch pose, Claude will:
 
 In **hover mode** the tip stops **5 mm above** the dish and everything runs at **half speed**. It doesn't touch the dish, and nothing is uploaded.
 
-0. **Start from home.** The first move is planned from wherever the arm is, and it does *not*
-   back the pipette out of the dish first. Run `teleoperate_microscope.py`, jog the tip **up and
-   out of the stage opening**, then press **H** to go home, then close teleop (Ctrl-C).
-   (Pressing H with the tip still in the dish is a direct joint move that could drag the tip.)
+0. **Homing is automatic** (since 2026-10-14). Before episode 0, `record_auto.py` drives the arm
+   home along a collision-checked path, first backing the pipette out along its own axis if the
+   tip starts within 40 mm of the dish. If it can't find a safe path, it stops and asks you to
+   home the arm by hand (teleop, jog clear, **H**, close teleop). Close teleop and the web
+   portal before running.
 1. Open `scripts/meca500/record_auto.py` and check the settings near the top:
    ```python
    NAME = "basler_auto_2026-10"
