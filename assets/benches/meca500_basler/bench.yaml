@@ -36,7 +36,7 @@ tool:
   # because J4 and J6 are collinear there.
   # (Huanyu's basler_pipette_2026-09-16 demos used a DIFFERENT pipette: their end poses
   # imply a tip ~118 mm out, so they say nothing about this one.)
-  tip_pose_in_flange: [104.76, -5.7, 69.7, 38.81, 86.24, -38.75]
+  tip_pose_in_flange: [104.83, -4.08, 66.76, 38.81, 86.24, -38.75]
   # Tool points closer than this to the tip are not collision-checked: the tip touches
   # the dish by design.
   tip_exempt_mm: 10
@@ -49,7 +49,7 @@ tool:
   # Measured tip position in the FRF (mm), written by calibrate_tip.py. Overrides the CAD tip:
   # the import shifts the CAD pipette so its tip lands here. Re-measure after EVERY pipette
   # change - pulled glass pipettes differ in length and seat differently - or a bend.
-  measured_tip_in_flange: [104.76, -5.70, 69.70]
+  measured_tip_in_flange: [104.83, -4.08, 66.76]
 
 safety:
   link_margin_mm: 15        # clearance required for the arm links
