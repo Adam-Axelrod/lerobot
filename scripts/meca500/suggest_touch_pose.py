@@ -57,7 +57,7 @@ def corridor_ok(kin, checker, target, q) -> bool:
 
 def suggest_start(kin, checker, q_touch, max_lift_mm: float = 150.0, step_mm: float = 3.0):
     """Walk from the touch pose: back out along the pipette, then straight up, IK seeded step to
-    step so the start is on the touch pose's IK branch. Returns the highest clear pose reached
+    step so the start is on the touch pose's IK branch. Returns the clearest pose reached
     (joints, lift, clearance) or None."""
     t = kin.tip(q_touch)
     axis = t[:3, 2]
@@ -83,7 +83,8 @@ def suggest_start(kin, checker, q_touch, max_lift_mm: float = 150.0, step_mm: fl
         c = checker.clearance(q).min_mm
         if c < 0:
             break
-        best = (q, lift, c)
+        if best is None or c > best[2]:  # the CLEAREST pose on the way up, not the highest
+            best = (q, lift, c)
     return best
 
 

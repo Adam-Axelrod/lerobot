@@ -36,7 +36,7 @@ tool:
   # because J4 and J6 are collinear there.
   # (Huanyu's basler_pipette_2026-09-16 demos used a DIFFERENT pipette: their end poses
   # imply a tip ~118 mm out, so they say nothing about this one.)
-  tip_pose_in_flange: [-36.01, 99.61, 62.2, -86.88, -19.97, -80.94]
+  tip_pose_in_flange: [106.25, 0.0, 62.2, 0.0, 87.07, -0.0]
   # Tool points closer than this to the tip are not collision-checked: the tip touches
   # the dish by design.
   tip_exempt_mm: 10
@@ -54,7 +54,10 @@ safety:
   min_abs_j5_deg: 5         # keep away from the wrist singularity at J5 = 0
   check_step_deg: 0.5       # densify paths so no joint moves more than this between checks
   point_spacing_mm: 4
-  safe_joints: [-90, 40, 20, 90, 80, -110]   # HOME_JOINTS["meca500_basler"]
+  # HOME_JOINTS["meca500_basler"]. NOTE: the straight joint move home -> all-zero joints hits the
+  # illuminator (model: tool ~2-4 mm into it; confirmed on the real bench 2026-10-14) - never
+  # use zero as a transit pose. Transits here are collision-checked against the model anyway.
+  safe_joints: [-90, 40, 20, 90, 80, -110]
   max_attempts: 200
 
 scope:
@@ -62,8 +65,10 @@ scope:
   calibration: scope_calibration.json   # written by scripts/meca500/calibrate_scope.py
 
 start:
-  # Every basler_pipette_2026-09-16 demo started exactly at HOME_JOINTS (std < 0.12 deg).
-  nominal_joints: [-90, 40, 20, 90, 80, -110]
+  # Derived from the touch pose by suggest_touch_pose.py (tip backed 60 mm out along the pipette,
+  # same IK branch, 11.6 mm beyond margin) - next to HOME_JOINTS, where the human demos began.
+  # (HOME itself holds the new pipette at an orientation the planner cannot reach the touch from.)
+  nominal_joints: [-68.49, 39.42, 34.39, 137.63, 76.18, -114.13]
   pos_jitter_mm: [20, 20, 10]
   rot_jitter_deg: 3
   min_height_above_surface_mm: 5
@@ -78,9 +83,10 @@ approach:
   # demo end pose ([-53.32, 51.85, 19.53, 128.56, 69.73, -126.21]) was with a different
   # pipette, so it would put this tip somewhere else. calibrate_scope.py prints the joints
   # at every surface (z) sample - paste one of those here.
-  # Cleared: depends on tool.flange_rotation_deg, which is not measured yet (calibrate_tip.py).
-  # Then: import_bench_cad.py -> suggest_touch_pose.py (provisional) or calibrate_scope.py.
-  touch_nominal_joints: null
+  # PROVISIONAL (2026-10-14, tool angle from the corrected CAD): suggest_touch_pose.py with the dish
+  # assumed at z = 32.5; 3rd-ranked (12.7 mm beyond margin) but chosen over the top two because
+  # it is on home's side (J1 -51 vs home -90), so its start sits next to HOME_JOINTS.
+  touch_nominal_joints: [-51.4, 50.79, 44.74, 156.16, 93.38, -127.2]
   touch_rot_jitter_deg: 2
   gate_back_mm: [15, 40]       # straight final approach along the pipette axis
   pretouch_back_mm: [1, 4]     # precision phase length
