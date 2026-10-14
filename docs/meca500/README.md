@@ -17,4 +17,4 @@ date they were written.
 | File | Bench | Status |
 |---|---|---|
 | [`2026-10-14_scope-calibration-and-first-hover-run.md`](instructions/2026-10-14_scope-calibration-and-first-hover-run.md) | Huanyu's setup | Done: hover run recorded 3 episodes, but the arm went limp on disconnect and bent the pipette (fixed) |
-| [`2026-10-14_after-pipette-crash-recalibrate.md`](instructions/2026-10-14_after-pipette-crash-recalibrate.md) | Huanyu's setup | **To do** |
+| [`2026-10-14_after-pipette-crash-recalibrate.md`](instructions/2026-10-14_after-pipette-crash-recalibrate.md) | Huanyu's setup | Step 1 (moved) and Part A done (tip 0.065 mm rms, imported); **Part B next** |
