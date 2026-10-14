@@ -25,7 +25,10 @@ from lerobot.robots.meca500.autocollect.kinematics import axis_angle, make_trans
 # ----------------------------- CONFIG -----------------------------
 RIG = "meca500_basler"
 OPTICAL_AXIS_XY = (237.5, -85.5)
-SURFACE_Z_FALLBACK = 32.5  # stage top (31) + ~1.5 mm dish bottom; replaced by the calibration
+# Dish surface in the BRF until calibrate_scope.py measures it. 9.5 mm = where the tip touched
+# the dish in the first calibrate_tip.py run (2026-10-14) - the dish sits ~21.5 mm below the
+# translation stage's top face, down in its opening, not on top of it.
+SURFACE_Z_FALLBACK = 9.5
 ELEVATIONS_DEG = range(15, 76, 10)  # pipette angle below horizontal
 AZIMUTHS_DEG = range(0, 360, 20)  # direction the pipette points, in the base frame
 ROLLS_DEG = range(0, 360, 30)  # rotation of the tool about the pipette axis

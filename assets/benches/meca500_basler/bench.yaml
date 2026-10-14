@@ -36,7 +36,7 @@ tool:
   # because J4 and J6 are collinear there.
   # (Huanyu's basler_pipette_2026-09-16 demos used a DIFFERENT pipette: their end poses
   # imply a tip ~118 mm out, so they say nothing about this one.)
-  tip_pose_in_flange: [106.25, 0.0, 62.2, 0.0, 87.07, -0.0]
+  tip_pose_in_flange: [106.16, -4.37, 65.2, 38.81, 86.24, -38.75]
   # Tool points closer than this to the tip are not collision-checked: the tip touches
   # the dish by design.
   tip_exempt_mm: 10
@@ -45,7 +45,7 @@ tool:
   # is bolted to the flange at - and with the tip ~106 mm off the flange axis, 10 deg of error
   # moves the tip ~18 mm. UNKNOWN until measured: run calibrate_tip.py on the arm, which
   # writes this value, then re-run import_bench_cad.py.
-  flange_rotation_deg: 0.0
+  flange_rotation_deg: -2.36
 
 safety:
   link_margin_mm: 15        # clearance required for the arm links
