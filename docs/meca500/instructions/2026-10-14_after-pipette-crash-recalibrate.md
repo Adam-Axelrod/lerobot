@@ -28,8 +28,24 @@ redoing. From now on, do Parts A and B **after every pipette change or knock**.
 3. `cd C:\Users\aa24\PhD\lerobot`
 
 ## Step 0: The pipette
-- If it's visibly bent, cracked or chipped, **replace it**.
-- If it looks straight, you can keep it. Part A will show whether the tip has moved.
+- If it's visibly bent, cracked or chipped, **replace it**, skip Step 1, and go straight to Part A.
+- If it looks straight, keep it and do Step 1 first.
+
+## Step 1: Quick check, did the tip move? (`check_tip.py`, about 5 min, writes nothing)
+```powershell
+.venv\Scripts\python.exe scripts\meca500\check_tip.py
+```
+1. A **cyan cross** shows where the model predicts the tip is. The window title shows the
+   model's **tip height above the dish**.
+2. Touch the dish lightly. The height should read about **0.00 mm**.
+3. **Click on the real tip.** The terminal prints how far the cross is from it, in µm, and the
+   height error.
+4. Repeat at **3–5 spots spread over the image**, then press **q**.
+5. The verdict line says:
+   - **UNCHANGED** (within 80 µm and 0.25 mm): skip Parts A and B and go straight to **Part C**.
+   - **MOVED**: do Parts A and B.
+
+**Send Claude** the summary lines at the end.
 
 ---
 
