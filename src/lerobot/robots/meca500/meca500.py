@@ -99,6 +99,16 @@ class Meca500(Robot):
                 logger.info("Homing robot...")
                 self.robot.ActivateAndHome()
                 self.robot.WaitHomed(timeout=60)
+
+                # A previous controlling program that went away mid-motion (Ctrl-C, crash,
+                # cable) leaves the arm PAUSED by the "control connection dropped" safety
+                # stop. That is not an error, so the reset above misses it, and every
+                # MoveJoints would queue behind the pause: the arm never moves. Clear any
+                # stale queued motion and resume - the SpaceMouse teleop does the same.
+                if self.robot.GetStatusRobot().pause_motion_status:
+                    logger.warning("Robot motion is paused (e.g. a dropped control connection); resuming.")
+                    self.robot.ClearMotion()
+                    self.robot.ResumeMotion()
         except Exception as e:
             # The exception that surfaces here is a generic DisconnectError; the real
             # cause ("Another user is already controlling the robot") lives further down

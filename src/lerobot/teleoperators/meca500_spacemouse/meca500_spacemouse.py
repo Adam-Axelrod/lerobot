@@ -275,10 +275,16 @@ class Meca500Spacemouse(Teleoperator):
                 # Stop motion but leave the robot ACTIVATED/HOMED — deactivating
                 # here would force a re-home on the next run. Disconnect below
                 # keeps the arm powered and holding its pose.
-                self.robot.PauseMotion()
-                self.robot.WaitMotionPaused(timeout=5)
-                self.robot.ClearMotion()
+                #
+                # Leave it IDLE and UN-PAUSED, not merely paused: the controller raises
+                # the "control connection dropped" safety stop when the control socket
+                # closes while the arm is moving, and a paused arm with motion just
+                # cleared still counts. The next program then found motion paused (the
+                # SpaceMouse teleop resumes on connect, record/inference did not).
+                self.robot.ClearMotion()  # stops the arm and empties the queue (pauses)
                 self.robot.WaitMotionCleared(timeout=5)
+                self.robot.ResumeMotion()  # empty queue -> resumes straight into idle
+                self.robot.WaitIdle(timeout=5)
             except Exception as e:
                 logger.warning(f"Meca500 graceful stop failed, disconnecting anyway: {e}")
             try:

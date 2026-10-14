@@ -155,7 +155,7 @@ def test_connect_clears_a_latched_error_before_activating():
     robot = Meca500(Meca500Config(monitor_mode=False, cameras={}))
     robot.cameras = {}
     robot.robot = MagicMock()
-    robot.robot.GetStatusRobot.return_value = MagicMock(error_status=True)
+    robot.robot.GetStatusRobot.return_value = MagicMock(error_status=True, pause_motion_status=False)
 
     robot.connect()
 
@@ -168,12 +168,29 @@ def test_connect_does_not_reset_a_healthy_robot():
     robot = Meca500(Meca500Config(monitor_mode=False, cameras={}))
     robot.cameras = {}
     robot.robot = MagicMock()
-    robot.robot.GetStatusRobot.return_value = MagicMock(error_status=False)
+    robot.robot.GetStatusRobot.return_value = MagicMock(error_status=False, pause_motion_status=False)
 
     robot.connect()
 
     robot.robot.ResetError.assert_not_called()
     robot.robot.ActivateAndHome.assert_called_once()
+    robot.robot.ResumeMotion.assert_not_called()
+
+
+def test_connect_resumes_motion_paused_by_a_dropped_connection():
+    """A teleop closed with Ctrl-C leaves the arm paused by the "control connection dropped"
+    safety stop - not an error. Without a resume every MoveJoints queues behind the pause and
+    the arm never moves (record_auto, 2026-10-14)."""
+    robot = Meca500(Meca500Config(monitor_mode=False, cameras={}))
+    robot.cameras = {}
+    robot.robot = MagicMock()
+    robot.robot.GetStatusRobot.return_value = MagicMock(error_status=False, pause_motion_status=True)
+
+    robot.connect()
+
+    robot.robot.ResetError.assert_not_called()
+    robot.robot.ClearMotion.assert_called_once()
+    robot.robot.ResumeMotion.assert_called_once()
 
 
 def test_send_action_relative_mode_ignores_precision_gate_as_a_joint():
