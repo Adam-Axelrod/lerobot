@@ -8,8 +8,11 @@ Basler feed is shown. At each calibration point:
 
 Spread ~12 points over the whole field of view, corners included. Keys (image window focused):
 
-    z   record the dish-surface height (tip touching the dish) - do this at a few places;
-        it also prints the joints, one of which becomes approach.touch_nominal_joints
+Every click is taken with the tip touching the dish, so the dish height is the mean tip
+height over the clicked points, and each click prints its joints (any of them can become
+approach.touch_nominal_joints). No separate height step is needed.
+
+    z   OPTIONAL extra dish-height sample without a click (e.g. a touch outside the image)
     f   fit and report residuals; afterwards a cyan cross shows where the fit thinks the
         tip is, live - it should sit on the tip as you jog anywhere in the field
     u   undo the last point
@@ -74,7 +77,7 @@ def main() -> None:
     robot.connect()
     teleop.connect()
 
-    pixels, xys, surface_z = [], [], []
+    pixels, xys, click_z, surface_z = [], [], [], []
     fit: ScopeCalibration | None = None
     saved = False
     try:
@@ -90,16 +93,17 @@ def main() -> None:
             if click is not None:
                 pixels.append(click)
                 xys.append(tip[:2].copy())
+                click_z.append(tip[2])
                 print(
                     f"  point {len(pixels):2d}: px ({click[0]:.1f}, {click[1]:.1f})  "
-                    f"tip xy ({tip[0]:.4f}, {tip[1]:.4f}) z {tip[2]:.4f} mm"
+                    f"tip xy ({tip[0]:.4f}, {tip[1]:.4f}) z {tip[2]:.4f} mm   joints {[round(float(j), 2) for j in q]}"
                 )
 
             marks = [(u, v, "red") for u, v in pixels]
             if fit is not None:
                 pu, pv = fit.xy_to_pixel(tip[:2])[0]
                 marks.append((pu, pv, "cyan", "+"))
-            text = f"points {len(pixels)}  surface samples {len(surface_z)}  tip z {tip[2]:.3f} mm"
+            text = f"points {len(pixels)}  tip z {tip[2]:.3f} mm"
             view.show(frame, title=f"{WINDOW}\n{text}", points=marks)
             if view.closed:
                 break
@@ -114,18 +118,18 @@ def main() -> None:
             elif key == "u" and pixels:
                 pixels.pop()
                 xys.pop()
+                click_z.pop()
                 print(f"  undone; {len(pixels)} points")
             elif key in ("f", "s"):
-                if len(pixels) < MIN_POINTS or not surface_z:
-                    print(
-                        f"  need >= {MIN_POINTS} points and >= 1 surface sample (have {len(pixels)}, {len(surface_z)})"
-                    )
+                if len(pixels) < MIN_POINTS:
+                    print(f"  need >= {MIN_POINTS} clicked points (have {len(pixels)})")
                     continue
-                fit = ScopeCalibration.fit(pixels, xys, float(np.mean(surface_z)), (w, h))
+                heights = click_z + surface_z  # every click is a touch too
+                fit = ScopeCalibration.fit(pixels, xys, float(np.mean(heights)), (w, h))
                 print(
                     f"  fit: {fit.residual_px_rms:.2f} px rms = {fit.residual_um_rms:.1f} um rms, "
                     f"{fit.mm_per_px * 1000:.2f} um/px, surface z {fit.surface_z_mm:.4f} mm "
-                    f"(+/- {np.std(surface_z) * 1000:.0f} um over {len(surface_z)} samples)"
+                    f"(+/- {np.std(heights) * 1000:.0f} um over {len(heights)} touches)"
                 )
                 if key == "s":
                     fit.save(bench.calibration_path())
