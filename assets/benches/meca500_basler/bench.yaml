@@ -88,7 +88,8 @@ approach:
   # re-solves the position for each target. 1.8 mm beyond margin, 60 mm corridor clear.
   # The dish sits ~23 mm down in the stage opening, so approaches are tight: only 5/1512
   # orientations cleared the corridor in suggest_touch_pose.py, and this one is that family's.
-  # Tightest: illuminator column ~6 mm from the holder end; stage-opening edge ~8 mm from the pipette.
+  # (Tight-spot numbers above were measured on the earlier, oversized CAD; the accurate model of
+  # 2026-10-14 11:07 halves the illuminator and leaves 6-17 mm around the operator's own touches.)
   touch_nominal_joints: [-54.79, 56.33, 21.6, 131.52, 78.37, -131.07]
   touch_rot_jitter_deg: 2
   gate_back_mm: [15, 40]       # straight final approach along the pipette axis
