@@ -110,7 +110,8 @@ class SimMeca:
 
 rng = np.random.default_rng(0)
 BG = np.zeros((640, 427, 3), np.uint8)
-cv2.circle(BG, (213, 320), 205, (240, 200, 60), -1)
+# Like Huanyu's setup on the arm (2026-10-14): the bright field runs off the image edges.
+cv2.circle(BG, (221, 362), 273, (240, 200, 60), -1)
 for _ in range(300):
     cv2.circle(
         BG,

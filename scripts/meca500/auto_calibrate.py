@@ -66,6 +66,12 @@ VERIFY_POINTS = 3
 CONTACT_TORQUE_MNM = 0.3
 FORCE_LIMIT_N = 0.05
 TRANSIT_SPEED_DEG_S = 10.0
+# The arm runs queued MoveJoints at its global joint velocity, not at the planner's timing, so
+# this is what actually sets the speed of every move (the first arm run used the 25 deg/s
+# default and the move from home was uncomfortably fast).
+JOINT_VEL_DEG_S = 8.0
+MAX_SERVO_STEP_MM = 1.0  # cap each visual-servo move; a blocked step is retried at half size
+DEBUG_DIR_ROOT = "outputs/auto_calibrate"  # background + every detection, per run
 CART_SPEED_MM_S = 2.0
 # -----------------------------------------------------------------
 
@@ -82,6 +88,8 @@ class Session:
     def __init__(self, robot, display, bench, detector):
         self.robot, self.meca, self.display, self.detector = robot, robot.robot, display, detector
         self.background = None
+        self.debug_dir = None
+        self._n_debug = 0
         self.fov_centre = None
         self.fov_radius = None
         self.reload(bench)
@@ -138,7 +146,24 @@ class Session:
             self.display.overlays.pop("detected", None)
         else:
             self.display.overlays["detected"] = (best.px[0], best.px[1], "magenta", "x")
+        self.save_debug("detect", best)
         return best
+
+    def save_debug(self, tag: str, det=None) -> None:
+        """Write the latest frame (with the detection, if any) to this run's debug folder."""
+        import cv2
+
+        if self.debug_dir is None or self.display.last_frame is None or self._n_debug > 2000:
+            return
+        img = cv2.cvtColor(self.display.last_frame, cv2.COLOR_RGB2BGR)
+        if det is not None:
+            u, v = int(round(det.px[0])), int(round(det.px[1]))
+            cv2.drawMarker(img, (u, v), (255, 0, 255), cv2.MARKER_TILTED_CROSS, 24, 2)
+            cv2.putText(
+                img, f"score {det.score:.2f}", (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1
+            )
+        self._n_debug += 1
+        cv2.imwrite(str(self.debug_dir / f"{self._n_debug:04d}_{tag}.png"), img)
 
     def servo(self, target_px, label: str, tol_px: float = SERVO_TOL_PX, max_iter: int = 12):
         """Translate the tip (at its current height) until it sits on ``target_px`` in the image.
@@ -155,7 +180,13 @@ class Session:
             if np.linalg.norm(err) <= tol_px:
                 return d
             dxy = 0.8 * (self.lin @ err)
-            self.shift(float(dxy[0]), float(dxy[1]), 0.0, label)
+            n = float(np.linalg.norm(dxy))
+            if n > MAX_SERVO_STEP_MM:
+                dxy *= MAX_SERVO_STEP_MM / n
+            try:
+                self.shift(float(dxy[0]), float(dxy[1]), 0.0, label)
+            except CalibrationFailedError:
+                self.shift(float(dxy[0]) / 2, float(dxy[1]) / 2, 0.0, f"{label} (half step)")
         raise CalibrationFailedError(f"Servo did not converge ({label}).")
 
 
@@ -172,10 +203,20 @@ def stage_home_and_background(s: Session, home) -> None:
     s.display.sleep(1.0)  # let auto-exposure settle
     frames = [s.display.frame().astype(np.float32) for _ in range(5)]
     s.background = np.median(frames, axis=0).astype(np.uint8)
+    if s.debug_dir is not None:
+        import cv2
+
+        cv2.imwrite(str(s.debug_dir / "0000_background.png"), cv2.cvtColor(s.background, cv2.COLOR_RGB2BGR))
     mask = field_mask(s.background)
     ys, xs = np.nonzero(mask)
     s.fov_centre = np.array([xs.mean(), ys.mean()])
-    s.fov_radius = float(np.sqrt(mask.sum() / np.pi))
+    h_img, w_img = mask.shape
+    # The bright field can run off the image (it does on Huanyu's setup), so the usable radius is
+    # also limited by the image borders - keep 25 px clear of them for the tip detector.
+    border = (
+        min(s.fov_centre[0], w_img - 1 - s.fov_centre[0], s.fov_centre[1], h_img - 1 - s.fov_centre[1]) - 25
+    )
+    s.fov_radius = float(min(np.sqrt(mask.sum() / np.pi), border))
     s.display.message = f"background captured; visible circle r = {s.fov_radius:.0f} px"
     print(
         f"Background captured. Visible field: centre {np.round(s.fov_centre, 1).tolist()}, r {s.fov_radius:.0f} px"
@@ -432,7 +473,13 @@ def main() -> None:
     try:
         make_ready(s.meca)
         s.meca.SetCartLinVel(CART_SPEED_MM_S)
+        s.meca.SetJointVel(JOINT_VEL_DEG_S)
         s.meca.SetVelTimeout(0.3)
+        from pathlib import Path
+
+        s.debug_dir = Path(DEBUG_DIR_ROOT) / time.strftime("%Y%m%d-%H%M%S")
+        s.debug_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Debug images: {s.debug_dir}")
         stage_home_and_background(s, home)
         first = stage_find_tip(s, home)
         tip = stage_tip_calibration(s, first)

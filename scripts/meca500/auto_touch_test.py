@@ -47,6 +47,7 @@ MAX_OVERTRAVEL_MM = 2.0  # abort if this far below the calibrated dish without a
 CONTACT_TORQUE_MNM = 0.3  # ~3-6x the smoothed torque noise measured by bota_probe.py
 FORCE_LIMIT_N = 0.05  # hard backstop (user-agreed)
 TRANSIT_SPEED_DEG_S = 10.0
+JOINT_VEL_DEG_S = 8.0  # the arm runs MoveJoints at this, not at the planner's timing
 LIFT_SPEED_MM_S = 2.0
 # -----------------------------------------------------------------
 
@@ -98,6 +99,7 @@ def main() -> None:
         make_ready(meca)
         meca.SetCartLinVel(LIFT_SPEED_MM_S)
         meca.SetVelTimeout(0.3)  # the descent loop also refreshes the display (~10-20 Hz)
+        meca.SetJointVel(JOINT_VEL_DEG_S)  # sets the speed of the queued MoveJoints transits
         q_now = np.array(meca.GetRtJointPos())
         display.phase = "moving home"
         run_joint_path(

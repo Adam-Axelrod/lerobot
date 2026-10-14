@@ -86,7 +86,13 @@ def detect_tip(
 
     # Which end is the tip? The pipette enters across the field's edge, so the end nearer the
     # edge of the illuminated circle is the shank; the other is the tip.
-    dist = cv2.distanceTransform(fov.astype(np.uint8), cv2.DIST_L2, 5)
+    # Distance to the nearest edge of the VISIBLE field. The image border counts as an edge:
+    # distanceTransform only measures to zero pixels, and on Huanyu's setup the bright field runs
+    # off the image, so without this a pipette entering at the image edge looked like a tip deep
+    # inside the field (first arm run: "tip" at y = 639 of 640).
+    fov_u8 = fov.astype(np.uint8)
+    fov_u8[0, :] = fov_u8[-1, :] = fov_u8[:, 0] = fov_u8[:, -1] = 0
+    dist = cv2.distanceTransform(fov_u8, cv2.DIST_L2, 5)
     end_hi = pts[s > s.max() - 3]
     end_lo = pts[s < s.min() + 3]
     d_hi = dist[end_hi[:, 1].astype(int), end_hi[:, 0].astype(int)].mean()
