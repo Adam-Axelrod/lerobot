@@ -61,6 +61,7 @@ from lerobot.utils.feature_utils import combine_feature_dicts
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.keyboard_input import init_keyboard_listener, is_headless
 from lerobot.utils.utils import init_logging, log_say
+from lerobot.utils.visualization_utils import init_rerun
 
 # ----------------------------- CONFIG -----------------------------
 RIG = "meca500_basler"
@@ -178,6 +179,10 @@ def run_plan(robot, teleop, joints, precision, fps, events, processors, dataset=
 
 def main() -> None:
     init_logging()
+    if DISPLAY_DATA:
+        # record_loop streams to Rerun when display_data is set; without init the first
+        # logged frame raises "No application id found" (as record.py does at startup).
+        init_rerun(session_name="record_auto")
     register_third_party_plugins()
     bench = BenchConfig.load(RIG)
     planner = build_planner(bench)
