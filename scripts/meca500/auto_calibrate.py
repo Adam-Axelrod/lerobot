@@ -168,7 +168,9 @@ class Session:
         self._n_debug += 1
         cv2.imwrite(str(self.debug_dir / f"{self._n_debug:04d}_{tag}.png"), img)
 
-    def servo(self, target_px, label: str, tol_px: float = SERVO_TOL_PX, max_iter: int = 12):
+    def servo(
+        self, target_px, label: str, tol_px: float = SERVO_TOL_PX, max_iter: int = 12, best_effort=False
+    ):
         """Translate the tip (at its current height) until it sits on ``target_px`` in the image.
 
         Gain 0.8: a hovering tip is slightly blurred, so its detected position jitters by a pixel
@@ -188,9 +190,20 @@ class Session:
                 dxy *= MAX_SERVO_STEP_MM / n
             before = self.tip()[:3, 3].copy()
             try:
-                self.shift(float(dxy[0]), float(dxy[1]), 0.0, label)
-            except CalibrationFailedError:
-                self.shift(float(dxy[0]) / 2, float(dxy[1]) / 2, 0.0, f"{label} (half step)")
+                try:
+                    self.shift(float(dxy[0]), float(dxy[1]), 0.0, label)
+                except CalibrationFailedError:
+                    self.shift(float(dxy[0]) / 2, float(dxy[1]) / 2, 0.0, f"{label} (half step)")
+            except CalibrationFailedError as e:
+                # Centring is a convenience, not a requirement: any tip position well inside the
+                # image serves as the reference. Stop where it is rather than failing the run
+                # (arm run 4: the model put the illuminator within the margin of the centre).
+                if best_effort and self._inside_image(d.px):
+                    print(
+                        f"    {label}: stopped {np.linalg.norm(err):.0f} px from the target ({e}); continuing from here"
+                    )
+                    return d
+                raise
             moved = self.tip()[:3, 3] - before
             # Logged because the first arm runs stalled ~8 px out with identical detections:
             # did the arm not move, or did the camera not update?
@@ -199,7 +212,13 @@ class Session:
                 f"commanded {np.round(dxy * 1000).astype(int).tolist()} um, arm moved "
                 f"{np.round(moved[:2] * 1000).astype(int).tolist()} um"
             )
+        if best_effort and d is not None and self._inside_image(d.px):
+            return d
         raise CalibrationFailedError(f"Servo did not converge ({label}).")
+
+    def _inside_image(self, px, margin: float = 40.0) -> bool:
+        h, w = self.display.last_frame.shape[:2]
+        return margin <= px[0] <= w - 1 - margin and margin <= px[1] <= h - 1 - margin
 
 
 # ---------------------------------------------------------------------- stages
@@ -290,7 +309,7 @@ def stage_find_tip(s: Session, home) -> dict:
             break
 
     if d is not None:
-        s.servo(s.fov_centre, "centring")
+        s.servo(s.fov_centre, "centring", best_effort=True)
         s.display.message = "descending in view until the sensor feels the dish"
         # The tip model may be wrong by mm in height, so allow for it below the old dish.
         r = s.touch(z_old - MAX_OVERTRAVEL_MM - LOW_SEARCH_HOVER_MM, FIRST_DESCENT_MM_S)
@@ -303,7 +322,7 @@ def stage_find_tip(s: Session, home) -> dict:
         if d is None:
             raise CalibrationFailedError("Could not find the tip anywhere near the field of view.")
         print(f"Tip found just above the dish at px {np.round(d.px, 1).tolist()} (score {d.score:.2f}).")
-        s.servo(s.fov_centre, "centring")
+        s.servo(s.fov_centre, "centring", best_effort=True)
         r = s.touch(r["tip_z"] - MAX_OVERTRAVEL_MM, DESCENT_MM_S)
     print(f"Dish found: model tip z {r['tip_z']:.3f} (old calibrated dish {z_old:.3f}).")
     d = s.detect()

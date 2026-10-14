@@ -79,8 +79,12 @@ class BenchConfig:
         missing = [str(p) for p in meshes if not p.exists()]
         if missing:
             raise FileNotFoundError(f"obstacle meshes listed in bench.yaml are missing: {missing}")
-        if meshes:
-            fields.append(GridField.from_meshes(meshes, pitch=float(obs.get("sdf_pitch_mm", 2.0))))
+        # One grid per mesh, named after the file, so a clearance report says WHICH obstacle
+        # ("tool vs illuminator") instead of "meshes".
+        for m in meshes:
+            g = GridField.from_meshes([m], pitch=float(obs.get("sdf_pitch_mm", 2.0)))
+            g.name = m.stem
+            fields.append(g)
         for b in obs.get("boxes", []):
             fields.append(BoxField(b["center"], b["size"], b.get("yaw_deg", 0.0), b.get("name", "box")))
         for c in obs.get("cylinders", []):
