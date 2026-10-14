@@ -160,9 +160,20 @@ class Planner:
     def sample_episode(self, seed: int) -> EpisodePlan:
         rng = np.random.default_rng(seed)
         self.rejections = {}
-        for _ in range(self.lim.max_attempts):
+        # The target is drawn ONCE and kept while start/path are resampled. Redrawing it on
+        # every rejection would make hard-to-reach parts of the image proportionally rarer in
+        # the dataset (on Huanyu's setup acceptance ranges 22-59% across the image), so the
+        # policy would see a skewed target distribution. Only a target that fails
+        # `target_attempts` times in a row is replaced - i.e. one that is genuinely unreachable.
+        target_px = self.sample_target_px(rng)
+        for attempt in range(self.lim.max_attempts):
+            if attempt and attempt % self.lim.target_attempts == 0:
+                self.rejections["target replaced (unreachable)"] = (
+                    self.rejections.get("target replaced (unreachable)", 0) + 1
+                )
+                target_px = self.sample_target_px(rng)
             try:
-                plan = self._try_episode(rng)
+                plan = self._try_episode(rng, target_px)
                 plan.seed = seed
                 return plan
             except _RejectedSampleError as r:
@@ -177,12 +188,14 @@ class Planner:
         m = self.lim.target_edge_margin_px
         return np.array([rng.uniform(m, w - 1 - m), rng.uniform(m, h - 1 - m)])
 
-    def _try_episode(self, rng: np.random.Generator) -> EpisodePlan:
+    def _try_episode(self, rng: np.random.Generator, target_px=None) -> EpisodePlan:
         lim = self.lim
         surface = self.calib.surface_z_mm
 
         # --- target and approach geometry
-        target_px = self.sample_target_px(rng)
+        if target_px is None:
+            target_px = self.sample_target_px(rng)
+        target_px = np.asarray(target_px, dtype=float)
         xy = self.calib.pixel_to_xy(target_px)[0]
         p_touch = np.array([xy[0], xy[1], surface + lim.touch_offset_mm])
         r_touch = random_rotation(rng, lim.touch_rot_jitter_deg) @ self.touch_nominal[:3, :3]

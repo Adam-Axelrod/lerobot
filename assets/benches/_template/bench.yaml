@@ -37,6 +37,9 @@ safety:
   point_spacing_mm: 4
   safe_joints: null         # a known-clear pose transits may route through (e.g. HOME_JOINTS)
   max_attempts: 200
+  target_attempts: 50       # start/path resamples per target before it counts as unreachable;
+                            # keeping the target fixed stops hard-to-reach image regions being
+                            # under-represented in the dataset
 
 scope:
   camera_key: microscope_cam

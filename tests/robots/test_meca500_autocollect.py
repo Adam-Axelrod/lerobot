@@ -262,6 +262,30 @@ def test_planner_is_reproducible_per_seed_and_varies_across_seeds(kin):
     assert a.target_px != c.target_px
 
 
+def test_planner_keeps_the_target_while_resampling_start_and_path(kin):
+    """Redrawing the target on every rejection would under-sample hard-to-reach parts of the
+    image. The target must stay fixed across retries and only change after target_attempts."""
+    from lerobot.robots.meca500.autocollect import planner as planner_mod
+
+    planner, _ = _planner(kin, [BoxField([-150, 0, 300], [60, 60, 60])])
+    planner.lim.target_attempts = 3
+    seen = []
+    real_try = planner._try_episode
+
+    def flaky(rng, target_px=None):
+        seen.append(tuple(target_px))
+        if len(seen) < 5:  # reject the first four attempts
+            raise planner_mod._RejectedSampleError("forced")
+        return real_try(rng, target_px)
+
+    planner._try_episode = flaky
+    plan = planner.sample_episode(0)
+    assert seen[0] == seen[1] == seen[2]  # same target for the first target_attempts tries
+    assert seen[3] != seen[2] and seen[3] == seen[4]  # then replaced once, and kept again
+    assert tuple(plan.target_px) == pytest.approx(seen[4])
+    assert planner.rejections["target replaced (unreachable)"] == 1
+
+
 def test_planner_refuses_when_every_path_is_blocked(kin):
     # a slab covering the whole work area just above the dish blocks every approach
     touch = kin.tip(TOUCH_Q)[:3, 3]

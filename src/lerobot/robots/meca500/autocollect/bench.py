@@ -186,6 +186,7 @@ class PlannerLimits:
     min_abs_j5_deg: float = 5.0  # wrist singularity at J5 = 0
     check_step_deg: float = 0.5
     max_attempts: int = 200
+    target_attempts: int = 50  # start/path resamples per target before it counts as unreachable
 
     @classmethod
     def from_bench(cls, bench: BenchConfig) -> PlannerLimits:
@@ -224,4 +225,5 @@ class PlannerLimits:
             min_abs_j5_deg=get(sf, "min_abs_j5_deg", d.min_abs_j5_deg, float),
             check_step_deg=get(sf, "check_step_deg", d.check_step_deg, float),
             max_attempts=get(sf, "max_attempts", d.max_attempts, int),
+            target_attempts=get(sf, "target_attempts", d.target_attempts, int),
         )

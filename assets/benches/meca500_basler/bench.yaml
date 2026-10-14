@@ -59,6 +59,9 @@ safety:
   # use zero as a transit pose. Transits here are collision-checked against the model anyway.
   safe_joints: [-90, 40, 20, 90, 80, -110]
   max_attempts: 200
+  target_attempts: 50       # start/path resamples per target before it counts as unreachable;
+                            # keeping the target fixed stops hard-to-reach image regions being
+                            # under-represented in the dataset
 
 scope:
   camera_key: microscope_cam
