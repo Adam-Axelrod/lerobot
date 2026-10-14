@@ -24,6 +24,7 @@ from dataclasses import replace
 
 import cv2
 import numpy as np
+from live_view import LiveView
 from rigs import axis_signs, require_home_joints, rig_config
 
 from lerobot.robots.meca500.autocollect.bench import BenchConfig
@@ -74,6 +75,8 @@ def main() -> None:
             home_joints=require_home_joints(RIG),
         )
     )
+    # Window first: if the display cannot open, nothing has connected to the arm yet.
+    view = LiveView(WINDOW, figsize=(9, 3))
     robot.connect()
     teleop.connect()
 
@@ -85,8 +88,7 @@ def main() -> None:
                 obs = robot.get_observation()
                 tip = kin.tip([obs[f"joint_{i + 1}.pos"] for i in range(6)])[:3, 3]
                 cad = np.asarray(p["cad_xyz"], float)
-                cv2.imshow(
-                    WINDOW,
+                view.show(
                     status_image(
                         [
                             f"point: {p['name']}  -  {p.get('description', '')}",
@@ -97,22 +99,24 @@ def main() -> None:
                         ]
                     ),
                 )
-                key = cv2.waitKey(50) & 0xFF
-                if key == ord(" "):
+                if view.closed:
+                    raise KeyboardInterrupt
+                key = view.key()
+                if key == " ":
                     measured[p["name"]] = (cad, tip.copy())
                     print(
                         f"  {p['name']:>20}: error {np.round(tip - cad, 2).tolist()} mm "
                         f"(|e| = {np.linalg.norm(tip - cad):.2f})"
                     )
                     break
-                if key == ord("n"):
+                if key == "n":
                     break
-                if key == ord("q"):
+                if key == "q":
                     raise KeyboardInterrupt
     except KeyboardInterrupt:
         pass
     finally:
-        cv2.destroyAllWindows()
+        view.close()
         teleop.disconnect()
         robot.disconnect()
 

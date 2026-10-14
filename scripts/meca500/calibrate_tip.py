@@ -25,8 +25,8 @@ import re
 import sys
 from dataclasses import replace
 
-import cv2
 import numpy as np
+from live_view import LiveView
 from rigs import axis_signs, require_home_joints, rig_config
 
 from lerobot.robots.meca500.autocollect.bench import BenchConfig
@@ -40,7 +40,6 @@ from lerobot.utils.import_utils import register_third_party_plugins
 RIG = "meca500_basler"
 GAIN_TR, GAIN_ROT = 20.0, 15.0
 GAIN_TR_FINE, GAIN_ROT_FINE = 1.0, 2.0
-DISPLAY_SCALE = 1.4
 MIN_CAPTURES = 4
 MIN_ORIENTATION_SPREAD_DEG = 20.0  # largest pairwise flange rotation needed for a good fit
 # -----------------------------------------------------------------
@@ -104,34 +103,30 @@ def main() -> None:
             home_joints=require_home_joints(RIG),
         )
     )
+    # Window first: if the display cannot open, nothing has connected to the arm yet.
+    view = LiveView(WINDOW)
     robot.connect()
     teleop.connect()
     flanges, saved = [], False
-    cv2.namedWindow(WINDOW)
     try:
         while True:
             teleop.get_action()
             obs = robot.get_observation()
             q = np.array([obs[f"joint_{i + 1}.pos"] for i in range(6)])
-            view = cv2.cvtColor(obs[bench.camera_key], cv2.COLOR_RGB2BGR)
-            view = cv2.resize(view, None, fx=DISPLAY_SCALE, fy=DISPLAY_SCALE)
-            h, w = view.shape[:2]
-            cv2.drawMarker(view, (w // 2, h // 2), (0, 255, 255), cv2.MARKER_CROSS, 40, 1)
-            cv2.putText(
-                view, f"captures {len(flanges)}", (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1
-            )
-            cv2.imshow(WINDOW, view)
-            key = cv2.waitKey(30) & 0xFF
-            if key == ord("c"):
+            view.show(obs[bench.camera_key], title=f"{WINDOW}\ncaptures {len(flanges)}", crosshair=True)
+            if view.closed:
+                break
+            key = view.key()
+            if key == "c":
                 flanges.append(kin.flange(q))
                 spread = orientation_spread(flanges)
                 print(
                     f"  capture {len(flanges)}: joints {np.round(q, 2).tolist()}  orientation spread {spread:.1f} deg"
                 )
-            elif key == ord("u") and flanges:
+            elif key == "u" and flanges:
                 flanges.pop()
                 print(f"  undone; {len(flanges)} captures")
-            elif key in (ord("f"), ord("s")):
+            elif key in ("f", "s"):
                 if len(flanges) < MIN_CAPTURES:
                     print(f"  need >= {MIN_CAPTURES} captures (have {len(flanges)})")
                     continue
@@ -147,7 +142,7 @@ def main() -> None:
                         f"  !! orientations only {spread:.0f} deg apart - tilt the wrist more for a reliable fit"
                     )
                 total = report(t, bench)
-                if key == ord("s"):
+                if key == "s":
                     path = bench.root / "bench.yaml"
                     text = path.read_text(encoding="utf-8")
                     text, n = re.subn(
@@ -161,10 +156,10 @@ def main() -> None:
                     )
                     saved = True
                     break
-            elif key == ord("q"):
+            elif key == "q":
                 break
     finally:
-        cv2.destroyAllWindows()
+        view.close()
         teleop.disconnect()
         robot.disconnect()
     if not saved:
