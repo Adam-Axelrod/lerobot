@@ -64,8 +64,12 @@ class SensorReader:
     def _loop(self) -> None:
         while self._running:
             frame = self.sensor.read_frame()
+            # Yield after EVERY read, not just when there is no frame. The sensor streams at
+            # ~800 Hz, and back-to-back read_frame() calls starved the other threads of the
+            # GIL: the Basler grab thread stopped delivering (frames 2.5 s stale) and the feed
+            # froze (2026-10-14). A sub-ms sleep releases the GIL and still keeps up with 800 Hz.
+            time.sleep(0.0003)
             if not frame:
-                time.sleep(0.0005)  # no new frame yet; do not spin a core
                 continue
             w = np.array([*frame.force[:3], *frame.torque[:3]], dtype=float)
             with self._lock:
