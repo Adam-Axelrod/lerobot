@@ -130,6 +130,11 @@ In **hover mode** the tip stops **5 mm above** the dish and everything runs at *
    - whether each move looked safe and sensible;
    - where the tip ended relative to the green marker (it should hover right over it, slightly out of focus because it's 5 mm up).
 
+| Symptom | What to do |
+|---|---|
+| Arm doesn't move, many "goal position ... clamped" warnings, portal says *"robot motion paused due to safety stop (control connection dropped)"* | The pause comes from closing teleop. `record_auto.py` now resumes it automatically (fixed 2026-10-14), so just rerun. If it still says paused, check the e-stop is released. |
+| "still paused/in error after ResumeMotion" | An e-stop is pressed or a stop needs resetting at the robot. Release it, check the web portal, close the portal, rerun. |
+
 The run creates a local dataset `AdamAxelrod/basler_auto_2026-10`. If you need to rerun from scratch, either delete that folder under `%USERPROFILE%\.cache\huggingface\lerobot\AdamAxelrod\`, or set `RESUME = True` to append to it.
 
 ### After Part C
