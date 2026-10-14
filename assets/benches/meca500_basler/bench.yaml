@@ -65,10 +65,11 @@ scope:
   calibration: scope_calibration.json   # written by scripts/meca500/calibrate_scope.py
 
 start:
-  # Derived from the touch pose by suggest_touch_pose.py (tip backed 60 mm out along the pipette,
-  # same IK branch, 12.2 mm beyond margin) - next to HOME_JOINTS, where the human demos began.
-  # (HOME itself holds the new pipette at an orientation the planner cannot reach the touch from.)
-  nominal_joints: [-64.49, 52.31, 5.18, 118.05, 71.06, -104.27]
+  # Derived from the measured touch pose by suggest_touch_pose.suggest_start (tip backed 60 mm out
+  # along the pipette, same IK branch, 9.4 mm beyond margin) - next to HOME_JOINTS, where the human
+  # demos began. (HOME itself holds the new pipette at an orientation the planner cannot reach the
+  # touch from.)
+  nominal_joints: [-61.83, 48.33, 5.09, 117.98, 66.66, -108.27]
   pos_jitter_mm: [20, 20, 10]
   rot_jitter_deg: 3
   min_height_above_surface_mm: 5
@@ -79,18 +80,13 @@ target:
   style: {radius_px: 14, thickness_px: 2, cross_px: 6, color: [0, 255, 0], outline_color: [0, 0, 0]}
 
 approach:
-  # A natural "tip touching the dish" pose WITH THE CURRENT PIPETTE. Not set: the medoid
-  # demo end pose ([-53.32, 51.85, 19.53, 128.56, 69.73, -126.21]) was with a different
-  # pipette, so it would put this tip somewhere else. calibrate_scope.py prints the joints
-  # at every surface (z) sample - paste one of those here.
-  # PROVISIONAL (2026-10-14): suggest_touch_pose.py, re-solved with the 4 mm mounting plate and the
-  # dish at z = 8.6 (mean point the tip touched in calibrate_tip.py, with this tool model) until
-  # calibrate_scope.py measures it. Only 5/1512 candidates clear the
-  # 60 mm approach corridor - the dish sits ~21.5 mm down in the stage opening. 3rd-ranked (3.3 mm
-  # beyond margin), chosen because it is on home's side and matches how the operator actually
-  # approached in calibrate_tip.py (capture 1: [-54.6, 55.55, 21.99, 130.59, 78.0, -131.74]).
-  # Tightest: illuminator column 6.3 mm from the holder end; stage-opening edge 8.3 mm from the pipette.
-  touch_nominal_joints: [-56.18, 60.12, 22.26, 131.21, 82.97, -126.88]
+  # MEASURED (2026-10-14): an operator touch of the dish in calibrate_scope.py (surface sample 2 of
+  # the first run), tip at the field-of-view centre. Sets the approach ORIENTATION; the planner
+  # re-solves the position for each target. 1.8 mm beyond margin, 60 mm corridor clear.
+  # The dish sits ~23 mm down in the stage opening, so approaches are tight: only 5/1512
+  # orientations cleared the corridor in suggest_touch_pose.py, and this one is that family's.
+  # Tightest: illuminator column ~6 mm from the holder end; stage-opening edge ~8 mm from the pipette.
+  touch_nominal_joints: [-54.79, 56.33, 21.6, 131.52, 78.37, -131.07]
   touch_rot_jitter_deg: 2
   gate_back_mm: [15, 40]       # straight final approach along the pipette axis
   pretouch_back_mm: [1, 4]     # precision phase length
