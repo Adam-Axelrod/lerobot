@@ -171,7 +171,7 @@ def write_html(scene: trimesh.Scene, out: Path, groups: dict, title: str, open_b
         .replace("__GLB__", base64.b64encode(glb).decode())
     )
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(html, encoding="utf-8")
+    out.write_text(html, encoding="utf-8", newline="\n")
     print(f"Wrote {out} ({out.stat().st_size // 1024} KB)")
     if open_browser:
         webbrowser.open(out.as_uri())

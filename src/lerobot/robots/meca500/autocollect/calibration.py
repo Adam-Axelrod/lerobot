@@ -87,7 +87,7 @@ class ScopeCalibration:
         )
 
     def save(self, path: Path) -> None:
-        Path(path).write_text(json.dumps(asdict(self), indent=2))
+        Path(path).write_text(json.dumps(asdict(self), indent=2), encoding="utf-8", newline="\n")
 
     @classmethod
     def load(cls, path: Path) -> ScopeCalibration:

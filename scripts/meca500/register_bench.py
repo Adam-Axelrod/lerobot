@@ -149,7 +149,9 @@ def main() -> None:
                 "points": {k: {"cad": v[0].tolist(), "measured": v[1].tolist()} for k, v in measured.items()},
             },
             indent=2,
-        )
+        ),
+        encoding="utf-8",
+        newline="\n",
     )
     print(f"Saved {bench.registration_path()} with apply: false - review, then set apply: true to use it.")
 

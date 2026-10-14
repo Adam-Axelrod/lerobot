@@ -212,7 +212,7 @@ def main() -> None:
     )
     if n1 != 1 or n2 != 1:
         sys.exit("Could not find obstacles.meshes / tool.tip_pose_in_flange lines in bench.yaml to update.")
-    yaml_path.write_text(text, encoding="utf-8")
+    yaml_path.write_text(text, encoding="utf-8", newline="\n")
     # Where the CAD sits relative to the robot, so scene_viewer.py can overlay the raw export.
     (bench.root / "cad_frame.json").write_text(
         json.dumps(
@@ -224,6 +224,7 @@ def main() -> None:
             indent=2,
         ),
         encoding="utf-8",
+        newline="\n",
     )
     print(f"updated {yaml_path} - now re-run suggest_touch_pose.py and plan_preview.py")
 

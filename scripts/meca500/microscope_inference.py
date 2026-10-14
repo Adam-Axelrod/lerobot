@@ -315,7 +315,7 @@ def report_target_errors(repo_prefix: str, targets, bench) -> None:
             f"[target] episode {rows[-1]['episode_index']}: {err_px:.1f} px = {rows[-1]['error_um']:.0f} um, "
             f"tip {rows[-1]['tip_height_above_surface_mm']:+.3f} mm from the surface"
         )
-    (root / "target_errors.json").write_text(json.dumps(rows, indent=2))
+    (root / "target_errors.json").write_text(json.dumps(rows, indent=2), encoding="utf-8", newline="\n")
     errs = np.array([r["error_px"] for r in rows])
     print(
         f"[target] median {np.median(errs):.1f} px, max {errs.max():.1f} px -> {root / 'target_errors.json'}"

@@ -150,7 +150,7 @@ def main() -> None:
                     )
                     if n != 1:
                         sys.exit("Could not find tool.flange_rotation_deg in bench.yaml.")
-                    path.write_text(text, encoding="utf-8")
+                    path.write_text(text, encoding="utf-8", newline="\n")
                     print(
                         f"Wrote tool.flange_rotation_deg = {total:.2f} to {path}. Now run import_bench_cad.py."
                     )
