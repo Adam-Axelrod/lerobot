@@ -196,3 +196,5 @@ assets/benches/**/.sdf_cache_*.npz
 # ...but the bench meshes ARE the collision model, so version them (overrides *.stl above)
 !assets/benches/**/*.stl
 assets/benches/**/preview.*
+# Generated 3D viewer pages (scene_viewer.py) - rebuilt from the bench files, ~5 MB each
+cad/**/*.html
