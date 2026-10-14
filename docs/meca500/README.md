@@ -7,6 +7,7 @@ out of it.
 | Path | What it is |
 |---|---|
 | [`autocollect_plan.md`](autocollect_plan.md) | Design and status of the automated, collision-checked dataset collection |
+| [`autocalibration_plan.md`](autocalibration_plan.md) | Design of the automatic tip + scope calibration (vision + Bota contact sensing) |
 | [`instructions/`](instructions/) | Step-by-step checklists for work at the bench, newest last |
 
 ## Instructions, in order
@@ -18,3 +19,4 @@ date they were written.
 |---|---|---|
 | [`2026-10-14_scope-calibration-and-first-hover-run.md`](instructions/2026-10-14_scope-calibration-and-first-hover-run.md) | Huanyu's setup | Done: hover run recorded 3 episodes, but the arm went limp on disconnect and bent the pipette (fixed) |
 | [`2026-10-14_after-pipette-crash-recalibrate.md`](instructions/2026-10-14_after-pipette-crash-recalibrate.md) | Huanyu's setup | Step 1 (moved) and Part A done (tip 0.065 mm rms, imported); **Part B next** |
+| [`2026-10-14_bota-force-probe.md`](instructions/2026-10-14_bota-force-probe.md) | Huanyu's setup | **To do** (any time; ~10 min) |

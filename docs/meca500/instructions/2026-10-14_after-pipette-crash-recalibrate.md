@@ -72,7 +72,7 @@ redoing. From now on, do Parts A and B **after every pipette change or knock**.
 **Wait until Claude confirms the re-import**, because this calibration uses the tip position.
 Then follow **Part A** of
 [`2026-10-14_scope-calibration-and-first-hover-run.md`](2026-10-14_scope-calibration-and-first-hover-run.md):
-dish height with `z` (3–4 light touches), about 12 clicked points over the whole image, then `f`
+about 12 clicked points over the whole image (each click also records the dish height, so the `z` step is no longer needed), then `f`
 (≤ 5 px), check the cyan cross, then `s`.
 
 **Send Claude:** the `fit:` line, and one `joints [...]` line from the `z` samples.

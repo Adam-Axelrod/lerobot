@@ -384,3 +384,44 @@ def test_transit_retreats_and_reaches_the_next_start(kin):
     np.testing.assert_allclose(qs[-1], START_Q, atol=1e-9)
     # first move after the touch is back along the pipette axis, i.e. away from the dish
     assert kin.tip(qs[5])[2, 3] > kin.tip(qs[0])[2, 3]
+
+
+# ----------------------------------------------------------------------------- tip detection
+
+
+def _microscope_frames(tip=(220.0, 300.0), angle_deg=70.0, seed=0):
+    """A synthetic Basler-like pair: bright disc with clutter, and the same plus a dark pipette."""
+    import cv2
+
+    rng = np.random.default_rng(seed)
+    bg = np.zeros((640, 427, 3), np.uint8)
+    cv2.circle(bg, (213, 320), 205, (240, 200, 60), -1)
+    for _ in range(300):  # scratches and specks
+        x, y = rng.integers(20, 410), rng.integers(120, 520)
+        cv2.circle(bg, (int(x), int(y)), int(rng.integers(1, 3)), (90, 70, 20), -1)
+    frame = bg.copy()
+    a = np.radians(angle_deg)
+    shank = (int(tip[0] + 400 * np.cos(a)), int(tip[1] + 400 * np.sin(a)))  # runs off the field edge
+    cv2.line(frame, (int(tip[0]), int(tip[1])), shank, (30, 25, 10), 7)
+    return frame, bg
+
+
+@pytest.mark.parametrize(
+    "tip,angle", [((220.0, 300.0), 70.0), ((120.0, 250.0), 110.0), ((300.0, 420.0), 40.0)]
+)
+def test_tip_detection_finds_the_free_end_of_the_pipette(tip, angle):
+    from lerobot.robots.meca500.autocollect.tip_detect import detect_tip
+
+    frame, bg = _microscope_frames(tip, angle)
+    det = detect_tip(frame, bg)
+    assert det is not None
+    assert np.hypot(det.px[0] - tip[0], det.px[1] - tip[1]) < 4.0  # within a few px of the drawn tip
+    a = np.radians(angle)
+    assert np.dot(det.axis, [-np.cos(a), -np.sin(a)]) > 0.95  # axis points from the shank to the tip
+
+
+def test_tip_detection_reports_nothing_without_a_pipette():
+    from lerobot.robots.meca500.autocollect.tip_detect import detect_tip
+
+    _, bg = _microscope_frames()
+    assert detect_tip(bg, bg) is None
