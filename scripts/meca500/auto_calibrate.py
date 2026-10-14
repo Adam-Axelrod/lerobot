@@ -51,13 +51,16 @@ from lerobot.utils.import_utils import register_third_party_plugins
 # ----------------------------- CONFIG -----------------------------
 RIG = "meca500_basler"
 SEARCH_HOVER_MM = 6.0  # first approach height above the (old) calibrated dish
+LOW_SEARCH_HOVER_MM = 3.0  # second, lower search if the tip is too blurred to see from 6 mm
 HOVER_MM = 1.0  # working hover above the measured dish, once found
 FIND_HOVER_MM = 0.5  # search height just above the dish, where the tip is nearly in focus
 DESCENT_MM_S = 0.15
 FIRST_DESCENT_MM_S = 0.3  # the first, longer descent from the search height
 MAX_OVERTRAVEL_MM = 2.5  # never go further than this below the expected dish without contact
 SEARCH_STEP_MM = 2.0  # spiral search step if the tip is not in view (field ~5 mm across)
-SERVO_TOL_PX = 2.0
+# Centring only needs the tip NEAR the target: what matters is measured at contact, and the
+# pivot fit corrects each touch's leftover pixel offset. 2 px stalled on the arm (2026-10-14).
+SERVO_TOL_PX = 10.0
 PIVOT_TILTS_DEG = 10.0  # tilt about world x and y, both ways
 PIVOT_TWIST_DEG = 12.0  # twist about the pipette axis, both ways
 MIN_PIVOT_TOUCHES = 4
@@ -183,10 +186,19 @@ class Session:
             n = float(np.linalg.norm(dxy))
             if n > MAX_SERVO_STEP_MM:
                 dxy *= MAX_SERVO_STEP_MM / n
+            before = self.tip()[:3, 3].copy()
             try:
                 self.shift(float(dxy[0]), float(dxy[1]), 0.0, label)
             except CalibrationFailedError:
                 self.shift(float(dxy[0]) / 2, float(dxy[1]) / 2, 0.0, f"{label} (half step)")
+            moved = self.tip()[:3, 3] - before
+            # Logged because the first arm runs stalled ~8 px out with identical detections:
+            # did the arm not move, or did the camera not update?
+            print(
+                f"    servo {label}: tip px {np.round(d.px, 1).tolist()} err {np.linalg.norm(err):.1f} px -> "
+                f"commanded {np.round(dxy * 1000).astype(int).tolist()} um, arm moved "
+                f"{np.round(moved[:2] * 1000).astype(int).tolist()} um"
+            )
         raise CalibrationFailedError(f"Servo did not converge ({label}).")
 
 
@@ -223,49 +235,77 @@ def stage_home_and_background(s: Session, home) -> None:
     )
 
 
-def stage_find_tip(s: Session, home) -> dict:
-    s.display.phase = "2/5 find the tip"
-    q_touch = np.asarray(s.limits.touch_nominal_joints, dtype=float)
-    rot = s.kin.tip(q_touch)[:3, :3]
-    centre_xy = s.calib.pixel_to_xy([s.fov_centre])[0]
-    z_search = s.calib.surface_z_mm + SEARCH_HOVER_MM
-    q_hover = s.kin.ik(make_transform(rot, [*centre_xy, z_search]), q_touch)
-    if q_hover is None:
-        raise CalibrationFailedError("No IK for the search hover pose.")
-    s.display.message = f"moving to {SEARCH_HOVER_MM} mm above the field centre"
-    run_joint_path(s.meca, s.planner.plan_transit(s.q(), q_hover, retreat=False), s.display)
-
-    # Find the DISH first: after a pipette change the model's tip can be millimetres off in
-    # height as well as sideways, and far above the dish the tip is too blurred to detect. The
-    # tip may touch outside the view - that is fine, the dish extends well beyond it.
-    s.display.message = "finding the dish: descending until the sensor feels it"
-    r = s.touch(s.calib.surface_z_mm - MAX_OVERTRAVEL_MM - SEARCH_HOVER_MM / 2, FIRST_DESCENT_MM_S)
-    z_dish = r["tip_z"]
-    print(f"Dish found: model tip z {z_dish:.3f} (old calibrated dish {s.calib.surface_z_mm:.3f}).")
-
-    # Just above the dish the tip is nearly in focus: look for it, spiral-searching sideways.
-    s.shift(0, 0, FIND_HOVER_MM, "lift to search height")
-    s.display.message = "looking for the tip"
+def spiral_search(s: Session, rot, label: str):
+    """Look for the tip here, then on rings 1-3 x SEARCH_STEP_MM around here, at this height.
+    Returns the detection (the arm stays where it saw the tip) or None (arm back at the start)."""
+    base = s.tip()[:3, 3].copy()
     d = s.detect()
     offsets = [
         (SEARCH_STEP_MM * r * np.cos(a), SEARCH_STEP_MM * r * np.sin(a))
         for r in (1, 2, 3)
         for a in np.radians(np.arange(0, 360, {1: 60, 2: 30, 3: 20}[r]))
     ]
-    base = s.tip()[:3, 3].copy()
     for off in offsets:
         if d is not None:
-            break
-        s.display.message = f"tip not in view - searching ({off[0]:+.1f}, {off[1]:+.1f}) mm"
-        s.move_tip(base + [off[0], off[1], 0.0], rot, "search move")
+            return d
+        s.display.message = f"{label}: tip not in view - searching ({off[0]:+.1f}, {off[1]:+.1f}) mm"
+        try:
+            s.move_tip(base + [off[0], off[1], 0.0], rot, "search move")
+        except CalibrationFailedError as e:
+            print(f"  search offset ({off[0]:+.1f}, {off[1]:+.1f}) skipped: {e}")
+            continue
         d = s.detect()
     if d is None:
-        raise CalibrationFailedError("Could not find the tip anywhere near the field of view.")
-    print(f"Tip found at px {np.round(d.px, 1).tolist()} (score {d.score:.2f}).")
+        s.move_tip(base, rot, "back to the search start")
+    return d
 
-    s.servo(s.fov_centre, "centring")
-    s.display.message = "first touch at the field centre"
-    r = s.touch(z_dish - MAX_OVERTRAVEL_MM, DESCENT_MM_S)
+
+def stage_find_tip(s: Session, home) -> dict:
+    """Find the tip FROM ABOVE and descend onto the dish in view; blind descent only as a fallback.
+
+    The user wants to watch the first descent, so the tip is looked for at SEARCH_HOVER_MM and
+    then at LOW_SEARCH_HOVER_MM (it is blurred up there, but often still detectable), centred, and
+    only then lowered. If it cannot be seen even at the lower height, fall back to finding the
+    dish blind by force and searching just above it (where the tip is nearly in focus).
+    """
+    s.display.phase = "2/5 find the tip"
+    q_touch = np.asarray(s.limits.touch_nominal_joints, dtype=float)
+    rot = s.kin.tip(q_touch)[:3, :3]
+    centre_xy = s.calib.pixel_to_xy([s.fov_centre])[0]
+    z_old = s.calib.surface_z_mm
+    q_hover = s.kin.ik(make_transform(rot, [*centre_xy, z_old + SEARCH_HOVER_MM]), q_touch)
+    if q_hover is None:
+        raise CalibrationFailedError("No IK for the search hover pose.")
+    s.display.message = f"moving to {SEARCH_HOVER_MM} mm above the field centre"
+    run_joint_path(s.meca, s.planner.plan_transit(s.q(), q_hover, retreat=False), s.display)
+
+    d = None
+    for hover in (SEARCH_HOVER_MM, LOW_SEARCH_HOVER_MM):
+        t = s.tip()
+        s.move_tip([t[0, 3], t[1, 3], z_old + hover], rot, f"to {hover} mm search height")
+        s.display.message = f"looking for the tip from {hover} mm up"
+        d = spiral_search(s, rot, f"{hover} mm up")
+        if d is not None:
+            print(f"Tip found from {hover} mm up at px {np.round(d.px, 1).tolist()} (score {d.score:.2f}).")
+            break
+
+    if d is not None:
+        s.servo(s.fov_centre, "centring")
+        s.display.message = "descending in view until the sensor feels the dish"
+        # The tip model may be wrong by mm in height, so allow for it below the old dish.
+        r = s.touch(z_old - MAX_OVERTRAVEL_MM - LOW_SEARCH_HOVER_MM, FIRST_DESCENT_MM_S)
+    else:
+        print("Tip not visible from above - falling back to finding the dish blind.")
+        s.display.message = "tip not visible from above: finding the dish by force first"
+        r = s.touch(z_old - MAX_OVERTRAVEL_MM - SEARCH_HOVER_MM / 2, FIRST_DESCENT_MM_S)
+        s.shift(0, 0, FIND_HOVER_MM, "lift to search height")
+        d = spiral_search(s, rot, "just above the dish")
+        if d is None:
+            raise CalibrationFailedError("Could not find the tip anywhere near the field of view.")
+        print(f"Tip found just above the dish at px {np.round(d.px, 1).tolist()} (score {d.score:.2f}).")
+        s.servo(s.fov_centre, "centring")
+        r = s.touch(r["tip_z"] - MAX_OVERTRAVEL_MM, DESCENT_MM_S)
+    print(f"Dish found: model tip z {r['tip_z']:.3f} (old calibrated dish {z_old:.3f}).")
     d = s.detect()
     if d is None:
         raise CalibrationFailedError("Tip not detected at contact.")
@@ -303,7 +343,7 @@ def stage_tip_calibration(s: Session, first: dict) -> np.ndarray:
             s.move_tip([t[0, 3], t[1, 3], z_safe], t[:3, :3], "lift before rotating")
             s.move_tip([ref_xy[0], ref_xy[1], z_safe], rot, f"rotate {i + 1}")
             s.move_tip([ref_xy[0], ref_xy[1], z_hover], rot, "down to hover")
-            s.servo(ref_px, f"orientation {i + 1}", tol_px=2 * SERVO_TOL_PX)
+            s.servo(ref_px, f"orientation {i + 1}")
             # The tip model is the unknown here, so each orientation's dish height in the model
             # can differ by a mm or two - the over-travel floor allows for it.
             s.touch(z_dish - MAX_OVERTRAVEL_MM, DESCENT_MM_S)

@@ -13,7 +13,7 @@ microscope feed:
 | Stage | What happens |
 |---|---|
 | 1. Home + background | Drives home and grabs a background image with the tip out of view |
-| 2. Find the tip | Hovers 6 mm over the field-of-view centre, then descends until the force sensor feels the dish (the tip may touch outside the view). Lifts 0.5 mm, finds the tip in the image (spiral-searching sideways if it's out of view), steers it to the centre, and touches. |
+| 2. Find the tip | Hovers 6 mm over the field-of-view centre and looks for the tip (spiral-searching sideways if needed; then again from 3 mm). Once seen it centres it and **descends in view** until the force sensor feels the dish. Only if the tip cannot be seen from above does it find the dish blind first and search just above it. |
 | 3. Tip calibration | At up to 9 wrist orientations (tilts and twists of 7–12°, skipping any the collision model forbids), steers the tip back over the same image point and touches. A pivot fit gives the true tip, which is saved and the tool model re-imported. |
 | 4. Scope calibration | Touches about 12 points over the visible field, detects the tip at each, and fits the pixel ↔ position map. The old file is backed up. |
 | 5. Verify | Touches 3 fresh points and reports how far the tip lands from where the new calibration predicts. Then returns home. |
