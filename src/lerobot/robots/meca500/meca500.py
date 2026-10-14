@@ -352,6 +352,9 @@ class Meca500(Robot):
                     self.robot.ClearMotion()
                     self.robot.WaitMotionCleared(timeout=5)
                     self.robot.ResumeMotion()
+                    # ResumeMotion is asynchronous: wait for it, or WaitIdle sees a still-paused arm
+                    # ("Robot motion is paused. Calling WaitIdle may block indefinitely").
+                    self.robot.WaitMotionResumed(timeout=5)
                     self.robot.WaitIdle(timeout=5)
                     if self.config.deactivate_on_disconnect:
                         self.robot.DeactivateRobot()

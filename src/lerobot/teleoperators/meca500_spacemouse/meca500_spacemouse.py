@@ -284,6 +284,9 @@ class Meca500Spacemouse(Teleoperator):
                 self.robot.ClearMotion()  # stops the arm and empties the queue (pauses)
                 self.robot.WaitMotionCleared(timeout=5)
                 self.robot.ResumeMotion()  # empty queue -> resumes straight into idle
+                # ResumeMotion is asynchronous: wait for it, or WaitIdle sees a still-paused arm
+                # ("Robot motion is paused. Calling WaitIdle may block indefinitely").
+                self.robot.WaitMotionResumed(timeout=5)
                 self.robot.WaitIdle(timeout=5)
             except Exception as e:
                 logger.warning(f"Meca500 graceful stop failed, disconnecting anyway: {e}")

@@ -81,8 +81,9 @@ def report(t_meas, bench) -> float:
         f"along axis {t_meas[2]:.2f} vs CAD {t_cad[2]:.2f} mm"
     )
     if abs(r_meas - r_cad) > 2 or abs(t_meas[2] - t_cad[2]) > 2:
-        print("  !! the CAD tool geometry disagrees with the arm by > 2 mm, not just its angle -")
-        print("     check the pipette length / holder in the CAD before trusting the collision model.")
+        print("  note: the tip differs from the CAD by > 2 mm. Expected after a pipette change or knock")
+        print("        (the measured tip is what gets saved and used). For the ORIGINAL pipette it would")
+        print("        mean the CAD holder/pipette geometry is wrong.")
     return float(total)
 
 
