@@ -425,3 +425,49 @@ def test_tip_detection_reports_nothing_without_a_pipette():
 
     _, bg = _microscope_frames()
     assert detect_tip(bg, bg) is None
+
+
+# ----------------------------------------------------------------------------- contact sensing
+
+
+def test_contact_rule_uses_torque_and_backstops():
+    from lerobot.robots.meca500.autocollect.contact import ContactThresholds, evaluate
+
+    th = ContactThresholds(torque_mnm=0.3, force_limit_n=0.05, torque_limit_mnm=3.0)
+    base = np.zeros(6)
+    quiet = np.array([0.01, -0.01, 0.005, 1e-4, -1e-4, 0.0])  # noise-level drift
+    assert not evaluate(quiet, base, th).contact
+    touch = np.array([0.0, 0.0, 0.0, 0.0, 4e-4, 0.0])  # 0.4 mNm step: a light touch
+    r = evaluate(touch, base, th)
+    assert r.contact and r.reason == "torque"
+    shove = np.array([0.0, 0.0, -0.08, 0.0, 0.0, 0.0])  # force over the 0.05 N backstop
+    assert evaluate(shove, base, th).reason == "force limit"
+
+
+def test_wrench_stream_dedupes_and_detector_sees_a_step():
+    import time as _time
+    from types import SimpleNamespace
+
+    from lerobot.robots.meca500.autocollect.contact import ContactDetector, WrenchStream
+
+    state = {"t": [0.0, 0.0, 0.0], "n": 0}
+
+    class FakeSensor:
+        def read_frame(self):
+            state["n"] += 1
+            return SimpleNamespace(force=[0.0, 0.0, 0.0], torque=list(state["t"]))  # repeats until changed
+
+    stream = WrenchStream(FakeSensor())
+    try:
+        _time.sleep(0.2)
+        assert len(stream.window(1.0)) <= 2  # identical frames are dropped
+        det = ContactDetector(stream)
+        state["t"] = [0.0, 1e-5, 0.0]
+        _time.sleep(0.05)
+        det.capture_baseline(0.5)
+        assert not det.check().contact
+        state["t"] = [0.0, 1e-3, 0.0]  # 1 mNm step
+        _time.sleep(0.25)
+        assert det.check().contact
+    finally:
+        stream.stop()

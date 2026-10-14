@@ -9,7 +9,7 @@ manually that takes about 35 min of careful jogging and clicking.
 | Block | How | Status |
 |---|---|---|
 | **Find the tip in the image** | Background subtraction: a frame with the pipette backed out of view, minus a frame with it in view, gives the pipette as the only change. The tip is the end of that blob furthest from where it enters the illuminated circle. `src/lerobot/robots/meca500/autocollect/tip_detect.py` | **Done.** Correct on the last frame of 12/12 of Huanyu's Basler episodes, despite clutter and a sticker beside the tip. 4 synthetic tests. Not yet seen the *new* pipette. |
-| **Detect the touch** | Bota F/T sensor between flange and pipette: tare, then stop a slow guarded descent when \|ΔF\| exceeds a threshold set from the measured noise. | Probe script `scripts/meca500/bota_probe.py` written. **Needs a probe run** (sensor model, port, noise, contact size). |
+| **Detect the touch** | Bota F/T sensor between flange and pipette: tare, then stop a slow guarded descent when \|ΔF\| exceeds a threshold set from the measured noise. | Probe run done: force is buried in noise (0.005-0.009 N smoothed, drifting), but **torque** shows clean 0.3-1 mNm touch steps (the tip's ~125 mm lever) with ~0.05-0.1 mNm noise. `autocollect/contact.py` detects contact as a 0.3 mNm smoothed torque change (0.05 N force backstop). Test on the arm: `auto_touch_test.py`. |
 | **Guarded descent** | Control mode. Creep down at about 0.2 mm/s (velocity command, or short `MoveJoints` steps from IK along -z) while reading the sensor at about 500 Hz. Stop on contact, then record joints. Abort if travel exceeds about 2 mm below the expected dish or force exceeds a hard limit. | To do |
 | **Background frame** | Back the pipette 20 mm out along its own axis (larger than the 5.5 × 8.3 mm field), so the tip and shank leave the view. | To do |
 
@@ -46,4 +46,4 @@ automatic version of `check_tip.py`.
 ## Open questions for the user
 1. ~~Which Bota sensor?~~ Answered: MiniONE Pro on Huanyu's setup (MiniONE on the original). Both configs are
    in `src/lerobot/robots/meca500/bota/`, chosen per rig by `rigs.py`.
-2. The maximum acceptable contact force for the glass pipette (suggested stop at 0.05–0.1 N).
+2. ~~Force limit~~ Answered: 0.05 N hard backstop (the torque trigger fires at ~2-3 mN).

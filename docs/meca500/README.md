@@ -19,4 +19,5 @@ date they were written.
 |---|---|---|
 | [`2026-10-14_scope-calibration-and-first-hover-run.md`](instructions/2026-10-14_scope-calibration-and-first-hover-run.md) | Huanyu's setup | Done: hover run recorded 3 episodes, but the arm went limp on disconnect and bent the pipette (fixed) |
 | [`2026-10-14_after-pipette-crash-recalibrate.md`](instructions/2026-10-14_after-pipette-crash-recalibrate.md) | Huanyu's setup | Step 1 (moved) and Part A done (tip 0.065 mm rms, imported); **Part B next** |
-| [`2026-10-14_bota-force-probe.md`](instructions/2026-10-14_bota-force-probe.md) | Huanyu's setup | **To do** (any time; ~10 min) |
+| [`2026-10-14_bota-force-probe.md`](instructions/2026-10-14_bota-force-probe.md) | Huanyu's setup | Done: torque, not force, sees a touch (0.3-1 mNm steps; force buried in noise) |
+| [`2026-10-14_auto-touch-test.md`](instructions/2026-10-14_auto-touch-test.md) | Huanyu's setup | **To do** (after the scope recalibration) |
