@@ -16,4 +16,5 @@ date they were written.
 
 | File | Bench | Status |
 |---|---|---|
-| [`2026-10-14_scope-calibration-and-first-hover-run.md`](instructions/2026-10-14_scope-calibration-and-first-hover-run.md) | Huanyu's setup | Parts A + B done (calibration 3.07 px / 40 um; dry run 100/100 with the accurate CAD); **Part C ready** |
+| [`2026-10-14_scope-calibration-and-first-hover-run.md`](instructions/2026-10-14_scope-calibration-and-first-hover-run.md) | Huanyu's setup | Done: hover run recorded 3 episodes, but the arm went limp on disconnect and bent the pipette (fixed) |
+| [`2026-10-14_after-pipette-crash-recalibrate.md`](instructions/2026-10-14_after-pipette-crash-recalibrate.md) | Huanyu's setup | **To do** |
