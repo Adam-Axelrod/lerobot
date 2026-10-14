@@ -67,7 +67,7 @@ RIG = "meca500_basler"
 USER = "AdamAxelrod"
 NAME = "basler_auto_2026-10"  # one dataset per rig and target style - never mix
 TASK = "move_pipette_to_target"
-NUM_EPISODES = 50
+NUM_EPISODES = 3
 RESUME = False  # append to an existing local dataset of the same NAME
 PUSH_TO_HUB = False
 DISPLAY_DATA = True
@@ -114,6 +114,36 @@ def build_planner(bench: BenchConfig) -> Planner:
     elif STAGE != "touch":
         sys.exit(f"STAGE must be 'hover' or 'touch', not {STAGE!r}")
     return Planner(kin, bench.collision_checker(kin), calib, limits)
+
+
+def make_ready(meca) -> None:
+    """Clear errors, stale queued moves and a resettable safety stop, then check motion runs.
+
+    Closing teleop with Ctrl-C drops its control connection, and the Meca500 answers that
+    with a "control connection dropped" safety stop that PAUSES motion until it is resumed.
+    Meca500.connect() only clears errors, so without this every MoveJoints is queued behind
+    the pause: the arm never moves, the per-step clamp fires on every frame (the controller's
+    target never leaves the start pose), and WaitIdle blocks. ResumeMotion() resets the
+    resettable stops on firmware >= 10.1 and un-pauses.
+    """
+    status = meca.GetStatusRobot()
+    if status.error_status:
+        logging.warning(f"Robot in error ({status.error_code}: {status.error_msg}); resetting.")
+        meca.ResetError()
+        meca.WaitErrorReset(timeout=10)
+    meca.ClearMotion()  # nothing stale from a previous session may execute
+    meca.ResumeMotion()
+    with contextlib.suppress(Exception):  # the status check below is what decides
+        meca.WaitMotionResumed(timeout=5)
+    status = meca.GetStatusRobot()
+    if status.pause_motion_status or status.error_status:
+        safety = meca.GetSafetyStatus()
+        raise RuntimeError(
+            "The Meca500 is still paused/in error after ResumeMotion - an e-stop or a safety stop "
+            f"that cannot be reset remotely is active (stop mask {safety.stop_mask}, resettable "
+            f"{safety.stop_resettable_mask}). Release any e-stop, check the web portal, then rerun."
+        )
+    logging.info("Robot ready: no error, motion resumed, queue empty.")
 
 
 def wait_settled(robot, target, timeout_s: float) -> np.ndarray:
@@ -190,7 +220,18 @@ def main() -> None:
         sanity_check_dataset_robot_compatibility(dataset, robot, fps, features)
     else:
         if root.exists():
-            sys.exit(f"{root} already exists. Set RESUME = True to append, or choose a new NAME.")
+            info = root / "meta" / "info.json"
+            n_saved = (
+                json.loads(info.read_text(encoding="utf-8")).get("total_episodes", 0) if info.exists() else 0
+            )
+            if n_saved:
+                sys.exit(
+                    f"{root} already holds {n_saved} episodes. Set RESUME = True to append, or choose a new NAME."
+                )
+            # Left by a run that failed before saving anything (e.g. the arm was paused):
+            # nothing to lose, and refusing would force a manual delete before every retry.
+            logging.warning(f"Removing {root}: left by an earlier run with 0 saved episodes.")
+            shutil.rmtree(root)
         sanity_check_dataset_name(repo_id, None)
         dataset = LeRobotDataset.create(
             repo_id, fps, robot_type=robot.name, features=features, use_videos=True, image_writer_threads=4
@@ -206,6 +247,7 @@ def main() -> None:
     teleop.connect()
     listener, events = init_keyboard_listener()
     try:
+        make_ready(robot.robot)
         q_now = np.array(robot.robot.GetRtJointPos())
         retreat = False  # the first move starts from wherever the arm was left, not the dish
         with VideoEncodingManager(dataset):
