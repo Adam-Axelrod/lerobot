@@ -12,25 +12,23 @@ light touch. Background: [`../autocalibration_plan.md`](../autocalibration_plan.
    suggestion is to stop at **0.05–0.1 N**.
 
 ## The probe run
-The probe only reads the sensor; it never talks to the arm, so it runs alongside teleop.
+One script does everything: SpaceMouse jogging (as in teleop; **Enter** toggles fine mode), the
+microscope feed, and the live force in the window title. **Close teleop and the web portal
+first**, since the probe drives the arm itself.
 
-1. Terminal 1, teleop as usual:
-   ```powershell
-   .venv\Scripts\python.exe scripts\meca500\teleoperate_microscope.py
-   ```
-2. Jog the tip to just above the dish (in view, about 1 mm up), and **let go of the
-   SpaceMouse**.
-3. Terminal 2, the probe:
+1. Run it:
    ```powershell
    .venv\Scripts\python.exe scripts\meca500\bota_probe.py
    ```
-   It tares the sensor, then prints live forces.
-4. **Don't touch anything for the first 5 s** (the screen shows `BASELINE`); that measures the
-   noise.
-5. Then, in fine mode, lower the tip until it **just touches** the dish, hold about 2 s, and lift
-   off. Do this **3 times**, as lightly as you can.
-6. Press **Ctrl-C** in the probe terminal.
-7. **Send Claude** the summary lines (frame rate, baseline noise, peak |dF|). The raw samples are
+   It connects to the arm and camera, then tares the sensor.
+2. **Hands off for the first 5 s.** The title shows `BASELINE ... hands off`; this measures the
+   noise. If you bump something, click the window and press **t** to re-tare and restart the
+   baseline.
+3. When the title says *touch the dish lightly*, jog the tip down in fine mode until it **just
+   touches** the dish, hold about 2 s, and lift off. Watch `|F|` in the title rise. Do this
+   **3 times**, as lightly as you can.
+4. Press **q** (or close the window).
+5. **Send Claude** the summary lines (frame rate, baseline noise, peak |dF|). The raw samples are
    saved to `outputs\bota_probe.npy`; Claude may ask for that file.
 
 ### If something goes wrong
