@@ -13,7 +13,7 @@ microscope feed:
 | Stage | What happens |
 |---|---|
 | 1. Home + background | Drives home and grabs a background image with the tip out of view |
-| 2. Find the tip | Hovers 6 mm over the field-of-view centre and looks for the tip (spiral-searching sideways if needed; then again from 3 mm). Once seen it centres it and **descends in view** until the force sensor feels the dish. Only if the tip cannot be seen from above does it find the dish blind first and search just above it. |
+| 2. Find the tip | Hovers 6 mm over the field-of-view centre and looks for the tip (spiral-searching sideways if needed; then again from 3 mm). Once seen it centres it and **descends in view** until it touches the dish (see *How it senses contact* below). Only if the tip cannot be seen from above does it find the dish blind first and search just above it. |
 | 3. Tip calibration | At up to 9 wrist orientations (tilts and twists of 7–12°, skipping any the collision model forbids), steers the tip back over the same image point and touches. A pivot fit gives the true tip, which is saved and the tool model re-imported. |
 | 4. Scope calibration | Touches about 12 points over the visible field, detects the tip at each, and fits the pixel ↔ position map. The old file is backed up. |
 | 5. Verify | Touches 3 fresh points and reports how far the tip lands from where the new calibration predicts. Then returns home. |
@@ -24,11 +24,21 @@ microscope feed:
 | Magenta **x** | Where the camera detects the tip |
 | Yellow **+** | The current target |
 | Cyan **+** | Where the new calibration predicts the tip (verify stage) |
-| Green dots | Points collected so far |
+| Green circles | Touches recorded so far: where the tip touched down, one per touch. In stage 3 they should all sit on the same spot; in stage 4 they spread over the field |
 | Green / red banner | Contact sensing (NO CONTACT / CONTACT), with the torque bar under it |
 | Black strip at the bottom | What it's doing right now |
 
-The window title shows the stage (`1/5` … `5/5`). Press **q** in the window (or close it) to
+The window title shows the stage (`1/5` … `5/5`) with a one-line description of it, plus a
+legend for the markers.
+
+## How it senses contact
+The pipette meets the dish at a shallow angle, so the instant it touches it starts **sliding
+forward** along the dish. On the arm the torque only crossed its threshold after a millimetre or
+more of sliding. So the camera watches for the slide: while descending, the tip barely moves in
+the image; once touching it moves forward about 100 px per mm of descent. The script fits that
+"flat, then rising" shape and takes the touch-down point, both the pixel and the arm pose, from
+the bend, not from where the tip ended up. The torque threshold is kept as a backstop. The
+terminal says which one fired: `contact (vision: tip started sliding)` or `contact (torque)`. Press **q** in the window (or close it) to
 abort: the arm stops and holds its pose, and nothing further is saved.
 
 ## Steps
@@ -54,8 +64,8 @@ abort: the arm stops and holds its pose, and nothing further is saved.
 - a scope fit of about 3 px or less;
 - verify errors within a few px.
 
-In the offline simulation (`sim_auto_calibrate.py`) it recovered a tip that was 3.3 mm off to
-within 0.07 mm, with verify errors under 1 px. Real images and touches will be noisier.
+In the offline simulation (`sim_auto_calibrate.py`), with the tip sliding on contact, it
+recovered a tip that was 3.3 mm off to within 0.02 mm, with verify errors under 1 px. Real images and touches will be noisier.
 
 ## If something goes wrong
 | Message | What it means / what to do |

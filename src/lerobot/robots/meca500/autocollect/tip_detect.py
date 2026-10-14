@@ -50,7 +50,7 @@ def detect_tip(
     background: np.ndarray,
     diff_thresh: float = 25.0,
     min_area: int = 150,
-    min_tip_inset_px: float = 12.0,
+    min_tip_inset_px: float = 5.0,
     max_shank_inset_px: float = 30.0,
 ) -> TipDetection | None:
     """Tip of the pipette in ``frame`` (RGB uint8), given a ``background`` frame without it."""

@@ -66,7 +66,7 @@ class Display:
         dt = f"dT {r.d_torque_mnm:.2f} mNm  dF {r.d_force_n:.3f} N" if r is not None else ""
         self.view.show(
             frame,
-            title=f"{self.title}  [{self.phase}]  q = abort\n{dt}",
+            title=f"{self.title}  [{self.phase}]  q = abort\n{dt}   |   x detected tip   + target   o recorded touches",
             points=[*self.marks, *self.overlays.values()],
         )
         return self.last_frame
@@ -121,12 +121,22 @@ def make_ready(meca) -> None:
         raise RuntimeError("Arm still paused after ResumeMotion - check the e-stop and the web portal.")
 
 
-def guarded_descent(meca, kin, detector, display: Display, floor_z: float, speed_mm_s: float) -> dict:
+def guarded_descent(
+    meca, kin, detector, display: Display, floor_z: float, speed_mm_s: float, vision=None
+) -> dict:
     """Creep straight down until contact or until the tip reaches ``floor_z`` (an over-travel
     limit). Pure translation, so the tool's gravity torque is constant and any change is
-    contact. Leaves the arm stopped; returns {contact, reason, d_torque_mnm, d_force_n, tip_z, q}."""
+    contact. Leaves the arm stopped; returns {contact, reason, d_torque_mnm, d_force_n, tip_z, q}
+    plus, with ``vision``, ``px`` and ``q_touch``: the pixel and joints at touch-down.
+
+    ``vision`` (optional) has reset(), check(frame, q) -> (contact, px_or_None) and a
+    ``touchdown`` (px, q) of the last frame before the tip began to slide. On the arm the
+    shallow pipette slides forward along the dish the moment it touches, long before the torque
+    crosses its threshold (a millimetre or more on 2026-10-14) - the camera sees that slide first."""
     display.sleep(0.5)  # let vibrations die before the baseline
     detector.capture_baseline(0.5)
+    if vision is not None:
+        vision.reset()
     result: dict = {}
     try:
         while True:
@@ -145,10 +155,26 @@ def guarded_descent(meca, kin, detector, display: Display, floor_z: float, speed
                 result = {"contact": False, "reason": "over-travel limit, no contact"}
                 break
             display.update()  # also paces the loop and checks the abort key
+            if vision is not None:
+                hit, px = vision.check(display.last_frame, q)
+                if hit:
+                    result = {
+                        "contact": True,
+                        "reason": "vision: tip started sliding",
+                        "d_torque_mnm": reading.d_torque_mnm,
+                        "d_force_n": reading.d_force_n,
+                        "px": px,
+                    }
+                    break
     finally:
         meca.MoveLinVelWrf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     wait_idle(meca, display, 5)
     q = np.array(meca.GetRtJointPos())
     result["q"] = q
     result["tip_z"] = float(kin.tip(q)[2, 3])
+    # The arm only stops after contact is sensed, by which time the tip has slid along the dish
+    # and the flange has gone on down. Where it TOUCHED is the last frame before the slide.
+    if result.get("contact") and vision is not None and vision.touchdown is not None:
+        result["px"], result["q_touch"] = vision.touchdown
+        result["tip_z"] = float(kin.tip(result["q_touch"])[2, 3])
     return result

@@ -33,6 +33,7 @@ import shutil
 import sys
 import time
 from dataclasses import replace
+from types import SimpleNamespace
 
 import numpy as np
 from arm_session import AbortedError, Display, guarded_descent, make_ready, run_joint_path, wait_idle
@@ -73,6 +74,14 @@ TRANSIT_SPEED_DEG_S = 10.0
 # this is what actually sets the speed of every move (the first arm run used the 25 deg/s
 # default and the move from home was uncomfortably fast).
 JOINT_VEL_DEG_S = 8.0
+# Contact by vision: the tip sliding forward along the dish (see SlideDetector).
+SLIDE_THRESH_PX = 6.0  # forward travel past the hinge before calling contact (~0.08 mm)
+SLIDE_CONFIRM = 3  # frames past the hinge
+SLIDE_MIN_RATE = 0.5  # fraction of the geometric slide rate a real slide must reach
+SLIDE_HISTORY = 60  # frames kept for the hinge fit
+# Only confident (in- or near-focus) detections count: far above the dish the blurred tip's
+# detected end wanders by more than the threshold (score ~0.06).
+SLIDE_MIN_SCORE = 0.3
 MAX_SERVO_STEP_MM = 1.0  # cap each visual-servo move; a blocked step is retried at half size
 DEBUG_DIR_ROOT = "outputs/auto_calibrate"  # background + every detection, per run
 CART_SPEED_MM_S = 2.0
@@ -83,6 +92,98 @@ TITLE = "auto_calibrate"
 
 class CalibrationFailedError(RuntimeError):
     pass
+
+
+class SlideDetector:
+    """Contact = the tip starting to slide FORWARD along the dish, seen in the image.
+
+    Descending straight down, the tip's image position barely moves; coming into focus shifts its
+    detected end a little (the blurred end fades below the threshold), at a few px per mm. Once it
+    touches, the shallow pipette slides forward along the dish at the geometric rate
+    1 / (tan(elevation) * mm_per_px) - about 100 px per mm of descent here. So the tip's position
+    along the pipette, against the descent, is a HINGE: flat, then rising at that rate. Fit the
+    hinge to the recent frames; contact once the rising part is fast enough and has travelled
+    SLIDE_THRESH_PX. The touch-down is the hinge point itself - pixel and joints - not the last
+    frame, which is the tip after sliding and the flange after going on down.
+    """
+
+    def __init__(self, background, kin, lin):
+        self.background, self.kin = background, kin
+        self.mm_per_px = float(np.sqrt(abs(np.linalg.det(lin))))
+        self.reset()
+
+    def reset(self) -> None:
+        self.hist = []  # (z, s, px, q)
+        self.axis = None
+        self.k_exp = None
+        self.fit = None
+
+    def check(self, frame, q):
+        d = detect_tip(frame, self.background)
+        if d is None or d.score < SLIDE_MIN_SCORE:
+            return False, None
+        q = np.asarray(q, float)
+        tip = self.kin.tip(q)
+        if self.axis is None:
+            # Project on a FIXED axis: the per-frame axis wobbles, and a 1 deg wobble moves the
+            # projection of a pixel ~350 px from the origin by ~6 px.
+            self.axis = np.asarray(d.axis)
+            elev = np.arcsin(np.clip(-tip[2, 2], np.sin(np.radians(5)), 1.0))
+            self.k_exp = 1.0 / (np.tan(elev) * self.mm_per_px)  # px per mm of descent
+        px = np.asarray(d.px)
+        self.hist.append((float(tip[2, 3]), float(px @ self.axis), px, q))
+        del self.hist[:-SLIDE_HISTORY]
+        self.fit = self._hinge()
+        if self.fit is not None:
+            z_t, k, n_post = self.fit
+            rise = k * (z_t - self.hist[-1][0])
+            if k >= SLIDE_MIN_RATE * self.k_exp and rise >= SLIDE_THRESH_PX and n_post >= SLIDE_CONFIRM:
+                return True, self.touchdown[0]
+        return False, None
+
+    def _hinge(self):
+        """Best (z_touch, slope px/mm, frames after) of s = a + k * max(z_t - z, 0), or None."""
+        if len(self.hist) < 3 + SLIDE_CONFIRM:
+            return None
+        z = np.array([h[0] for h in self.hist])
+        s = np.array([h[1] for h in self.hist])
+        best = None
+        for j in range(2, len(z) - SLIDE_CONFIRM):  # frames 0..j flat, j+1.. sliding
+            a_mat = np.stack([np.ones_like(z), np.maximum(z[j] - z, 0.0)], axis=1)
+            coef, *_ = np.linalg.lstsq(a_mat, s, rcond=None)
+            sse = float(np.sum((a_mat @ coef - s) ** 2))
+            if coef[1] > 0 and (best is None or sse < best[0]):
+                best = (sse, j, coef)
+        if best is None:
+            return None
+        _, j, (a, k) = best
+        # Refine between frames: where the sliding line meets the flat level.
+        post = slice(j + 1, None)
+        if len(z[post]) >= 2:
+            k2, b2 = np.polyfit(-z[post], s[post], 1)
+            if k2 > 0:
+                level = float(np.median(s[max(0, j - 4) : j + 1]))
+                z_t = -(level - b2) / k2
+                if z[j + 1] <= z_t <= z[max(0, j - 1)]:
+                    return z_t, float(k2), len(z) - j - 1
+        return float(z[j]), float(k), len(z) - j - 1
+
+    @property
+    def touchdown(self):
+        """(px, q) at touch-down: the hinge if there is a slide, else the newest frame."""
+        if not self.hist:
+            return None
+        if self.fit is None or self.fit[1] < SLIDE_MIN_RATE * self.k_exp:
+            return self.hist[-1][2], self.hist[-1][3]
+        z_t = self.fit[0]
+        z = np.array([h[0] for h in self.hist])
+        flat = [h for h in self.hist if h[0] >= z_t]
+        px = np.median([h[2] for h in flat[-3:]], axis=0) if flat else self.hist[0][2]
+        # joints at z_t: interpolate (a pure vertical translation, so joints vary smoothly)
+        qs = np.array([h[3] for h in self.hist])
+        order = np.argsort(z)
+        q = np.array([np.interp(z_t, z[order], qs[order, i]) for i in range(qs.shape[1])])
+        return px, q
 
 
 class Session:
@@ -131,10 +232,25 @@ class Session:
         self.move_tip(t[:3, 3] + [dx, dy, dz], t[:3, :3], label)
 
     def touch(self, floor_z: float, speed: float) -> dict:
-        r = guarded_descent(self.meca, self.kin, self.detector, self.display, floor_z, speed)
+        vision = SlideDetector(self.background, self.kin, self.lin) if self.background is not None else None
+        r = guarded_descent(self.meca, self.kin, self.detector, self.display, floor_z, speed, vision)
         if not r["contact"]:
             raise CalibrationFailedError(f"No contact before the over-travel limit (tip z {r['tip_z']:.2f}).")
+        print(f"      contact ({r['reason']}) at model tip z {r['tip_z']:.3f}")
         return r
+
+    def contact_px(self, r: dict):
+        """The touch-down pixel: the slide detector's (pre-slide) pixel, else a fresh detection."""
+        if r.get("px") is not None:
+            px = np.asarray(r["px"], dtype=float)
+            self.display.overlays["detected"] = (px[0], px[1], "magenta", "x")
+            return px
+        d = self.detect()
+        return None if d is None else np.asarray(d.px)
+
+    def contact_q(self, r: dict) -> np.ndarray:
+        """Joints at touch-down (before the slide and the stopping distance), else where it stopped."""
+        return r["q_touch"] if r.get("q_touch") is not None else r["q"]
 
     # ---------------------------------------------------------------- vision
     def detect(self, frames: int = 3):
@@ -325,16 +441,17 @@ def stage_find_tip(s: Session, home) -> dict:
         s.servo(s.fov_centre, "centring", best_effort=True)
         r = s.touch(r["tip_z"] - MAX_OVERTRAVEL_MM, DESCENT_MM_S)
     print(f"Dish found: model tip z {r['tip_z']:.3f} (old calibrated dish {z_old:.3f}).")
-    d = s.detect()
-    if d is None:
+    px = s.contact_px(r)
+    if px is None:
         raise CalibrationFailedError("Tip not detected at contact.")
-    xy = s.tip()[:2, 3].copy()
+    s.display.marks.append((px[0], px[1], "lime", "o"))
+    xy = s.tip(s.contact_q(r))[:2, 3].copy()
     s.shift(0, 0, HOVER_MM, "lift")
-    return {"z_dish": r["tip_z"], "px": d.px, "rot": rot, "xy": xy}
+    return {"z_dish": r["tip_z"], "px": px, "rot": rot, "xy": xy}
 
 
 def stage_tip_calibration(s: Session, first: dict) -> np.ndarray:
-    s.display.phase = "3/5 tip calibration"
+    s.display.phase = "3/5 tip calibration (same spot, different wrist angles)"
     ref_px = np.asarray(first["px"])
     rot0 = first["rot"]
     pip = rot0[:, 2]
@@ -356,7 +473,7 @@ def stage_tip_calibration(s: Session, first: dict) -> np.ndarray:
     z_safe, z_hover = z_dish + 3.0, z_dish + HOVER_MM  # ABSOLUTE heights over the measured dish
     for i, (axis, ang) in enumerate(poses):
         rot = axis_angle(axis, np.radians(ang)) @ rot0
-        s.display.message = f"orientation {i + 1}/{len(poses)} ({ang:+.0f} deg)"
+        s.display.message = f"touch the same spot from wrist angle {i + 1} of {len(poses)} ({ang:+.0f} deg)"
         try:
             t = s.tip()
             s.move_tip([t[0, 3], t[1, 3], z_safe], t[:3, :3], "lift before rotating")
@@ -365,21 +482,21 @@ def stage_tip_calibration(s: Session, first: dict) -> np.ndarray:
             s.servo(ref_px, f"orientation {i + 1}")
             # The tip model is the unknown here, so each orientation's dish height in the model
             # can differ by a mm or two - the over-travel floor allows for it.
-            s.touch(z_dish - MAX_OVERTRAVEL_MM, DESCENT_MM_S)
+            r = s.touch(z_dish - MAX_OVERTRAVEL_MM, DESCENT_MM_S)
         except CalibrationFailedError as e:
             print(f"  orientation {i + 1}: skipped ({e})")
             with contextlib.suppress(Exception):
                 t = s.tip()
                 s.move_tip([t[0, 3], t[1, 3], z_safe], t[:3, :3], "recover to safe height")
             continue
-        d = s.detect()
-        if d is None:
+        px = s.contact_px(r)
+        if px is None:
             print(f"  orientation {i + 1}: tip not detected at contact - skipped")
         else:
-            flanges.append(s.kin.flange(s.q()))
-            pix.append(d.px)
-            s.display.marks.append((d.px[0], d.px[1], "lime", "o"))
-            print(f"  orientation {i + 1}: touch at px {np.round(d.px, 1).tolist()}")
+            flanges.append(s.kin.flange(s.contact_q(r)))
+            pix.append(px)
+            s.display.marks.append((px[0], px[1], "lime", "o"))
+            print(f"  orientation {i + 1}: touch at px {np.round(px, 1).tolist()}")
         s.shift(0, 0, HOVER_MM, "lift")
 
     with contextlib.suppress(Exception):
@@ -432,15 +549,15 @@ def touch_at_pixel(s: Session, px, rot, z_dish: float, xy_of_px, label: str):
     xy = xy_of_px(px)
     s.display.overlays["target"] = (px[0], px[1], "yellow", "+")
     s.move_tip([xy[0], xy[1], z_dish + HOVER_MM], rot, label)
-    s.touch(z_dish - MAX_OVERTRAVEL_MM, DESCENT_MM_S)
-    d = s.detect()
-    q = s.q()
+    r = s.touch(z_dish - MAX_OVERTRAVEL_MM, DESCENT_MM_S)
+    px = s.contact_px(r)
+    q = s.contact_q(r)
     s.shift(0, 0, HOVER_MM, "lift")
-    return d, q
+    return (None if px is None else SimpleNamespace(px=px)), q
 
 
 def stage_scope_calibration(s: Session, rot) -> ScopeCalibration:
-    s.display.phase = "4/5 scope calibration"
+    s.display.phase = "4/5 scope calibration (grid of touches)"
     # Re-anchor the old affine at the current tip: one touch at the field centre.
     d, q = touch_at_pixel(
         s, s.fov_centre, rot, s.calib.surface_z_mm, lambda p: s.calib.pixel_to_xy([p])[0], "anchor"

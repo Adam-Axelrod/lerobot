@@ -1,8 +1,9 @@
 """Offline check of auto_calibrate.py: its stages run against a SIMULATED bench. No hardware.
 
 A fake Meca500 (driven through the real kinematics), a fake Basler (synthetic frames: the pipette
-drawn where the TRUE tip is, blurred by its height above the dish) and a fake Bota sensor
-(a torque step when the true tip reaches the dish). The model's tip is deliberately wrong by
+drawn where the TRUE tip is, blurred by its height above the dish, sliding forward along the
+dish once it touches) and a fake Bota sensor (torque building up slowly past contact, so the
+slide - not the torque - has to catch the touch, as on the arm). The model's tip is deliberately wrong by
 TRUE_DELTA in the flange frame - like a bent or replaced pipette - so the stages must:
 find the dish and the (possibly out-of-view) tip, recover the true tip by pivot calibration,
 fit the scope, and verify. Prints the recovered tip vs the truth and the verify errors.
@@ -10,10 +11,10 @@ fit the scope, and verify. Prints the recovered tip vs the truth and the verify 
 Writes nothing: the tip "save" only updates the in-memory model, and scope_calibration.json is
 never touched. Run after changing auto_calibrate.py, arm_session.py, tip_detect.py or contact.py:
 
-    python scripts/meca500/sim_auto_calibrate.py      (~40 s; set MPLBACKEND=Agg to hide the window)
+    python scripts/meca500/sim_auto_calibrate.py      (~80 s; set MPLBACKEND=Agg to hide the window)
 
-Expected (2026-10-14): tip recovered to < 0.1 mm, scope fit < 0.5 px, verify < 1 px.
-The fitted dish comes out ~0.1 mm low only because SPEEDUP makes the descent 15x faster.
+Expected (2026-10-14): tip recovered to ~0.02 mm, scope fit ~0.3 px, dish z within 0.01 mm,
+verify < 1 px.
 """
 
 import itertools
@@ -40,7 +41,7 @@ from lerobot.robots.meca500.autocollect.kinematics import Meca500Kinematics  # n
 
 TRUE_DELTA = np.array([1.0, -0.8, 3.0])
 TRUE_DISH_Z = 8.0
-SPEEDUP = 15.0  # sim time runs faster during velocity moves
+SPEEDUP = 5.0  # sim time runs faster during velocity moves (higher = coarser touch-downs)
 
 bench = BenchConfig.load("meca500_basler")
 model_kin = bench.kinematics()
@@ -103,9 +104,24 @@ class SimMeca:
         return lambda *a, **k: None
 
     # truth
-    def true_tip(self):
+    def raw_tip(self):
         self._advance()
         return true_kin.tip(self.q)
+
+    def true_tip(self):
+        """Where the real tip IS: once it reaches the dish it cannot go lower, so further descent
+        slides it FORWARD along the dish in the pipette's direction, like the shallow glass
+        pipette on the arm (2026-10-14)."""
+        t = self.raw_tip()
+        pen = TRUE_DISH_Z - t[2, 3]
+        if pen > 0:
+            axis = t[:3, 2]
+            horiz = axis[:2] / max(np.linalg.norm(axis[:2]), 1e-9)
+            elev = np.arcsin(np.clip(-axis[2], 0.05, 1.0))  # angle below horizontal
+            t = t.copy()
+            t[:2, 3] += horiz * pen / np.tan(elev)
+            t[2, 3] = TRUE_DISH_Z
+        return t
 
 
 rng = np.random.default_rng(0)
@@ -132,9 +148,9 @@ def render(meca):
         px_back = A_inv_lin @ (back - np.asarray(cam.px_to_xy)[:, 2])
         layer = img.copy()
         cv2.line(layer, (int(px[0]), int(px[1])), (int(px_back[0]), int(px_back[1])), (30, 25, 10), 7)
-        s = 1 + 3 * max(h, 0)
+        s = 3 * max(h, 0)  # blur grows smoothly with height, as through a real objective
         k = int(2 * round(2 * s) + 1)
-        layer = cv2.GaussianBlur(layer, (k, k), s) if h > 0.2 else layer
+        layer = cv2.GaussianBlur(layer, (k, k), s) if s > 0.3 else layer
         img = layer
     return img
 
@@ -154,8 +170,11 @@ ts = itertools.count()
 class Sensor:
     def read_frame(self):
         time.sleep(0.0012)
-        pen = TRUE_DISH_Z - meca.true_tip()[2, 3]
-        ty = (1e-3 if pen > 0 else 0.0) + rng.normal(0, 3e-5)
+        # Torque builds up only gradually with the descent past contact (the tip slides rather
+        # than pushes): it reaches the 0.3 mNm threshold 0.2 mm past contact, so vision (the
+        # slide) must catch the touch first, as on the arm.
+        pen = TRUE_DISH_Z - meca.raw_tip()[2, 3]
+        ty = 0.3e-3 * max(pen, 0.0) / 0.2 + rng.normal(0, 3e-5)
         return SimpleNamespace(force=[0, 0, 0], torque=[0, ty, 0], timestamp=next(ts))
 
 
