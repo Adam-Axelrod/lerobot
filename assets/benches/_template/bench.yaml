@@ -27,6 +27,12 @@ tool:
   # Tool points closer than this to the tip are not collision-checked: the tip touches
   # the dish by design.
   tip_exempt_mm: 10
+  # Holder angle about the flange axis (deg), applied on top of the CAD by import_bench_cad.py.
+  flange_rotation_deg: 0.0
+  # Measured tip position in the FRF (mm), written by calibrate_tip.py. Overrides the CAD tip:
+  # the import shifts the CAD pipette so its tip lands here. Re-measure after EVERY pipette
+  # change - pulled glass pipettes differ in length and seat differently - or a bend.
+  measured_tip_in_flange: null
 
 safety:
   link_margin_mm: 15        # clearance required for the arm links

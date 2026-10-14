@@ -13,11 +13,12 @@ Every capture puts the same physical point at the tip, so the flange poses pin d
 in the flange frame (least squares: R_i t + p_i = const). Keys (image window focused):
 
     c   capture        u   undo last        f   fit and report
-    s   fit, write tool.flange_rotation_deg into bench.yaml, quit        q   quit
+    s   fit, write tool.measured_tip_in_flange into bench.yaml, quit        q   quit
 
-The report compares the measured tip with the CAD tip: the angle about the flange axis is
-the correction; the radius from the axis and the distance along it are a check on the CAD
-geometry and should agree to ~1 mm. Then re-run import_bench_cad.py.
+The report compares the measured tip with the model's tip (angle about the flange axis, radius
+from it, distance along it). Saving writes the MEASURED tip, which import_bench_cad.py then uses
+instead of the CAD's - re-run this after every pipette change or knock, then re-run
+import_bench_cad.py and calibrate_scope.py (the scope calibration is computed with the tip).
 """
 
 import logging
@@ -141,18 +142,23 @@ def main() -> None:
                     print(
                         f"  !! orientations only {spread:.0f} deg apart - tilt the wrist more for a reliable fit"
                     )
-                total = report(t, bench)
+                report(t, bench)  # rotation printed for reference; the TIP is what gets saved
                 if key == "s":
+                    # Save the measured TIP - what changes whenever a pipette is swapped or
+                    # bent. The holder's angle on the flange (tool.flange_rotation_deg) was
+                    # measured once and does not change with the pipette, so it is left as is;
+                    # the angle printed above is for reference.
                     path = bench.root / "bench.yaml"
                     text = path.read_text(encoding="utf-8")
+                    value = f"[{t[0]:.2f}, {t[1]:.2f}, {t[2]:.2f}]"
                     text, n = re.subn(
-                        r"(?m)^  flange_rotation_deg: .*$", f"  flange_rotation_deg: {total:.2f}", text
+                        r"(?m)^  measured_tip_in_flange: .*$", f"  measured_tip_in_flange: {value}", text
                     )
                     if n != 1:
-                        sys.exit("Could not find tool.flange_rotation_deg in bench.yaml.")
+                        sys.exit("Could not find tool.measured_tip_in_flange in bench.yaml.")
                     path.write_text(text, encoding="utf-8", newline="\n")
                     print(
-                        f"Wrote tool.flange_rotation_deg = {total:.2f} to {path}. Now run import_bench_cad.py."
+                        f"Wrote tool.measured_tip_in_flange = {value} to {path}. Now run import_bench_cad.py."
                     )
                     saved = True
                     break

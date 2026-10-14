@@ -184,11 +184,23 @@ def main() -> None:
     parts = {part_name(f): trimesh.load_mesh(f) for f in tool_files}
     for m in parts.values():
         m.apply_transform(t_frf_cad)
-    trimesh.util.concatenate(list(parts.values())).export(bench.root / "tool.stl")
     pip = next((m for n, m in parts.items() if "pipette" in n), None)
     if pip is None:
         sys.exit("No tool part named 'Pipette' - cannot locate the tip.")
     tip, axis = pipette_tip(pip)
+    # A measured tip (calibrate_tip.py) wins over the CAD's: pulled glass pipettes differ in
+    # length and seat differently every time one is changed, and a bent one is just wrong.
+    # Shift the CAD pipette rigidly so its tip lands on the measured point, keeping the
+    # collision model consistent with where the tip really is.
+    measured = bench.section("tool").get("measured_tip_in_flange")
+    if measured is not None:
+        delta = np.asarray(measured, float) - tip
+        pip.apply_translation(delta)
+        tip = np.asarray(measured, float)
+        print(
+            f"pipette shifted {np.round(delta, 2).tolist()} mm to the measured tip (tool.measured_tip_in_flange)"
+        )
+    trimesh.util.concatenate(list(parts.values())).export(bench.root / "tool.stl")
     x = np.cross([0.0, 1.0, 0.0], axis)
     if np.linalg.norm(x) < 1e-6:
         x = np.cross([1.0, 0.0, 0.0], axis)

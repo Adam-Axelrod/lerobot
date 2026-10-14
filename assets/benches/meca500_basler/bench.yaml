@@ -46,6 +46,10 @@ tool:
   # moves the tip ~18 mm. UNKNOWN until measured: run calibrate_tip.py on the arm, which
   # writes this value, then re-run import_bench_cad.py.
   flange_rotation_deg: -2.36
+  # Measured tip position in the FRF (mm), written by calibrate_tip.py. Overrides the CAD tip:
+  # the import shifts the CAD pipette so its tip lands here. Re-measure after EVERY pipette
+  # change - pulled glass pipettes differ in length and seat differently - or a bend.
+  measured_tip_in_flange: null
 
 safety:
   link_margin_mm: 15        # clearance required for the arm links
