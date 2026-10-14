@@ -35,7 +35,7 @@ camera only). The original setup is added later by adding a bench folder; no cod
 - Recovery demos (deliberate small mistakes that get corrected) come in phase 2.
 
 Work happens on a new branch, `feat/meca500-autocollect`. Its first commit is this plan, saved as
-`docs/meca500_autocollect_plan.md`.
+`docs/meca500/autocollect_plan.md`.
 
 ## Key design choices
 

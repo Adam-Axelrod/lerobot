@@ -27,6 +27,11 @@ There are two physical benches. The user refers to them by these names:
 | **"the original setup"** | bench 1 | cheap VMS700 USB microscope | `meca500_microscope` (also `meca500`, arm cams only) |
 | **"Huanyu's setup"** | bench 2 | expensive Basler acA5472-17ucMED | `meca500_basler` (scope only), `meca500_microscope_basler` (+ arm cams) |
 
+Instructions for the user to carry out at the bench are written as Markdown checklists in
+`docs/meca500/instructions/YYYY-MM-DD_<topic>.md` and listed, with a status, in
+`docs/meca500/README.md`. Meca500 design notes live in `docs/meca500/`, never in `docs/source/`
+(upstream's built documentation).
+
 Bench 2's robot base is rotated 180° about vertical relative to bench 1, so per-bench values (`HOME_JOINTS`, `AXIS_SIGNS`, rollout clamps, any collision/obstacle model) are never interchangeable. Select a bench with the `RIG =` constant at the top of each script, never by forking scripts.
 
 ## Tech Stack
