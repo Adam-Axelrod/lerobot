@@ -89,6 +89,11 @@ class SimMeca:
         self.q = flange_kin.ik(f, self.q)
 
     def WaitIdle(self, timeout=None):  # noqa: N802 - mimics mecademicpy
+        # Like the real controller: a checkpoint round trip takes time, so a short-timeout
+        # WaitIdle fails. (The first arm run hung in a loop of 50 ms WaitIdle calls.)
+        if timeout is not None and timeout < 0.08:
+            raise TimeoutError("checkpoint not reached")
+        time.sleep(0.08)
         self._advance()
 
     def GetStatusRobot(self):  # noqa: N802 - mimics mecademicpy

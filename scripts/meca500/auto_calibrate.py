@@ -166,8 +166,9 @@ def stage_home_and_background(s: Session, home) -> None:
     s.display.phase = "1/5 home + background"
     s.display.message = "moving home; the tip must leave the microscope's view"
     q = s.q()
-    low = s.tip(q)[2, 3] - s.calib.surface_z_mm < 40
-    run_joint_path(s.meca, s.planner.plan_transit(q, home, retreat=low), s.display)
+    if np.abs(q - home).max() > 0.2:  # already home: nothing to do
+        low = s.tip(q)[2, 3] - s.calib.surface_z_mm < 40
+        run_joint_path(s.meca, s.planner.plan_transit(q, home, retreat=low), s.display)
     s.display.sleep(1.0)  # let auto-exposure settle
     frames = [s.display.frame().astype(np.float32) for _ in range(5)]
     s.background = np.median(frames, axis=0).astype(np.uint8)

@@ -15,6 +15,7 @@ move/descent near the dish that the caller has checked.
 from __future__ import annotations
 
 import contextlib
+import threading
 import time
 
 import cv2
@@ -77,16 +78,27 @@ class Display:
 
 
 def wait_idle(meca, display: Display, timeout_s: float = 60.0) -> None:
-    """WaitIdle, keeping the display (and the abort key) live."""
-    end = time.perf_counter() + timeout_s
-    while True:
+    """WaitIdle, keeping the display (and the abort key) live.
+
+    ONE WaitIdle runs in a background thread while this thread refreshes the display. Calling
+    WaitIdle repeatedly with a short timeout does not work: each call queues a NEW checkpoint and
+    waits for the controller's round trip, so with a 50 ms timeout it never completed - the first
+    auto_calibrate run sat "moving home" with the arm already at home until the 60 s timeout.
+    """
+    box: dict = {}
+
+    def _wait() -> None:
         try:
-            meca.WaitIdle(timeout=0.05)
-            return
-        except Exception:
-            if time.perf_counter() > end:
-                raise TimeoutError("Arm did not become idle in time.") from None
-            display.update()
+            meca.WaitIdle(timeout=timeout_s)
+        except Exception as e:  # handed back to the caller's thread below
+            box["error"] = e
+
+    worker = threading.Thread(target=_wait, daemon=True)
+    worker.start()
+    while worker.is_alive():
+        display.update()  # raises AbortedError on q; the caller then ClearMotion()s the arm
+    if "error" in box:
+        raise TimeoutError(f"Arm did not become idle: {box['error']}") from box["error"]
 
 
 def run_joint_path(meca, qs, display: Display, timeout_s: float = 60.0) -> None:
