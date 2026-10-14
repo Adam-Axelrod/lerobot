@@ -21,3 +21,4 @@ date they were written.
 | [`2026-10-14_after-pipette-crash-recalibrate.md`](instructions/2026-10-14_after-pipette-crash-recalibrate.md) | Huanyu's setup | Step 1 (moved) and Part A done (tip 0.065 mm rms, imported); **Part B next** |
 | [`2026-10-14_bota-force-probe.md`](instructions/2026-10-14_bota-force-probe.md) | Huanyu's setup | Done: torque, not force, sees a touch (0.3-1 mNm steps; force buried in noise) |
 | [`2026-10-14_auto-touch-test.md`](instructions/2026-10-14_auto-touch-test.md) | Huanyu's setup | **To do** (after the scope recalibration) |
+| [`2026-10-14_auto-calibrate.md`](instructions/2026-10-14_auto-calibrate.md) | Huanyu's setup | **To do** (after the auto-touch test passes) |

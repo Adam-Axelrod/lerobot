@@ -13,6 +13,21 @@ manually that takes about 35 min of careful jogging and clicking.
 | **Guarded descent** | Control mode. Creep down at about 0.2 mm/s (velocity command, or short `MoveJoints` steps from IK along -z) while reading the sensor at about 500 Hz. Stop on contact, then record joints. Abort if travel exceeds about 2 mm below the expected dish or force exceeds a hard limit. | To do |
 | **Background frame** | Back the pipette 20 mm out along its own axis (larger than the 5.5 × 8.3 mm field), so the tip and shank leave the view. | To do |
 
+## Status (2026-10-14)
+`scripts/meca500/auto_calibrate.py` implements both sequences, plus the find-the-tip
+bootstrap, verification and display. It has been checked offline end to end with
+`scripts/meca500/sim_auto_calibrate.py`, a simulated bench whose tip model is 3.3 mm wrong: the
+tip was recovered to 0.06–0.07 mm, the scope fit was 0.35 px, and verify came in under 1 px.
+The simulation exposed and fixed three bugs before any arm time:
+- a pipette crossing the field with its tip outside was mistaken for a tip; the detector now
+  requires the tip to end inside the field;
+- far above the dish the tip was too blurred to detect; the run now finds the dish by force
+  first and searches 0.5 mm above it;
+- the pivot loop drifted upward after failures and steered too tightly; it now uses absolute
+  heights and a hover tolerance.
+
+Not yet run on the arm: next are `auto_touch_test.py`, then `auto_calibrate.py`.
+
 ## Sequences
 
 **Auto scope calibration:** for each of about 12–16 grid targets across the field (positions

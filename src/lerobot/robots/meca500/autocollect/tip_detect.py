@@ -50,11 +50,19 @@ def detect_tip(
     background: np.ndarray,
     diff_thresh: float = 25.0,
     min_area: int = 150,
+    min_tip_inset_px: float = 12.0,
+    max_shank_inset_px: float = 30.0,
 ) -> TipDetection | None:
     """Tip of the pipette in ``frame`` (RGB uint8), given a ``background`` frame without it."""
     g1 = cv2.GaussianBlur(cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY).astype(np.float32), (5, 5), 0)
     g0 = cv2.GaussianBlur(cv2.cvtColor(background, cv2.COLOR_RGB2GRAY).astype(np.float32), (5, 5), 0)
     fov = field_mask(background)
+    # The Basler runs auto-exposure: a pipette entering the view darkens the image and the camera
+    # brightens it back, shifting every pixel. Match the frames' brightness inside the field (by
+    # the median, which the thin pipette barely moves) so only the pipette remains in the diff.
+    m0, m1 = np.median(g0[fov]), np.median(g1[fov])
+    if m1 > 1:
+        g1 *= m0 / m1
     diff = np.abs(g1 - g0)
     diff[~fov] = 0
     blob = (diff > diff_thresh).astype(np.uint8)
@@ -85,6 +93,12 @@ def detect_tip(
     d_lo = dist[end_lo[:, 1].astype(int), end_lo[:, 0].astype(int)].mean()
     if d_lo > d_hi:  # the low end is deeper inside the field -> it is the tip
         axis, s = -axis, -s
+        d_lo, d_hi = d_hi, d_lo
+    # A visible tip ends INSIDE the field while the shank runs out to its edge. If both ends sit
+    # at the edge, the pipette is merely crossing the view with its tip outside it - reporting
+    # the inner end as "the tip" would send a servo chasing the wrong point.
+    if d_hi < min_tip_inset_px or d_lo > max_shank_inset_px:
+        return None
     tip_pts = pts[s > s.max() - 2.0]
     tip = tip_pts.mean(axis=0)
 

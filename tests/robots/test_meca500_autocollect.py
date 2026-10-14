@@ -471,3 +471,15 @@ def test_wrench_stream_dedupes_and_detector_sees_a_step():
         assert det.check().contact
     finally:
         stream.stop()
+
+
+def test_tip_detection_rejects_a_pipette_crossing_the_field():
+    """With the tip outside the view only the shank crosses it; its inner end is NOT the tip."""
+    import cv2
+
+    from lerobot.robots.meca500.autocollect.tip_detect import detect_tip
+
+    _, bg = _microscope_frames()
+    crossing = bg.copy()
+    cv2.line(crossing, (15, 300), (410, 360), (30, 25, 10), 7)  # edge to edge
+    assert detect_tip(crossing, bg) is None
