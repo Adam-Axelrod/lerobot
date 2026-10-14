@@ -402,6 +402,7 @@ lerobot = [
     "envs/*.json",
     "annotations/steerable_pipeline/prompts/*.txt",
     "robots/meca500/camera_settings.json", # tuned exposure/focus, loaded at config construction
+    "robots/meca500/bota/*.json", # Bota F/T sensor configs, one per sensor model (see rigs.py)
 ]
 
 [tool.setuptools.packages.find]

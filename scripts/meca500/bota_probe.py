@@ -11,8 +11,8 @@ the force when the pipette tip touches the dish? Run it ALONGSIDE teleoperate_mi
 It prints a live line, then a summary: per-axis noise (std) at rest, and the peak |change|
 seen, which is what a contact threshold must sit between.
 
-Uses the same driver and config file as the meca500_bota teleop (bota_sensor_config.json in the
-repo root); set CONFIG below if the sensor now needs a different one.
+The sensor config comes from the rig (rigs.py BOTA_SENSORS): the original setup has a MiniONE,
+Huanyu's setup a MiniONE Pro, each with its own JSON in src/lerobot/robots/meca500/bota/.
 """
 
 import sys
@@ -20,10 +20,12 @@ import time
 from pathlib import Path
 
 import numpy as np
+from rigs import BOTA_SENSORS, bota_config_path
 
 REPO = Path(__file__).resolve().parents[2]
 # ----------------------------- CONFIG -----------------------------
-CONFIG = REPO / "bota_sensor_config.json"
+RIG = "meca500_basler"
+CONFIG = bota_config_path(RIG)
 BASELINE_S = 5.0
 PRINT_HZ = 10.0
 # -----------------------------------------------------------------
@@ -32,7 +34,7 @@ PRINT_HZ = 10.0
 def main() -> None:
     import bota_driver
 
-    print(f"Bota config: {CONFIG}")
+    print(f"Rig {RIG}: {BOTA_SENSORS[RIG]} sensor, config {CONFIG}")
     sensor = bota_driver.BotaDriver(str(CONFIG))
     if not sensor.configure():
         sys.exit("Failed to configure the Bota driver - check the COM port / product in the config file.")

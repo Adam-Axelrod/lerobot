@@ -7,9 +7,7 @@ To set its contact threshold, Claude needs the sensor's noise at rest and the si
 light touch. Background: [`../autocalibration_plan.md`](../autocalibration_plan.md).
 
 ## Questions first (just answer in the chat)
-1. **Which sensor is fitted now?** The repo's `bota_sensor_config.json` says
-   **BFT-MIPS-ENET-CG on COM5**, but the CAD shows a **MiniONE Pro**. What's the model, and is
-   it plugged in by **USB** (which COM port, from Device Manager → Ports) or by **Ethernet**?
+1. ~~Which sensor is fitted?~~ **Answered:** Huanyu's setup has a **MiniONE Pro** (BFT-MIPS-SER-CG, COM8). The repo now keeps both configs (`src/lerobot/robots/meca500/bota/`) and picks the right one per rig, so the probe uses the MiniONE Pro automatically.
 2. **Contact force limit:** what's the most force you'd accept on the glass pipette? The
    suggestion is to stop at **0.05–0.1 N**.
 
@@ -38,5 +36,5 @@ The probe only reads the sensor; it never talks to the arm, so it runs alongside
 ### If something goes wrong
 | Symptom | What to do |
 |---|---|
-| "Failed to configure the Bota driver" | Wrong COM port or product in `bota_sensor_config.json`. Tell Claude the model and port, and it'll make a matching config. |
+| "Failed to configure the Bota driver" | The COM port changed (a different USB socket). Check Device Manager → Ports and fix `com_port` in `src/lerobot/robots/meca500/bota/miniONE_pro.json`. |
 | No frames, or 0 Hz | The sensor isn't streaming. Check the cable and power, and close any other program using it. |

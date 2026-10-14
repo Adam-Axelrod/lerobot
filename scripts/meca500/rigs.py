@@ -83,6 +83,27 @@ AXIS_SIGNS: dict[str, list[float]] = {
 }
 
 
+# Bota force/torque sensor on each bench (configs in src/lerobot/robots/meca500/bota/).
+# The benches carry different models, and the bota_driver needs the matching JSON:
+#   original setup (bench 1)  MiniONE      - BFT-MIPS-ENET-CG on COM5
+#   Huanyu's setup (bench 2)  MiniONE Pro  - BFT-MIPS-SER-CG  on COM8
+BOTA_SENSORS: dict[str, str] = {
+    "meca500": "miniONE",
+    "meca500_microscope": "miniONE",
+    "meca500_basler": "miniONE_pro",
+    "meca500_microscope_basler": "miniONE_pro",
+}
+
+
+def bota_config_path(rig: str):
+    """The bota_driver JSON for the force sensor fitted on ``rig``'s bench."""
+    from lerobot.robots.meca500.bota import BOTA_CONFIGS
+
+    if rig not in BOTA_SENSORS:
+        raise ValueError(f"Unknown rig {rig!r}. Available: {sorted(BOTA_SENSORS)}")
+    return BOTA_CONFIGS[BOTA_SENSORS[rig]]
+
+
 def axis_signs(rig: str) -> list[float]:
     """SpaceMouse axis signs for ``rig``, as [vx, vy, vz, wx, wy, wz]."""
     if rig not in AXIS_SIGNS:
@@ -102,20 +123,22 @@ def require_home_joints(rig: str) -> list[float]:
     home = home_joints(rig)
     if home is None:
         raise SystemExit(
-            NL.join([
-                "",
-                f"No HOME_JOINTS measured for rig {rig!r} yet.",
-                "",
-                "Recording drives the arm to this pose between every episode, so it has to",
-                "be a pose on THIS bench - another rig's would send the arm into a",
-                "different desk.",
-                "",
-                "To set it:",
-                "  1. python scripts/meca500/teleoperate_microscope.py  (jog to a start pose)",
-                "  2. python scripts/meca500/show_joints.py             (read the six values)",
-                f"  3. paste them into HOME_JOINTS[{rig!r}] in scripts/meca500/rigs.py",
-                "",
-            ])
+            NL.join(
+                [
+                    "",
+                    f"No HOME_JOINTS measured for rig {rig!r} yet.",
+                    "",
+                    "Recording drives the arm to this pose between every episode, so it has to",
+                    "be a pose on THIS bench - another rig's would send the arm into a",
+                    "different desk.",
+                    "",
+                    "To set it:",
+                    "  1. python scripts/meca500/teleoperate_microscope.py  (jog to a start pose)",
+                    "  2. python scripts/meca500/show_joints.py             (read the six values)",
+                    f"  3. paste them into HOME_JOINTS[{rig!r}] in scripts/meca500/rigs.py",
+                    "",
+                ]
+            )
         )
     return home
 

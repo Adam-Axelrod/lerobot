@@ -44,6 +44,6 @@ automatic version of `check_tip.py`.
 - start from and end at home, with the arm holding its pose on disconnect.
 
 ## Open questions for the user
-1. Which Bota sensor is fitted (`bota_sensor_config.json` says BFT-MIPS-ENET-CG on COM5; the
-   CAD shows a MiniONE Pro), and how is it connected?
+1. ~~Which Bota sensor?~~ Answered: MiniONE Pro on Huanyu's setup (MiniONE on the original). Both configs are
+   in `src/lerobot/robots/meca500/bota/`, chosen per rig by `rigs.py`.
 2. The maximum acceptable contact force for the glass pipette (suggested stop at 0.05–0.1 N).
