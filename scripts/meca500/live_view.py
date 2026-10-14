@@ -62,6 +62,14 @@ class LiveView:
             return
         if self._img is None:
             self._img = self.ax.imshow(frame, interpolation="nearest")
+            # Pin the view to the image. Otherwise ax.plot() autoscales to include every
+            # marker, so a marker off the frame (e.g. check_tip's predicted tip when the
+            # pipette leaves the field of view) zooms out and shrinks the feed. Set once,
+            # here, so toolbar zooming still works; off-frame markers are simply clipped.
+            fh, fw = frame.shape[:2]
+            self.ax.set_xlim(-0.5, fw - 0.5)
+            self.ax.set_ylim(fh - 0.5, -0.5)
+            self.ax.set_autoscale_on(False)
         else:
             self._img.set_data(frame)
         for a in self._artists:
