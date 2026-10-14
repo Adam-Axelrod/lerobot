@@ -342,12 +342,20 @@ class Meca500(Robot):
                 # The teleop owns the control connection and has already
                 # deactivated the arm by the time we get here.
                 if not self.config.monitor_mode:
-                    self.robot.PauseMotion()
-                    self.robot.WaitMotionPaused(timeout=5)
+                    # Stop, and leave the arm IDLE and HOLDING its pose. Deactivating
+                    # drops the brakes: the arm goes limp and sags - on 2026-10-14 that
+                    # drove a pipette hovering 5 mm over the dish into it at the end of
+                    # a record_auto run (microscope_inference.home_arm already avoided
+                    # this for the same reason). Idle and un-paused, not merely paused:
+                    # closing the control socket on a moving/paused arm raises the
+                    # "control connection dropped" safety stop.
                     self.robot.ClearMotion()
                     self.robot.WaitMotionCleared(timeout=5)
-                    self.robot.DeactivateRobot()
-                    self.robot.WaitDeactivated(timeout=10)
+                    self.robot.ResumeMotion()
+                    self.robot.WaitIdle(timeout=5)
+                    if self.config.deactivate_on_disconnect:
+                        self.robot.DeactivateRobot()
+                        self.robot.WaitDeactivated(timeout=10)
                 self.robot.Disconnect()
                 self.robot.WaitDisconnected(timeout=5)
         except Exception as e:

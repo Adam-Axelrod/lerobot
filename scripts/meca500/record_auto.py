@@ -336,6 +336,16 @@ def main() -> None:
                     f"target px {np.round(plan.target_px, 1).tolist()}, clearance {plan.clearance.min_mm:.1f} mm"
                 )
 
+        # Never finish parked over the dish: back the pipette out and go home before the
+        # disconnect below (which now holds the pose rather than going limp - but home is
+        # where the next session expects to start). Esc sets exit_early too; clear it so
+        # this move is not cut short.
+        events["exit_early"] = False
+        try:
+            go_home(robot, teleop, planner, home, events, processors)
+        except RuntimeError as e:
+            logging.error(f"Could not return home ({e}); the arm holds its current pose.")
+
         if PUSH_TO_HUB:
             dataset.push_to_hub(private=True)
     finally:

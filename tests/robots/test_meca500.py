@@ -193,6 +193,33 @@ def test_connect_resumes_motion_paused_by_a_dropped_connection():
     robot.robot.ResumeMotion.assert_called_once()
 
 
+def test_disconnect_holds_the_pose_instead_of_going_limp():
+    """Deactivating drops the brakes; on 2026-10-14 the sag crashed a hovering pipette into the
+    dish at the end of a record_auto run. Default: stop, leave idle + un-paused, keep activated."""
+    robot = Meca500(Meca500Config(monitor_mode=False, cameras={}))
+    robot.cameras = {}
+    robot.robot = MagicMock()
+    robot._connected = True
+
+    robot.disconnect()
+
+    robot.robot.DeactivateRobot.assert_not_called()
+    robot.robot.ClearMotion.assert_called_once()
+    robot.robot.ResumeMotion.assert_called_once()  # idle, not paused: no connection-dropped stop
+    robot.robot.Disconnect.assert_called_once()
+
+
+def test_disconnect_deactivates_only_when_asked():
+    robot = Meca500(Meca500Config(monitor_mode=False, cameras={}, deactivate_on_disconnect=True))
+    robot.cameras = {}
+    robot.robot = MagicMock()
+    robot._connected = True
+
+    robot.disconnect()
+
+    robot.robot.DeactivateRobot.assert_called_once()
+
+
 def test_send_action_relative_mode_ignores_precision_gate_as_a_joint():
     """precision.state is a gate, never differenced and never integrated."""
     present = [7.0] * 6

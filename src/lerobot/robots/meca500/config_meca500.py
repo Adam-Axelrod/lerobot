@@ -72,6 +72,12 @@ class Meca500Config(RobotConfig):
 
     default_joint_vel: float = 25.0
 
+    # Deactivate the arm when disconnecting (control mode). OFF by default: deactivation drops
+    # the brakes, the arm goes limp and sags under gravity - with the pipette near the dish that
+    # crashes it into the dish. Left activated, the arm holds its pose, and the next connect's
+    # ActivateAndHome is a no-op. Turn on only when the arm is parked somewhere a sag is harmless.
+    deactivate_on_disconnect: bool = False
+
     @property
     def camera_settings_key(self) -> str:
         """Which section of camera_settings.json this rig's tuning lives under.
