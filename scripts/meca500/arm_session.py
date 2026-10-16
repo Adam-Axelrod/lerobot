@@ -1,9 +1,13 @@
 """Shared arm + display helpers for the automatic bench scripts (auto_touch_test, auto_calibrate).
 
-- Display: the microscope feed with a contact banner (green NO CONTACT / red CONTACT), a live
-  torque bar against the contact threshold, the current phase and message, and markers
+- Display: the microscope feed with a contact banner, the current phase and message, and markers
   (detected tip, predicted tip, targets, collected points). Pressing q / closing the window
-  raises AbortedError from any update.
+  raises AbortedError from any update. The banner shows the contact DECISION, not the raw
+  sensor: red CONTACT (with what sensed it - the slide or the force backstop) once a descent has
+  sensed a touch, green while a descent is watching for one (with the live torque bar), grey
+  otherwise. Outside a descent the sensor reading means nothing - its baseline is from the last
+  descent and moving the arm swings the tool's weight - and showing it lit the banner red with
+  every repositioning (2026-10-16).
 - wait_idle / run_joint_path: queue motion and wait, keeping the display live.
 - make_ready: clear errors, stale queued motion and a resettable safety stop.
 - guarded_descent: creep straight down until contact (torque-based, see autocollect/contact.py).
@@ -36,6 +40,8 @@ class Display:
         self.marks: list = []  # (u, v, colour[, style]) - persistent markers, e.g. collected points
         self.overlays: dict = {}  # name -> (u, v, colour, style) - transient: detected/predicted/target
         self.last_frame: np.ndarray | None = None
+        self.sensing = False  # a guarded descent is watching for contact
+        self.contact_reason: str | None = None  # set when a descent senses contact; cleared on the next move
 
     def frame(self) -> np.ndarray:
         """A fresh camera frame (also kept as last_frame)."""
@@ -46,14 +52,25 @@ class Display:
         if self.view.closed or self.view.key() == "q":
             raise AbortedError
         frame = self.frame().copy()
-        m = self.detector.stream.mean(self.detector.th.smooth_s)
-        base = self.detector.baseline if self.detector.baseline is not None else np.zeros(6)
-        r = evaluate(m, base, self.detector.th) if m is not None else None
+        r = None
+        if self.sensing:
+            m = self.detector.stream.mean(self.detector.th.smooth_s)
+            base = self.detector.baseline if self.detector.baseline is not None else np.zeros(6)
+            r = evaluate(m, base, self.detector.th) if m is not None else None
         h, w = frame.shape[:2]
-        contact = r is not None and r.contact
-        cv2.rectangle(frame, (0, 0), (w, 46), (220, 30, 30) if contact else (40, 170, 60), -1)
-        label = f"CONTACT ({r.reason})" if contact else ("NO CONTACT" if r is not None else "NO SENSOR DATA")
-        cv2.putText(frame, label, (8, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
+        if self.contact_reason:
+            colour, label = (220, 30, 30), f"CONTACT ({self.contact_reason})"
+        elif self.sensing:
+            colour, label = (
+                (40, 170, 60),
+                ("NO CONTACT - watching for a touch" if r is not None else "NO SENSOR DATA"),
+            )
+        else:
+            colour, label = (110, 110, 110), "not sensing (arm moving / hovering)"
+        cv2.rectangle(frame, (0, 0), (w, 46), colour, -1)
+        tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0][0]
+        scale = 0.7 * min(1.0, (w - 16) / tw)  # shrink to fit the 427 px wide Basler frame
+        cv2.putText(frame, label, (8, 30), cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), 2, cv2.LINE_AA)
         if r is not None:  # torque bar: full width = 2x the threshold; white tick = the threshold
             frac = min(r.d_torque_mnm / (2 * self.detector.th.torque_mnm), 1.0)
             cv2.rectangle(frame, (0, 46), (int(w * frac), 54), (255, 220, 0), -1)
@@ -103,6 +120,7 @@ def wait_idle(meca, display: Display, timeout_s: float = 60.0) -> None:
 
 def run_joint_path(meca, qs, display: Display, timeout_s: float = 60.0) -> None:
     """Queue a collision-checked joint path (one MoveJoints per sample) and wait for it."""
+    display.contact_reason = None
     for q in qs:
         meca.MoveJoints(*[float(v) for v in q])
     wait_idle(meca, display, timeout_s)
@@ -133,11 +151,13 @@ def guarded_descent(
     ``touchdown`` (px, q) of the last frame before the tip began to slide. On the arm the
     shallow pipette slides forward along the dish the moment it touches, long before the torque
     crosses its threshold (a millimetre or more on 2026-10-14) - the camera sees that slide first."""
+    display.contact_reason = None
     display.sleep(0.5)  # let vibrations die before the baseline
     detector.capture_baseline(0.5)
     if vision is not None:
         vision.reset()
     result: dict = {}
+    display.sensing = True
     try:
         while True:
             meca.MoveLinVelWrf(0.0, 0.0, -speed_mm_s, 0.0, 0.0, 0.0)
@@ -168,7 +188,12 @@ def guarded_descent(
                     break
     finally:
         meca.MoveLinVelWrf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        display.sensing = False
+        if result.get("contact"):
+            display.contact_reason = result["reason"]
     wait_idle(meca, display, 5)
+    if result.get("contact"):
+        display.sleep(0.5)  # hold the red banner long enough to see
     q = np.array(meca.GetRtJointPos())
     result["q"] = q
     result["tip_z"] = float(kin.tip(q)[2, 3])

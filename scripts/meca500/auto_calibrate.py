@@ -20,8 +20,9 @@ Servoing uses only the old calibration's scale/rotation (camera geometry), which
 does not affect - only the offset moves, and that is what this re-measures.
 
 On screen: magenta x = detected tip, cyan + = where the model predicts it, yellow + = current
-target, green circles = recorded touches, and the force-backstop banner + torque bar. q aborts
-(the arm stops and holds its pose).
+target, green circles = recorded touches. The top banner is red CONTACT (and what sensed it)
+after a touch, green while a descent watches for one, grey otherwise. q aborts (the arm stops
+and holds its pose).
 
 Contact is sensed by VISION (the tip sliding, see SlideDetector). The Bota sensor is only a
 backstop with high thresholds: for the blind fallback (tip not visible), or if the slide is
@@ -233,6 +234,7 @@ class Session:
         c = self.checker.check_path(np.vstack([q0, q1]))
         if c.min_mm < 0:
             raise CalibrationFailedError(f"{label} would collide ({c.where} vs {c.obstacle}).")
+        self.display.contact_reason = None
         self.meca.MoveJoints(*[float(v) for v in q1])
         wait_idle(self.meca, self.display, 60)
 

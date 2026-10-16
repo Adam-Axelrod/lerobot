@@ -25,7 +25,7 @@ microscope feed:
 | Yellow **+** | The current target |
 | Cyan **+** | Where the new calibration predicts the tip (verify stage) |
 | Green circles | Touches recorded so far: where the tip touched down, one per touch. In stage 3 they should all sit on the same spot; in stage 4 they spread over the field |
-| Green / red banner | Contact sensing (NO CONTACT / CONTACT), with the torque bar under it |
+| Top banner | **Red CONTACT** (and what sensed it: `vision: tip started sliding`, or the force backstop) right after a touch. **Green** while a descent is watching for a touch, with the backstop torque bar under it. **Grey** otherwise: while the arm moves or hovers it is not sensing, so the force reading (swinging with the arm's motion) is ignored |
 | Black strip at the bottom | What it's doing right now |
 
 The window title shows the stage (`1/5` … `5/5`) with a one-line description of it, plus a
@@ -83,7 +83,7 @@ recovered a tip that was 3.3 mm off to within 0.02 mm, with verify errors under 
 | `... Servo did not converge` / `Lost the tip` | The tip detection is unreliable on this pipette. Send Claude the output; a screenshot of the window helps. |
 | `Only N usable pivot touches` | Too many wrist orientations collide or failed. Send the output. |
 | `No contact before the over-travel limit` | The arm descended 2.5 mm past where the dish should be without feeling it. Check the sensor (the torque bar should move) and that a dish is present. |
-| The banner stays red while hovering | The torque drifted. Abort with **q**, rerun, and tell Claude if it repeats. |
+| `contact (torque)` or `contact (force limit)` in the terminal | The force backstop stopped a descent, not the slide. Tell Claude, especially if the tip was still in the air. |
 
 Nothing is saved if the run fails or is aborted before stage 3 ends. If it fails during stage
 4, the new tip is already saved but the old scope calibration is untouched. Just rerun.
