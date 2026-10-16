@@ -11,7 +11,10 @@ fit the scope, and verify. Prints the recovered tip vs the truth and the verify 
 Writes nothing: the tip "save" only updates the in-memory model, and scope_calibration.json is
 never touched. Run after changing auto_calibrate.py, arm_session.py, tip_detect.py or contact.py:
 
-    python scripts/meca500/sim_auto_calibrate.py      (~80 s; set MPLBACKEND=Agg to hide the window)
+    python scripts/meca500/sim_auto_calibrate.py                 (pipette change: 3.3 mm tip error)
+    python scripts/meca500/sim_auto_calibrate.py --same-pipette  (0.2 mm error, default 2 mm start)
+
+(~80 s each; set MPLBACKEND=Agg to hide the window.)
 
 Expected (2026-10-14): tip recovered to ~0.02 mm, scope fit ~0.3 px, dish z within 0.01 mm,
 verify < 1 px.
@@ -39,7 +42,12 @@ from lerobot.robots.meca500.autocollect.contact import (  # noqa: E402
 )
 from lerobot.robots.meca500.autocollect.kinematics import Meca500Kinematics  # noqa: E402
 
-TRUE_DELTA = np.array([1.0, -0.8, 3.0])
+SAME_PIPETTE = "--same-pipette" in sys.argv
+if SAME_PIPETTE:  # recalibrating the same pipette: tip barely moved, start at the default height
+    TRUE_DELTA = np.array([0.1, -0.1, 0.2])
+else:  # a pipette change: the tip is mm off, so start high, as the CONFIG comment says to
+    TRUE_DELTA = np.array([1.0, -0.8, 3.0])
+    autocal.START_ABOVE_DISH_MM = 6.0
 TRUE_DISH_Z = 8.0
 SPEEDUP = 5.0  # sim time runs faster during velocity moves (higher = coarser touch-downs)
 
@@ -179,7 +187,9 @@ class Sensor:
 
 
 stream = WrenchStream(Sensor())
-det = ContactDetector(stream, ContactThresholds())
+det = ContactDetector(
+    stream, ContactThresholds(torque_mnm=autocal.BACKSTOP_TORQUE_MNM, force_limit_n=autocal.BACKSTOP_FORCE_N)
+)
 view = LiveView("sim")
 display = Display(view, Robot(meca), det, "microscope_cam", "sim")
 s = autocal.Session(Robot(meca), display, bench, det)

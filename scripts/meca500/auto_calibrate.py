@@ -4,10 +4,10 @@ Runs on the arm with the Basler and the Bota sensor, showing everything on the m
 
     1. HOME + BACKGROUND  drive home (collision-checked); grab a background frame with the tip
                           out of view - tip detection subtracts it.
-    2. FIND THE TIP       hover SEARCH_HOVER_MM over the field-of-view centre (generous: a new
-                          tip may sit lower than the model thinks); detect the (blurred) tip,
+    2. FIND THE TIP       hover START_ABOVE_DISH_MM over the field-of-view centre, trusting the
+                          last calibration (raise it after a pipette change); detect the tip,
                           spiral-search if it is not visible; visually servo it to the centre;
-                          guarded descent until the force sensor feels the dish.
+                          descend in view until the tip starts to slide along the dish.
     3. TIP CALIBRATION    at several collision-checked wrist orientations, servo the tip back
                           over the same image point and touch; pivot-fit the tip in the flange
                           frame (corrected for each touch's residual pixel error); save it as
@@ -20,8 +20,12 @@ Servoing uses only the old calibration's scale/rotation (camera geometry), which
 does not affect - only the offset moves, and that is what this re-measures.
 
 On screen: magenta x = detected tip, cyan + = where the model predicts it, yellow + = current
-target, green dots = collected points, and the contact banner + torque bar. q aborts (the arm
-stops and holds its pose).
+target, green circles = recorded touches, and the force-backstop banner + torque bar. q aborts
+(the arm stops and holds its pose).
+
+Contact is sensed by VISION (the tip sliding, see SlideDetector). The Bota sensor is only a
+backstop with high thresholds: for the blind fallback (tip not visible), or if the slide is
+missed. At the old 0.3 mNm trigger, drift during a long descent fired it in mid-air (2026-10-16).
 
 Owns the arm, the camera and the sensor: close teleop and the web portal first.
 """
@@ -51,8 +55,11 @@ from lerobot.utils.import_utils import register_third_party_plugins
 
 # ----------------------------- CONFIG -----------------------------
 RIG = "meca500_basler"
-SEARCH_HOVER_MM = 6.0  # first approach height above the (old) calibrated dish
-LOW_SEARCH_HOVER_MM = 3.0  # second, lower search if the tip is too blurred to see from 6 mm
+# First approach height above the dish of the LAST calibration, with the last measured tip.
+# 2 mm is enough when the pipette has not changed. After a pipette change or a knock, the new tip
+# can sit several mm lower than the model thinks; set this to ~6 for that run, or the move to the
+# start (not guarded) could drive the tip into the dish.
+START_ABOVE_DISH_MM = 2.0
 HOVER_MM = 1.0  # working hover above the measured dish, once found
 FIND_HOVER_MM = 0.5  # search height just above the dish, where the tip is nearly in focus
 DESCENT_MM_S = 0.15
@@ -67,8 +74,10 @@ PIVOT_TWIST_DEG = 12.0  # twist about the pipette axis, both ways
 MIN_PIVOT_TOUCHES = 4
 GRID_OUTER, GRID_INNER = 8, 4  # scope points on two rings inside the visible circle
 VERIFY_POINTS = 3
-CONTACT_TORQUE_MNM = 0.3
-FORCE_LIMIT_N = 0.05
+# Force-sensor BACKSTOP only (vision senses contact). Well above the 0.3 mNm / 0.05 N that a
+# light touch shows, so sensor drift and noise during a descent cannot trip it.
+BACKSTOP_TORQUE_MNM = 1.5
+BACKSTOP_FORCE_N = 0.2
 TRANSIT_SPEED_DEG_S = 10.0
 # The arm runs queued MoveJoints at its global joint velocity, not at the planner's timing, so
 # this is what actually sets the speed of every move (the first arm run used the 25 deg/s
@@ -396,43 +405,37 @@ def spiral_search(s: Session, rot, label: str):
 
 
 def stage_find_tip(s: Session, home) -> dict:
-    """Find the tip FROM ABOVE and descend onto the dish in view; blind descent only as a fallback.
+    """Find the tip just above the old dish and descend onto it in view; blind only as a fallback.
 
-    The user wants to watch the first descent, so the tip is looked for at SEARCH_HOVER_MM and
-    then at LOW_SEARCH_HOVER_MM (it is blurred up there, but often still detectable), centred, and
-    only then lowered. If it cannot be seen even at the lower height, fall back to finding the
-    dish blind by force and searching just above it (where the tip is nearly in focus).
+    Start START_ABOVE_DISH_MM above the last calibration's dish: the tip is usually where the
+    last calibration left it, and starting 6 mm up made the first descent slow (2026-10-16). If
+    the tip cannot be seen there, fall back to finding the dish blind (the force backstop) and
+    searching just above it, where the tip is nearly in focus.
     """
     s.display.phase = "2/5 find the tip"
     q_touch = np.asarray(s.limits.touch_nominal_joints, dtype=float)
     rot = s.kin.tip(q_touch)[:3, :3]
     centre_xy = s.calib.pixel_to_xy([s.fov_centre])[0]
     z_old = s.calib.surface_z_mm
-    q_hover = s.kin.ik(make_transform(rot, [*centre_xy, z_old + SEARCH_HOVER_MM]), q_touch)
+    q_hover = s.kin.ik(make_transform(rot, [*centre_xy, z_old + START_ABOVE_DISH_MM]), q_touch)
     if q_hover is None:
-        raise CalibrationFailedError("No IK for the search hover pose.")
-    s.display.message = f"moving to {SEARCH_HOVER_MM} mm above the field centre"
+        raise CalibrationFailedError("No IK for the start pose above the dish.")
+    s.display.message = f"moving to {START_ABOVE_DISH_MM} mm above the last calibrated dish"
     run_joint_path(s.meca, s.planner.plan_transit(s.q(), q_hover, retreat=False), s.display)
 
-    d = None
-    for hover in (SEARCH_HOVER_MM, LOW_SEARCH_HOVER_MM):
-        t = s.tip()
-        s.move_tip([t[0, 3], t[1, 3], z_old + hover], rot, f"to {hover} mm search height")
-        s.display.message = f"looking for the tip from {hover} mm up"
-        d = spiral_search(s, rot, f"{hover} mm up")
-        if d is not None:
-            print(f"Tip found from {hover} mm up at px {np.round(d.px, 1).tolist()} (score {d.score:.2f}).")
-            break
-
+    s.display.message = f"looking for the tip from {START_ABOVE_DISH_MM} mm up"
+    d = spiral_search(s, rot, f"{START_ABOVE_DISH_MM} mm up")
     if d is not None:
+        print(
+            f"Tip found from {START_ABOVE_DISH_MM} mm up at px {np.round(d.px, 1).tolist()} (score {d.score:.2f})."
+        )
         s.servo(s.fov_centre, "centring", best_effort=True)
-        s.display.message = "descending in view until the sensor feels the dish"
-        # The tip model may be wrong by mm in height, so allow for it below the old dish.
-        r = s.touch(z_old - MAX_OVERTRAVEL_MM - LOW_SEARCH_HOVER_MM, FIRST_DESCENT_MM_S)
+        s.display.message = "descending in view until the tip starts to slide"
+        r = s.touch(z_old - MAX_OVERTRAVEL_MM, FIRST_DESCENT_MM_S)
     else:
-        print("Tip not visible from above - falling back to finding the dish blind.")
-        s.display.message = "tip not visible from above: finding the dish by force first"
-        r = s.touch(z_old - MAX_OVERTRAVEL_MM - SEARCH_HOVER_MM / 2, FIRST_DESCENT_MM_S)
+        print("Tip not visible - falling back to finding the dish blind (force backstop).")
+        s.display.message = "tip not visible: finding the dish by force first"
+        r = s.touch(z_old - MAX_OVERTRAVEL_MM, FIRST_DESCENT_MM_S)
         s.shift(0, 0, FIND_HOVER_MM, "lift to search height")
         d = spiral_search(s, rot, "just above the dish")
         if d is None:
@@ -638,7 +641,7 @@ def main() -> None:
         sys.exit("Bota sensor failed to configure/tare/activate - check its COM port in the config.")
     stream = WrenchStream(sensor)
     detector = ContactDetector(
-        stream, ContactThresholds(torque_mnm=CONTACT_TORQUE_MNM, force_limit_n=FORCE_LIMIT_N)
+        stream, ContactThresholds(torque_mnm=BACKSTOP_TORQUE_MNM, force_limit_n=BACKSTOP_FORCE_N)
     )
     robot = make_robot_from_config(replace(rig_config(RIG), monitor_mode=False))
     robot.connect()
