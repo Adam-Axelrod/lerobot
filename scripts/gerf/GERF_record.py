@@ -20,6 +20,8 @@ camera index in the CONFIG block; no extra integration code is required.
 
 import time
 
+from gerf_arms import FOLLOWER_CALIBRATION_DIR, FOLLOWER_ID, LEADER_CALIBRATION_DIR, LEADER_ID, port
+
 from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.video_utils import VideoEncodingManager
@@ -32,11 +34,9 @@ from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging, log_say
 
 # ============================== CONFIG ==============================
-# --- Arms (same as GERF_teleoperate.py) ---
-FOLLOWER_PORT = "COM3"
-FOLLOWER_ID = "my_yellow_robot_arm"
-LEADER_PORT = "COM4"
-LEADER_ID = "my_purple_leader_arm"
+# --- Arms: ids, ports and calibration are shared via gerf_arms.py ---
+FOLLOWER_PORT = port("follower")
+LEADER_PORT = port("leader")
 
 # Safety: max per-motor position change per command (degrees / gripper units).
 # None = no clamp. A small value (e.g. 5.0) guards against sudden jumps.
@@ -131,11 +131,12 @@ def main():
         SO101FollowerConfig(
             port=FOLLOWER_PORT,
             id=FOLLOWER_ID,
+            calibration_dir=FOLLOWER_CALIBRATION_DIR,
             cameras=CAMERAS,
             max_relative_target=MAX_RELATIVE_TARGET,
         )
     )
-    teleop = SO101Leader(SO101LeaderConfig(port=LEADER_PORT, id=LEADER_ID))
+    teleop = SO101Leader(SO101LeaderConfig(port=LEADER_PORT, id=LEADER_ID, calibration_dir=LEADER_CALIBRATION_DIR))
 
     # Build dataset features from the robot's own observation/action schema, so
     # the camera(s) are picked up automatically from CAMERAS above.
