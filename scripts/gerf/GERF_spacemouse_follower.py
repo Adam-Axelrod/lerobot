@@ -25,13 +25,16 @@ from pathlib import Path
 import numpy as np
 import pyspacemouse
 
+from gerf_arms import FOLLOWER_CALIBRATION_DIR, FOLLOWER_ID, port
+
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 from lerobot.utils.rotation import Rotation
 
 # ----------------------------- CONFIG -----------------------------
-PORT = "COM3"
-ROBOT_ID = "my_awesome_follower_arm"
+# Arm id, port and calibration are shared via gerf_arms.py.
+PORT = port("follower")
+ROBOT_ID = FOLLOWER_ID
 
 URDF_PATH = "./SO101/so101_new_calib.urdf"
 EE_FRAME = "gripper_frame_link"
@@ -86,6 +89,7 @@ def main() -> None:
         SO101FollowerConfig(
             port=PORT,
             id=ROBOT_ID,
+            calibration_dir=FOLLOWER_CALIBRATION_DIR,
             use_degrees=True,  # RobotKinematics expects joints in degrees
             max_relative_target=MAX_RELATIVE_TARGET,
         )

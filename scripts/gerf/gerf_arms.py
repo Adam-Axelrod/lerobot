@@ -20,8 +20,7 @@ LEADER_CALIBRATION_DIR = CALIBRATION_DIR / "teleoperators" / "so_leader"
 
 PORTS = {
     "win32": {"follower": "COM4", "leader": "COM10"},
-    # macOS ports look like /dev/tty.usbmodemXXXX; fill in from `lerobot-find-port`.
-    "darwin": {"follower": None, "leader": None},
+    "darwin": {"follower": "/dev/tty.wchusbserial5B420742321", "leader": "/dev/tty.wchusbserial1330"},
 }
 
 
