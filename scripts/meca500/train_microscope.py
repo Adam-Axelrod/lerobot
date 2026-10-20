@@ -56,7 +56,7 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.scripts.lerobot_train import train
 from lerobot.transforms import ImageTransformsConfig
-from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.import_utils import get_safe_default_video_backend, register_third_party_plugins
 
 # ----------------------------- CONFIG -----------------------------
 # --- Run identity ---
@@ -150,10 +150,12 @@ TRAIN_SEED = 1000
 # --- Hardware ---
 DEVICE = "cuda"  # "cuda", "cuda:0", "cpu", or "mps". Accelerate auto-detects the GPU.
 
-# Video decoder for reading the dataset's camera streams. "pyav" bundles its own
-# FFmpeg and works out of the box; "torchcodec" is faster but needs FFmpeg
-# "full-shared" DLLs on PATH (not installed on this machine — leave "pyav").
-VIDEO_BACKEND = "pyav"
+# Video decoder for reading the dataset's camera streams. None = auto: torchcodec
+# when it can load (needs FFmpeg 4-8 shared libraries — on the SIE laptop the
+# FFmpeg 8.1 "full-shared" build on PATH, on CREATE ~/envs/ffmpeg7 via
+# LD_LIBRARY_PATH), otherwise pyav, which bundles its own FFmpeg, with a warning.
+# Force "pyav" or "torchcodec" only to compare decoders.
+VIDEO_BACKEND = None
 
 # --- Output / logging ---
 # (RUN_NAME / RESUME live at the top of this block — they name the run.)
@@ -364,7 +366,7 @@ def main() -> None:
         dataset=DatasetConfig(
             repo_id=f"{USER}/{NAME}",
             episodes=episodes,
-            video_backend=VIDEO_BACKEND,
+            video_backend=VIDEO_BACKEND or get_safe_default_video_backend(),
             image_transforms=build_image_transforms(),
         ),
         policy=build_policy_config(),

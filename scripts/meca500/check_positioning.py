@@ -65,10 +65,10 @@ ALPHA = 0.5
 # Starting overlay mode — one of MODES below.
 MODE = "blend"
 
-# Video decoder for the dataset's camera streams. "pyav" bundles its own FFmpeg
-# and works out of the box; torchcodec needs FFmpeg DLLs that aren't installed
-# on this machine (same reason train_microscope.py pins pyav).
-VIDEO_BACKEND = "pyav"
+# Video decoder for the dataset's camera streams. None = auto: torchcodec when it
+# can load (the SIE laptop has FFmpeg 8.1 shared DLLs on PATH), otherwise pyav,
+# which bundles its own FFmpeg. Same setting as train_microscope.py.
+VIDEO_BACKEND = None
 
 # Local dataset root. None = the normal HF cache (HF_LEROBOT_HOME).
 DATASET_ROOT: str | None = None
