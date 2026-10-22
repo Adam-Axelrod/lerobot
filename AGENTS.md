@@ -27,9 +27,9 @@ There are two physical benches. The user refers to them by these names:
 | **"the original setup"** | bench 1 | cheap VMS700 USB microscope | MiniONE (`bota/miniONE.json`, COM5) | `meca500_microscope` (also `meca500`, arm cams only) |
 | **"Huanyu's setup"** | bench 2 | expensive Basler acA5472-17ucMED | MiniONE Pro (`bota/miniONE_pro.json`, COM8) | `meca500_basler` (scope only), `meca500_microscope_basler` (+ arm cams) |
 
-Instructions for the user to carry out at the bench are written as Markdown checklists in
-`docs/meca500/instructions/YYYY-MM-DD_<topic>.md` and listed, with a status, in
-`docs/meca500/README.md`. Meca500 design notes live in `docs/meca500/`, never in `docs/source/`
+Instructions for the user to carry out at the bench live in one file,
+`docs/meca500/instructions/NEXT.md`. It holds only the steps still to do. Rewrite it whenever
+the bench state changes, and drop finished steps instead of keeping them as dated checklists. Meca500 design notes live in `docs/meca500/`, never in `docs/source/`
 (upstream's built documentation).
 
 Bench 2's robot base is rotated 180° about vertical relative to bench 1, so per-bench values (`HOME_JOINTS`, `AXIS_SIGNS`, `BOTA_SENSORS`, rollout clamps, any collision/obstacle model) are never interchangeable. Bota configs live in `src/lerobot/robots/meca500/bota/`. Select a bench with the `RIG =` constant at the top of each script, never by forking scripts.
