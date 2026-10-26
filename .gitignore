@@ -188,6 +188,8 @@ outputs/
 .cache/*
 *.stl
 *.urdf
+# ...except the arm model the Meca500 planner and its tests read
+!mecademic_description/urdf/meca_arm_only.urdf
 *.xml
 *.part
 

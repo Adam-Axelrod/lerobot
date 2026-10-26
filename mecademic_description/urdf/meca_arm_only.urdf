@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot name="meca_500_r3">
+
+  <link name="meca_base_link">
+    <inertial>
+      <origin xyz="0 0 0.045" rpy="0 0 0"/>
+      <mass value="1.0"/>
+      <inertia ixx="0.002" ixy="0" ixz="0" iyy="0.002" iyz="0" izz="0.002"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="C:/Users/aa24/PhD/lerobot/mecademic_description/meshes/meca_500_r3_base.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="C:/Users/aa24/PhD/lerobot/mecademic_description/meshes/meca_500_r3_base_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="meca_axis_1_link">
+    <inertial>
+      <origin xyz="0 0 0.02" rpy="0 0 0"/>
+      <mass value="0.5"/>
+      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="C:/Users/aa24/PhD/lerobot/mecademic_description/meshes/meca_500_r3_j1.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="C:/Users/aa24/PhD/lerobot/mecademic_description/meshes/meca_500_r3_j1_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="meca_axis_1_joint" type="revolute">
+    <origin xyz="0 0 0.091" rpy="0 0 0"/>
+    <parent link="meca_base_link"/>
+    <child link="meca_axis_1_link"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="10.0" velocity="2.61799" lower="-3.05433" upper="3.05433"/>
+  </joint>
+
+  <link name="meca_axis_2_link">
+    <inertial>
+      <origin xyz="0 0 0.06" rpy="0 0 0"/>
+      <mass value="0.5"/>
+      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="C:/Users/aa24/PhD/lerobot/mecademic_description/meshes/meca_500_r3_j2.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="C:/Users/aa24/PhD/lerobot/mecademic_description/meshes/meca_500_r3_j2_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="meca_axis_2_joint" type="revolute">
+    <origin xyz="0 0 0.044" rpy="0 0 0"/>
+    <parent link="meca_axis_1_link"/>
+    <child link="meca_axis_2_link"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="10.0" velocity="2.61799" lower="-1.22173048" upper="1.5708"/>
+  </joint>
+
+  <link name="meca_axis_3_link">
+    <inertial>
+      <origin xyz="0 0 0.05" rpy="0 0 0"/>
+      <mass value="0.4"/>
+      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="C:/Users/aa24/PhD/lerobot/mecademic_description/meshes/meca_500_r3_j3.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="C:/Users/aa24/PhD/lerobot/mecademic_description/meshes/meca_500_r3_j3_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="meca_axis_3_joint" type="revolute">
+    <origin xyz="0 0 0.135" rpy="0 0 0"/>
+    <parent link="meca_axis_2_link"/>
+    <child link="meca_axis_3_link"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="10.0" velocity="3.14159" lower="-2.35619" upper="1.22173048"/>
+  </joint>
+
+  <link name="meca_axis_4_link">
+    <inertial>
+      <origin xyz="0.05 0 0" rpy="0 0 0"/>
+      <mass value="0.3"/>
+      <inertia ixx="0.0005" ixy="0" ixz="0" iyy="0.0005" iyz="0" izz="0.0005"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="C:/Users/aa24/PhD/lerobot/mecademic_description/meshes/meca_500_r3_j4.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="C:/Users/aa24/PhD/lerobot/mecademic_description/meshes/meca_500_r3_j4_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="meca_axis_4_joint" type="revolute">
+    <origin xyz="0 0 0.038" rpy="0 0 0"/>
+    <parent link="meca_axis_3_link"/>
+    <child link="meca_axis_4_link"/>
+    <axis xyz="1 0 0"/>
+    <limit effort="10.0" velocity="5.23599" lower="-2.96706" upper="2.96706"/>
+  </joint>
+
+  <link name="meca_axis_5_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.2"/>
+      <inertia ixx="0.0003" ixy="0" ixz="0" iyy="0.0003" iyz="0" izz="0.0003"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="C:/Users/aa24/PhD/lerobot/mecademic_description/meshes/meca_500_r3_j5.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="C:/Users/aa24/PhD/lerobot/mecademic_description/meshes/meca_500_r3_j5_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="meca_axis_5_joint" type="revolute">
+    <origin xyz="0.12 0 0" rpy="0 0 0"/>
+    <parent link="meca_axis_4_link"/>
+    <child link="meca_axis_5_link"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="10.0" velocity="5.23599" lower="-2.00713" upper="2.00713"/>
+  </joint>
+
+  <link name="meca_axis_6_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.1"/>
+      <inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.0001" iyz="0" izz="0.0001"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="C:/Users/aa24/PhD/lerobot/mecademic_description/meshes/meca_500_r3_j6.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="C:/Users/aa24/PhD/lerobot/mecademic_description/meshes/meca_500_r3_j6_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="meca_axis_6_joint" type="revolute">
+    <origin xyz="0.07 0 0" rpy="0 0 0"/>
+    <parent link="meca_axis_5_link"/>
+    <child link="meca_axis_6_link"/>
+    <axis xyz="1 0 0"/>
+    <limit effort="10.0" velocity="8.72665" lower="-3.14159" upper="3.14159"/>
+  </joint>
+
+</robot>
