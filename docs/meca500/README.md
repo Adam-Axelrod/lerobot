@@ -23,3 +23,4 @@ date they were written.
 | [`2026-10-14_auto-touch-test.md`](instructions/2026-10-14_auto-touch-test.md) | Huanyu's setup | Superseded: `auto_calibrate.py` did 23 sensed touches |
 | [`2026-10-14_auto-calibrate.md`](instructions/2026-10-14_auto-calibrate.md) | Huanyu's setup | Done: tip 0.067 mm rms, scope 1.09 px (14 µm), verify ≤ 2.2 px; every touch sensed by the slide |
 | [`2026-10-14_first-touch-runs.md`](instructions/2026-10-14_first-touch-runs.md) | Huanyu's setup | **Next** |
+| [`2026-10-26_mls203-stage-setup.md`](instructions/2026-10-26_mls203-stage-setup.md) | Huanyu's setup | **To do**: install Kinesis, home and test the stage, send Claude the details |
