@@ -22,6 +22,7 @@ Equivalent to (with RIG as --robot.type):
         --teleop.gain_tr_fine=5 --teleop.gain_rot_fine=3 --display_data=true
 """
 
+import logging
 import sys
 
 from lerobot.scripts.lerobot_teleoperate import TeleoperateConfig, teleoperate
@@ -82,8 +83,23 @@ def read_current_joints() -> list[float]:
         robot.disconnect()
 
 
+class _DropSlowLoopWarning(logging.Filter):
+    """Silence the per-cycle "Control loop is running slower" warning during teleop.
+
+    Here the robot is in monitor mode: the SpaceMouse teleop drives the arm from its own
+    thread and connection, so this loop only refreshes the camera view and the joint readout.
+    A slow cycle costs display smoothness, not control. Printed every slow cycle, the warning
+    also scrambles the live table, which redraws itself with cursor moves (2026-10-27). The
+    timing summary printed at Ctrl-C still reports the loop rate and where the time went.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "Control loop is running slower" not in record.getMessage()
+
+
 def main() -> None:
     register_third_party_plugins()
+    logging.getLogger("lerobot.utils.cycle_timer").addFilter(_DropSlowLoopWarning())
 
     home = rig_home_joints(RIG)
     if home is None:
