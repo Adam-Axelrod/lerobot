@@ -31,7 +31,6 @@ check_demos_clearance.py finds no demo collisions, plan_preview.py looks right.
 import contextlib
 import json
 import logging
-import os
 import shutil
 import sys
 import time
@@ -216,10 +215,6 @@ def main() -> None:
     if DISPLAY_DATA:
         # record_loop streams to Rerun when display_data is set; without init the first
         # logged frame raises "No application id found" (as record.py does at startup).
-        # The viewer (rerun.exe) sits next to this interpreter in .venv\Scripts, which is not on
-        # PATH when the venv is not activated (e.g. a conda "(base)" prompt) - rr.spawn then
-        # fails with "Failed to find Rerun Viewer executable in PATH" (2026-10-27).
-        os.environ["PATH"] = os.path.dirname(sys.executable) + os.pathsep + os.environ["PATH"]
         init_rerun(session_name="record_auto")
     register_third_party_plugins()
     bench = BenchConfig.load(RIG)

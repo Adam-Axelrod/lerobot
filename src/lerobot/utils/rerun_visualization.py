@@ -21,6 +21,7 @@ importing from here directly. Requires the ``viz`` extra (``pip install 'lerobot
 
 import numbers
 import os
+import sys
 
 import numpy as np
 
@@ -61,6 +62,9 @@ def init_rerun(
     if ip and port:
         rr.connect_grpc(url=f"rerun+http://{ip}:{port}/proxy")
     else:
+        # The viewer executable is installed next to the interpreter (e.g. .venv\Scripts), which
+        # is not on PATH when the venv is not activated, and rr.spawn only searches PATH.
+        os.environ["PATH"] = os.path.dirname(sys.executable) + os.pathsep + os.environ.get("PATH", "")
         rr.spawn(memory_limit=memory_limit)
 
 
