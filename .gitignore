@@ -190,6 +190,7 @@ outputs/
 *.urdf
 # ...except the arm model the Meca500 planner and its tests read
 !mecademic_description/urdf/meca_arm_only.urdf
+!mecademic_description/meshes/*_collision.stl
 *.xml
 *.part
 
