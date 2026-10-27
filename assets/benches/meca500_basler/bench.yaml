@@ -70,6 +70,15 @@ safety:
 scope:
   camera_key: microscope_cam
   calibration: scope_calibration.json   # written by scripts/meca500/calibrate_scope.py
+  # Focus drive: KST201 K-Cube (serial 26006298) on a ZST225 actuator, position in mm from its
+  # homed zero. Homing it (2026-10-27) lost the focus; refocused by eye on the dish bottom at
+  # this position. Move back here after any re-home. Re-run auto_calibrate after a change.
+  focus_kcube_serial: "26006298"
+  focus_mm: 24.08851
+  # The dish stage: MLS203 on a BBD302 (serial 103476364), homed 2026-10-27. Travel is
+  # 110 x 75 mm, so (55, 37.5) is the middle of its travel.
+  stage_serial: "103476364"
+  stage_xy_mm: [55.0, 37.5]
 
 start:
   # Derived from the measured touch pose by suggest_touch_pose.suggest_start (tip backed 60 mm out
