@@ -31,6 +31,7 @@ check_demos_clearance.py finds no demo collisions, plan_preview.py looks right.
 import contextlib
 import json
 import logging
+import os
 import shutil
 import sys
 import time
@@ -66,7 +67,7 @@ from lerobot.utils.visualization_utils import init_rerun
 # ----------------------------- CONFIG -----------------------------
 RIG = "meca500_basler"
 USER = "AdamAxelrod"
-NAME = "basler_auto_2026-10"  # one dataset per rig and target style - never mix
+NAME = "basler_hover_2026-10-27"  # one dataset per rig and target style - never mix
 TASK = "move_pipette_to_target"
 NUM_EPISODES = 3
 RESUME = False  # append to an existing local dataset of the same NAME
@@ -215,6 +216,10 @@ def main() -> None:
     if DISPLAY_DATA:
         # record_loop streams to Rerun when display_data is set; without init the first
         # logged frame raises "No application id found" (as record.py does at startup).
+        # The viewer (rerun.exe) sits next to this interpreter in .venv\Scripts, which is not on
+        # PATH when the venv is not activated (e.g. a conda "(base)" prompt) - rr.spawn then
+        # fails with "Failed to find Rerun Viewer executable in PATH" (2026-10-27).
+        os.environ["PATH"] = os.path.dirname(sys.executable) + os.pathsep + os.environ["PATH"]
         init_rerun(session_name="record_auto")
     register_third_party_plugins()
     bench = BenchConfig.load(RIG)
