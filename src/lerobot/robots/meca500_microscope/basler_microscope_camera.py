@@ -103,4 +103,8 @@ def basler_microscope_camera(fps: int = 30) -> BaslerCameraConfig:
         rotation=ROTATION,
         reverse_x=REVERSE_X,
         reverse_y=REVERSE_Y,
+        # The first frame after StartGrabbing waits for one full exposure. With the auto-exposed
+        # user set and a dim field (lamp off or low) that took over the default 1 s and connect()
+        # timed out mid-record_auto (2026-10-27); normally connect takes 1.5 s in total.
+        warmup_s=3,
     )
