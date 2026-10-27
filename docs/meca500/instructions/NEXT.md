@@ -1,8 +1,11 @@
 # Next at the bench
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
-**Last updated:** 2026-10-26
-**Time needed:** about 45 min for steps 1-3, plus about 20 min for step 4
+**Last updated:** 2026-10-27
+**Time needed:** about 45 min for steps 1-3, about 20 min for step 4, about 15 min for step 5
+
+**Order.** Do steps 1-3 first, on the calibrated dish. Step 4 can happen at any time. Do step 5
+last, because it uses a second dish.
 
 **Where things stand.** `auto_calibrate.py` ran again on 2026-10-16. The tip moved less than
 0.1 mm. The scope fit is 1.15 px (15 µm), and the dish surface is at z 8.703. Since the pipette
@@ -32,7 +35,7 @@ The tip stops 5 mm above the dish, at half speed. This rechecks the hover run wi
    portal.
 2. In `scripts/meca500/record_auto.py`, set:
    ```python
-   NAME = "basler_hover_2026-10-22"   # use the date of the run; test runs never go in the training dataset
+   NAME = "basler_hover_2026-10-27"   # use the date of the run; test runs never go in the training dataset
    NUM_EPISODES = 3
    STAGE = "hover"
    ```
@@ -54,7 +57,7 @@ The tip now goes all the way down to the dish on the marker.
    currently `0.0`. At 0.1 the tip stops 0.1 mm above the dish: in focus, but not pressing.
 2. In `record_auto.py`, set:
    ```python
-   NAME = "basler_touch_test_2026-10-22"
+   NAME = "basler_touch_test_2026-10-27"
    STAGE = "touch"
    ```
    Keep `NUM_EPISODES = 3`.
@@ -62,7 +65,7 @@ The tip now goes all the way down to the dish on the marker.
    - the tip should come into sharp focus **on the marker**;
    - the pipette should not visibly slide or bend.
 4. If that looks right, set `touch_offset_mm: 0.0`. Then run 3 more episodes with
-   `NAME = "basler_touch_test2_2026-10-22"`. This time the tip should just touch the dish.
+   `NAME = "basler_touch_test2_2026-10-27"`. This time the tip should just touch the dish.
 
 ## 4. Connect the MLS203 stage (any time, about 20 min)
 This is independent of steps 1-3. `record_auto.py` will move the dish to a random position
@@ -90,6 +93,39 @@ that mapping.
 Claude then adds `pythonnet`, a small stage driver and a `stage_probe.py` test script. The first
 test runs against the Kinesis simulator, with no hardware involved.
 
+## 5. Bead images for the digital target (do this LAST, about 15 min)
+The real test target is a 0.1 mm zirconia/silica bead. At our scale that is only about 8 px
+across. The digital marker will be made to look like a bead, from crops of these images, and the
+same images tune the detector that finds the real bead at test time.
+
+1. **Use a SECOND, clean dish**, of the same type as the calibrated one. Never put beads in the
+   calibrated dish: stray beads would show up in every recorded episode, and the tip could hit
+   them.
+2. Send the arm home so the pipette is out of view.
+3. Put a **tiny** amount of beads in the second dish: touch a dry toothpick tip to the beads and
+   tap it over the dish. You want a few isolated beads, not a carpet. Keep the dish dry, as in
+   recording.
+4. Swap the dish onto the stage. **Do not touch the microscope focus or the illumination**; they
+   must match recording.
+5. Close the pylon Viewer, then run:
+   ```powershell
+   .venv\Scripts\python.exe scripts\meca500\capture_frames.py
+   ```
+   Click the image window, then press **space** to save a frame and **q** to quit. Frames go to
+   `assets\benches\meca500_basler\beads\`. Save 10-15 frames, moving the dish between them
+   (by hand, or with the stage from step 4):
+   - about 8 with **one isolated bead** at different places in the image (centre, near the
+     edges, near the dark edge of the lit circle);
+   - 2-3 with **two or three beads** close together;
+   - 2 with **no beads** (background only).
+
+   If beads look out of focus because they sit on the dish bottom and the focus is set
+   elsewhere, still save them, and tell Claude.
+6. Put the calibrated dish back. Its height will have changed slightly, so the next session
+   starts with `auto_calibrate.py` (about 10-15 min, hands off; see the end of this file).
+7. Commit and push the frames (`git add assets/benches/meca500_basler/beads`), or tell Claude
+   and it will.
+
 ## Send Claude
 - the terminal output of `plan_preview.py` and of each recording run;
 - for each run, whether the tip ended on the marker (a screenshot of the last frame helps);
@@ -97,6 +133,7 @@ test runs against the Kinesis simulator, with no hardware involved.
 - for step 4: the controller model and serial number, the centre X, Y in mm, how far you can
   move from it and stay inside the dish, the image direction for +X and +Y, and whether homing
   worked.
+- for step 5: that the bead frames are saved, how many, and whether the beads looked sharp.
 
 Claude then rewrites this file with the steps for the real dataset.
 
