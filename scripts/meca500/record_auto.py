@@ -66,7 +66,7 @@ from lerobot.utils.visualization_utils import init_rerun
 # ----------------------------- CONFIG -----------------------------
 RIG = "meca500_basler"
 USER = "AdamAxelrod"
-NAME = "basler_hover_2026-10-27"  # one dataset per rig and target style - never mix
+NAME = "basler_hover_2026-10-28"  # one dataset per rig and target style - never mix
 TASK = "move_pipette_to_target"
 NUM_EPISODES = 3
 RESUME = False  # append to an existing local dataset of the same NAME
