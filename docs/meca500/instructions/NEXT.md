@@ -1,139 +1,101 @@
 # Next at the bench
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
-**Last updated:** 2026-10-27
-**Time needed:** about 45 min for steps 1-3, about 20 min for step 4, about 15 min for step 5
+**Last updated:** 2026-10-30
+**Time needed:** about 1.5 h once the dish holder is in, plus the bead images (step 4, about 15 min)
 
-**Order.** Do steps 1-3 first, on the calibrated dish. Step 4 can happen at any time. Do step 5
-last, because it uses a second dish.
+**Where things stand.**
+- **Done:**
+  - dry run;
+  - hover and touch test runs;
+  - MLS203 stage and focus K-Cube connected and readable from Python;
+  - a re-calibration on 2026-10-27.
+- **Touch runs:** the tip ended inside the marker ring every time, but 100–150 µm off its
+  centre. The success threshold is 50 µm.
+- **Blocker:** the dish is not on the stage. The glass plate it is meant to sit on is missing,
+  so moving the MLS203 does not move the dish. The dish may also have shifted between runs. Until
+  it sits in a holder, the 2026-10-27 calibration is provisional, the stage can't randomise the
+  background, and no real dataset should be recorded.
 
-**Where things stand.** `auto_calibrate.py` ran again on 2026-10-16. The tip moved less than
-0.1 mm. The scope fit is 1.15 px (15 µm), and the dish surface is at z 8.703. Since the pipette
-crash, no automated recording has run with this calibration. This session reruns the hover test,
-then does the first touch runs. The real dataset comes after that.
+**Kinesis.** Only one program can hold the Thorlabs controllers at a time. Close Kinesis before
+any step where Claude reads or moves the stage or the focus.
 
-> **Do not move or swap the dish.** The dish height was measured on the dish that is on the
-> stage now. If you use a different dish or reseat this one, rerun `auto_calibrate.py` first
-> (see the end of this file).
+**Do not home the focus K-Cube.** Homing resets its zero and loses the focus (it happened on
+2026-10-27). The focus position is saved in `bench.yaml` as `scope.focus_mm`.
 
-Every setting below is in a CONFIG block at the top of the named script.
+## 0. Get the dish holder (no bench time)
+1. Ask Huanyu:
+   - where the glass plate went;
+   - whether it was a Thorlabs part or made for this bench (and if made, whether there is a
+     drawing).
+2. If it has to be bought: the Thorlabs part is probably the **MLS203P2** (slide / petri-dish
+   holder for the MLS203 on inverted microscopes, dishes about 30–60 mm). Check that your dish
+   diameter is in its range, and confirm the price and stock with Thorlabs UK.
+3. Send Claude a photo of the holder in place, with its height above the stage top if you can
+   measure it. The CAD collision model has the stage, but not a holder that might stick up above
+   it.
 
-## 1. Dry run (no robot, 1 min)
-Check that the planner still plans with the 2026-10-16 dish height:
-```powershell
-.venv\Scripts\python.exe scripts\meca500\plan_preview.py
-```
-- Every one of the 100 episodes should plan. Note the tightest clearance it reports (it was
-  0.5 mm beyond the margin with the old calibration).
-- Open `assets\benches\meca500_basler\preview.html` and check that no path runs near the
-  illuminator column.
+## 1. Fit the holder and refocus (about 15 min)
+1. Send the arm home (teleop, **H**) so the pipette is out of the way.
+2. Fit the holder and seat the **recording dish** in it (the clean one, with no beads).
+3. Open the camera view: `.venv\Scripts\python.exe scripts\meca500\capture_frames.py` (q to quit).
+4. In Kinesis, on the focus K-Cube (KST201, serial 26006298), **jog only** (step about
+   0.01–0.05 mm near focus) until the scratches and dust on the dish bottom are as sharp as
+   possible. A fine pen mark on the underside of the dish makes this easier. Do not press Home.
+5. **Close Kinesis**, then tell Claude. Claude reads the new focus position and saves it to
+   `bench.yaml`.
 
-## 2. Hover re-run (3 episodes)
-The tip stops 5 mm above the dish, at half speed. This rechecks the hover run with the new tip.
+## 2. Stage direction and range (Claude runs it, about 5 min)
+With the arm at home and Kinesis closed, tell Claude to run the stage-direction measurement. The
+stage moves ±0.5 mm in X and Y from (55, 37.5), Claude measures how the picture shifts, and the
+stage returns to (55, 37.5). Then tell Claude how far you can move from (55, 37.5) and still
+see the dish bottom, clear of the rim (jog in Kinesis, then close it again).
 
-1. Start with the arm at home and the pipette lifted out of the dish. Close teleop and the web
-   portal.
+## 3. Re-calibrate, then a touch test (about 30 min)
+1. Run `auto_calibrate.py` (`START_ABOVE_DISH_MM = 2.0`, as it is now). See
+   "Re-calibrating" below for what a good result looks like.
 2. In `scripts/meca500/record_auto.py`, set:
    ```python
-   NAME = "basler_hover_2026-10-27"   # use the date of the run; test runs never go in the training dataset
-   NUM_EPISODES = 3
-   STAGE = "hover"
-   ```
-   `NAME` must change. The old `basler_auto_2026-10` dataset still holds the 3 hover episodes
-   from before the crash, and the script refuses to write into it.
-3. Keep a hand near the **e-stop**, then run:
-   ```powershell
-   .venv\Scripts\python.exe scripts\meca500\record_auto.py
-   ```
-4. Watch for these:
-   - nothing on the arm or pipette comes near the illuminator column;
-   - each episode ends with the blurred tip over the green marker. The tip is 5 mm out of
-     focus, so expect a blur, not a sharp point.
-
-## 3. First touch runs (3 + 3 episodes)
-The tip now goes all the way down to the dish on the marker.
-
-1. In `assets/benches/meca500_basler/bench.yaml`, set `target.touch_offset_mm: 0.1`. It is
-   currently `0.0`. At 0.1 the tip stops 0.1 mm above the dish: in focus, but not pressing.
-2. In `record_auto.py`, set:
-   ```python
-   NAME = "basler_touch_test_2026-10-27"
+   NAME = "basler_touch_test_2026-MM-DD"   # today's date
    STAGE = "touch"
+   NUM_EPISODES = 3
    ```
-   Keep `NUM_EPISODES = 3`.
-3. Run it the same way. At the end of each episode:
-   - the tip should come into sharp focus **on the marker**;
-   - the pipette should not visibly slide or bend.
-4. If that looks right, set `touch_offset_mm: 0.0`. Then run 3 more episodes with
-   `NAME = "basler_touch_test2_2026-10-27"`. This time the tip should just touch the dish.
+   `touch_offset_mm` in `bench.yaml` is already `0.0` (the tip just touches the dish).
+3. Run `.venv\Scripts\python.exe scripts\meca500\record_auto.py` with a hand near the e-stop.
+   The tip should come into sharp focus on the marker without visibly sliding.
+4. Tell Claude when it has finished. Claude measures each episode's final tip-to-target error
+   from the recording; you don't need to send anything unless the terminal shows an error.
 
-## 4. Connect the MLS203 stage (any time, about 20 min)
-This is independent of steps 1-3. `record_auto.py` will move the dish to a random position
-between episodes, so the policy never sees the same patch of dish twice. The scope calibration
-maps camera pixels to robot positions, and moving the dish under the fixed camera does not change
-that mapping.
+What happens next depends on that error. If it is still well over 50 µm, Claude adds a final
+vision correction to the recorder (detect the tip just before the touch and nudge it onto the
+target) before the real dataset.
 
-1. **Install Thorlabs Kinesis, 64-bit**, from thorlabs.com (Software → Motion Control →
-   Kinesis), to the default folder. The code will expect `C:\Program Files\Thorlabs\Kinesis\`.
-   This PC's Python is 64-bit, so the 32-bit build will not load.
-2. **Raise the pipette first**: send the arm home. Homing drives the stage to its limits and
-   carries the dish with it, so it must not drag under the tip.
-3. Connect the stage controller by USB and power it on. Open **Kinesis**; the controller should
-   appear with two channels (X and Y). Note the controller **model** from its front label
-   (probably a BBD302) and its **serial number** (a BBD302's starts with `103`).
-4. **Home both channels**, then jog each axis by about 1 mm while watching the microscope feed.
-   Note which way the image moves for +X and for +Y.
-5. Move the stage until a clear part of the dish is under the objective, and note that
-   **X, Y position in mm**. This will be the centre that the random positions are spread around.
-   Check how far you can move from it (try ±5 mm per axis) and stay well inside the dish, clear
-   of the rim and any labels.
-6. **Close Kinesis.** Only one program can hold the controller, so the app must be closed before
-   the Python scripts can connect.
+## 4. Bead images for the digital target (about 15 min, after step 3)
+The real test target is a 0.1 mm zirconia/silica bead, only about 8 px across. These images
+set the look of the digital marker and tune the bead detector.
 
-Claude then adds `pythonnet`, a small stage driver and a `stage_probe.py` test script. The first
-test runs against the Kinesis simulator, with no hardware involved.
-
-## 5. Bead images for the digital target (do this LAST, about 15 min)
-The real test target is a 0.1 mm zirconia/silica bead. At our scale that is only about 8 px
-across. The digital marker will be made to look like a bead, from crops of these images, and the
-same images tune the detector that finds the real bead at test time.
-
-1. **Use a SECOND, clean dish**, of the same type as the calibrated one. Never put beads in the
-   calibrated dish: stray beads would show up in every recorded episode, and the tip could hit
-   them.
-2. Send the arm home so the pipette is out of view.
-3. Put a **tiny** amount of beads in the second dish: touch a dry toothpick tip to the beads and
-   tap it over the dish. You want a few isolated beads, not a carpet. Keep the dish dry, as in
-   recording.
-4. Swap the dish onto the stage. **Do not touch the microscope focus or the illumination**; they
-   must match recording.
-5. Close the pylon Viewer, then run:
-   ```powershell
-   .venv\Scripts\python.exe scripts\meca500\capture_frames.py
-   ```
-   Click the image window, then press **space** to save a frame and **q** to quit. Frames go to
-   `assets\benches\meca500_basler\beads\`. Save 10-15 frames, moving the dish between them
-   (by hand, or with the stage from step 4):
+1. Use a **SECOND, clean dish**. Never put beads in the recording dish.
+2. Send the arm home. Put a **tiny** amount of beads in the second dish: touch a dry toothpick
+   tip to the beads and tap it over the dish. You want a few isolated beads. Keep it dry.
+3. Swap it into the holder. **Do not touch the focus or the illumination.**
+4. Run `.venv\Scripts\python.exe scripts\meca500\capture_frames.py`. Click the image window,
+   then press **space** to save a frame and **q** to quit. Frames go to
+   `assets\benches\meca500_basler\beads\`. Save 10–15, moving the stage between them (Kinesis,
+   then close it before the next step):
    - about 8 with **one isolated bead** at different places in the image (centre, near the
      edges, near the dark edge of the lit circle);
-   - 2-3 with **two or three beads** close together;
-   - 2 with **no beads** (background only).
-
-   If beads look out of focus because they sit on the dish bottom and the focus is set
-   elsewhere, still save them, and tell Claude.
-6. Put the calibrated dish back. Its height will have changed slightly, so the next session
-   starts with `auto_calibrate.py` (about 10-15 min, hands off; see the end of this file).
-7. Commit and push the frames (`git add assets/benches/meca500_basler/beads`), or tell Claude
-   and it will.
+   - 2–3 with **two or three beads** close together;
+   - 2 with **no beads**.
+5. Swap the recording dish back. Because the dish was reseated, rerun `auto_calibrate.py`
+   before any recording.
+6. Tell Claude. Claude commits the frames.
 
 ## Send Claude
-- the terminal output of `plan_preview.py` and of each recording run;
-- for each run, whether the tip ended on the marker (a screenshot of the last frame helps);
-- anything that came close to the illuminator.
-- for step 4: the controller model and serial number, the centre X, Y in mm, how far you can
-  move from it and stay inside the dish, the image direction for +X and +Y, and whether homing
-  worked.
-- for step 5: that the bead frames are saved, how many, and whether the beads looked sharp.
+- step 0: what Huanyu says about the plate, and a photo of the holder in place;
+- step 1: "focused, Kinesis closed" (Claude reads the position itself);
+- step 2: how far from (55, 37.5) the dish stays usable;
+- step 3: the `auto_calibrate` terminal output, and that the touch test finished;
+- step 4: that the bead frames are saved, and whether the beads looked sharp.
 
 Claude then rewrites this file with the steps for the real dataset.
 
@@ -142,12 +104,15 @@ Claude then rewrites this file with the steps for the real dataset.
 |---|---|
 | `calibration residual ... exceeds` | The script won't run on a poor calibration. Rerun `auto_calibrate.py` (below). |
 | `... already holds N episodes` | That `NAME` is already in use. Pick a new one. |
-| The arm starts paused, or won't move | Close teleop and the web portal, then rerun. The script resumes a paused arm when it connects. |
+| `No collision-free path home from the current pose` | The arm was left somewhere the model can't plan from. Jog it straight up 25–30 mm with `teleoperate_microscope.py`, press **H**, close teleop, rerun. |
+| `Timed out waiting for frame from camera` | Check the microscope lamp is on and the pylon Viewer / `capture_frames.py` is closed, then rerun. |
+| The arm starts paused, or won't move | Close teleop, the web portal, and anything on the other PC connected to the robot, then rerun. |
+| The robot portal or scripts can't reach `192.168.0.100` | The USB-C Ethernet adapter needs `192.168.0.50/24` (see Claude's memory notes); a different adapter needs it set again in an admin PowerShell. |
 | The arm stops with a collision or planning error | Send Claude the output. Nothing has hit anything: every path is checked before the arm moves. |
-| The tip is in focus but more than ~10 px off the marker | The tip or scope calibration has drifted, for example because the pipette was knocked. Rerun `auto_calibrate.py`. |
-| The pipette slides at the end of a touch episode | Press **Esc**. Set `touch_offset_mm` back to 0.1 and tell Claude. |
+| Kinesis jog button greyed out | The axis is at the end of its travel (position 0 after homing): only the other direction is allowed. |
+| The pipette slides at the end of a touch episode | Press **Esc**. Set `touch_offset_mm` to 0.1 and tell Claude. |
 
-## Re-calibrating (only if the dish moved or the pipette was knocked)
+## Re-calibrating (after the dish is reseated, the focus changes, or the pipette is knocked)
 This takes about 10–15 min and runs hands off:
 ```powershell
 .venv\Scripts\python.exe scripts\meca500\auto_calibrate.py
