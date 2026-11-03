@@ -76,6 +76,9 @@ def test_primitive_fields_signed_distance():
     np.testing.assert_allclose(box.distance(np.array([[20, 0, 0], [0, 0, 0]])), [10, -10])
     cyl = CylinderField(base=[0, 0, 0], radius=5, height=10)
     np.testing.assert_allclose(cyl.distance(np.array([[10, 0, 5], [0, 0, 15]])), [5, 5])
+    # A tube (dish wall) is hollow: its axis is free, its wall is inside.
+    tube = CylinderField(base=[0, 0, 0], radius=28, height=10, inner_radius=26)
+    np.testing.assert_allclose(tube.distance(np.array([[0, 0, 5], [27, 0, 5], [30, 0, 5]])), [26, -1, 2])
 
 
 def test_grid_field_agrees_with_analytic_box(tmp_path):

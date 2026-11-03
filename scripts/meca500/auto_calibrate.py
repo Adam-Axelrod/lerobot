@@ -61,7 +61,7 @@ RIG = "meca500_basler"
 # 2 mm is enough when the pipette has not changed. After a pipette change or a knock, the new tip
 # can sit several mm lower than the model thinks; set this to ~6 for that run, or the move to the
 # start (not guarded) could drive the tip into the dish.
-START_ABOVE_DISH_MM = 2.0
+START_ABOVE_DISH_MM = 6.0  # 2026-11-03: new dish height is an estimate and the pipette was bent; back to 2.0 after
 HOVER_MM = 1.0  # working hover above the measured dish, once found
 FIND_HOVER_MM = 0.5  # search height just above the dish, where the tip is nearly in focus
 DESCENT_MM_S = 0.15

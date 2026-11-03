@@ -2,130 +2,71 @@
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
 **Last updated:** 2026-11-03
-**Time needed:** Part A about 1 h. Part B about 45 min, on another day once Claude has updated
-the arm's model.
+**Time needed:** Part A about 20 min. Part B about 45 min, after Claude says it's ready.
 
 **Where things stand.**
 - **Done:**
-  - dry run;
-  - hover and touch test runs;
-  - MLS203 stage and focus K-Cube connected and readable from Python;
-  - an acrylic dish holder, flush with the top of the MLS203 (2026-11-03).
-- **Touch runs:** the tip ended inside the marker ring every time, but 100–150 µm off its
-  centre. The success threshold is 50 µm.
-- **The holder raises the dish by about 22 mm.** Everything the arm knows about the dish was
-  measured with it down in the stage opening: the dish surface at z = 8.7 mm, where the stage top
-  is at z = 31 mm. The focus, the collision model, the touch and start poses and the scope
-  calibration are all out of date.
-
-**2026-11-03 incident.** `record_auto.py` was run with the raised dish. It planned to the old
-dish height and the pipette bent on the dish. Before Part B:
-- **Inspect the pipette.** Replace it if it is bent, cracked or chipped. Even if it looks fine,
-  the tip has probably moved in the holder, so Part B's re-calibration starts 6 mm up.
-- `record_auto.py` and `auto_calibrate.py` now **refuse to start** unless the focus K-Cube is at
-  the focus stored with the calibration (`scope.focus_mm`). This needs the K-Cube on and plugged
-  in by USB, and Kinesis closed. Claude updates `focus_mm` together with the dish height, so a
-  refocus blocks the arm until the model matches.
-
-**How this session works.** In Part A the arm stays at home the whole time: you refocus, measure
-the holder, and take the bead images. Claude then updates the arm's model, with no bench time.
-Part B, the re-calibration and touch test, comes after that.
+  - acrylic dish holder fitted, photographed and measured;
+  - refocused on the dish bottom: focus K-Cube at **4.000 mm** (saved as `scope.focus_mm`);
+  - arm model updated by Claude for the raised dish: dish and acrylic added to the collision
+    model, new touch and start poses, a dish-height estimate of z 27.
+- **Dropped for now:** the zirconia beads. The dataset uses the digital target over the empty
+  dish; the real-bead test comes later.
+- **Stage problem:** the MLS203 Y axis enables and is homed (at 37.5 mm), but the **X axis will
+  not enable**, in Kinesis or from Python. It worked on 2026-10-27.
+- **2026-11-03 incident:** `record_auto.py` ran before the model was updated and bent the
+  pipette on the raised dish. `record_auto.py` and `auto_calibrate.py` now refuse to start unless
+  the focus K-Cube reads `scope.focus_mm`. This needs the K-Cube on, plugged in by USB, and
+  Kinesis closed.
 
 ## Before you start
-- **Do not run `auto_calibrate.py` or `record_auto.py`** until Claude says Part B is ready. The
-  first move of `auto_calibrate.py` goes 2 mm above the OLD dish height. That point is now about
-  20 mm inside the acrylic, and the move is not guarded. Teleop and **H** (home) are fine.
+- **Do not run `auto_calibrate.py` or `record_auto.py`** until Claude says Part B is ready.
+  Teleop and **H** (home) are fine.
 - **Kinesis.** Only one program can hold the Thorlabs controllers at a time. Close Kinesis before
   any step where Claude reads or moves the stage or the focus.
-- **Do not home the focus K-Cube.** Homing resets its zero and loses the focus (it happened on
-  2026-10-27). The old focus position is 24.08851 mm (`scope.focus_mm` in `bench.yaml`).
-- You need both dishes: the clean **recording dish** (never put beads in it) and a **second,
-  clean dish** for the beads.
+- **Do not home or move the focus K-Cube.** It must stay at 4.000 mm.
 
-# Part A: today (about 1 h, arm at home throughout)
+# Part A: now (about 20 min, arm at home throughout)
 
-## A1. Fit the holder (5 min)
-1. Open `.venv\Scripts\python.exe scripts\meca500\teleoperate_microscope.py`, press **H** to send
-   the arm home, and close teleop.
-2. Fit the holder and seat the **recording dish** in it.
-3. Take a photo of the holder in place, from the side if you can. Claude needs to see anything
-   that sticks up above the stage top.
+## A1. Fix the stage X axis (10 min)
+1. Send the arm home (teleop, **H**) and close teleop.
+2. Close Kinesis.
+3. On the back of the BBD302, check that the **X-axis stage cable** (channel 1) is fully pushed in
+   and its screws are tight. Compare it with the Y cable. The cables run to the MLS203; check
+   none got pulled while the holder was fitted.
+4. **Power-cycle the BBD302:** switch it off, wait 10 s, switch it on. Look at the front panel:
+   note any channel showing a fault or error light.
+5. Open Kinesis. **Enable** both channels, then **Home** both (the dish moves with the stage, so
+   keep the pipette at home). Then move to **X 55, Y 37.5**.
+6. If X still won't enable, note what the front panel shows, close Kinesis and tell Claude.
 
-## A2. Refocus on the dish bottom (15 min)
-1. Open the camera view: `.venv\Scripts\python.exe scripts\meca500\capture_frames.py`. Leave it
-   open, and don't press space yet.
-2. Open Kinesis. On the focus K-Cube (KST201, serial 26006298), **jog only**. Never press Home.
-3. The objective has to move about 22 mm, and the actuator has only 25 mm of travel. Jog in
-   about 1 mm steps until the picture starts to sharpen. Then use 0.01–0.05 mm steps until the
-   scratches and dust on the dish bottom are as sharp as possible. A fine pen mark on the
-   underside of the dish helps.
-4. **If the jog button greys out before the dish is sharp, stop here.** The actuator is at the end
-   of its travel, so the focus can't reach the dish at this height. The holder would need a pocket
-   to lower the dish. Write down the position, close Kinesis, and send it to Claude. Skip the rest
-   of Part A.
-5. Once it's sharp, write down the position Kinesis shows, then **close Kinesis**.
-6. Leave `capture_frames.py` open for A4.
-
-## A3. Measure the holder and dish (10 min)
-Write these down for Claude:
-- the acrylic's thickness;
-- whether the dish sits flat on top of the acrylic, or in a pocket (and how deep);
-- whether there is a hole under the dish, or the microscope looks through the acrylic;
-- the dish's outside diameter and wall height;
-- anything on the holder above the stage top (screws, clamps, tabs), and how high it sticks up.
-
-## A4. Stage range (5 min)
+## A2. Stage range (5 min)
 Use Kinesis on the MLS203 (BBD302, serial 103476364), jogging only.
-1. Start from (55, 37.5).
-2. Move the stage in each direction (+X, −X, +Y, −Y) until the dish rim or the edge of the holder
-   hole comes into view.
+1. Start from (55, 37.5), with the camera view open
+   (`.venv\Scripts\python.exe scripts\meca500\capture_frames.py`, q to quit).
+2. Move the stage in each direction (+X, −X, +Y, −Y) until the dish wall comes into view.
 3. Write down each position.
-4. Go back to (55, 37.5).
-5. Close Kinesis.
+4. Go back to (55, 37.5) and **close Kinesis**.
 
-## A5. Bead images (20 min)
-The real test target is a 0.1 mm zirconia/silica bead, only about 8 px across. These images
-set the look of the digital marker and tune the bead detector.
-
-1. Put a **tiny** amount of beads in the **second dish**: touch a dry toothpick tip to the beads
-   and tap it over the dish. You want a few isolated beads. Keep it dry.
-2. Swap it into the holder in place of the recording dish. **Do not touch the focus or the
-   illumination.** If the beads aren't sharp, note it, but don't refocus.
-3. In the `capture_frames.py` window, click the image, then press **space** to save a frame. Frames
-   go to `assets\benches\meca500_basler\beads\`. Save 10–15, moving the stage between them in
-   Kinesis:
-   - about 8 with **one isolated bead** at different places in the image (centre, near the
-     edges, near the dark edge of the lit circle);
-   - 2–3 with **two or three beads** close together;
-   - 2 with **no beads**.
-4. Press **q** to quit `capture_frames.py`. Move the stage back to (55, 37.5), and close Kinesis.
-5. Swap the **recording dish** back into the holder. Leave the arm at home.
-
-## A6. Send Claude
-- the focus position from A2 (or where it ran out of travel);
-- the measurements from A3, and the photo from A1;
-- the four stage positions from A4;
-- that the bead frames are saved, and whether the beads looked sharp.
+## A3. Send Claude
+- whether X now enables and both axes homed (or what the front panel showed);
+- the four stage positions from A2;
+- whether the pipette was replaced, or looked undamaged.
 
 Claude then:
-- saves the focus and stage range to `bench.yaml`, and commits the bead frames;
-- sets the new dish height, and adds the dish wall to the collision model (it now sticks up above
-  the stage, where before it was below it);
-- re-solves the touch and start poses. The old ones were chosen for a dish deep in the opening,
-  where only 5 of 1512 approach angles were clear;
-- runs a planner dry run;
-- sets the first re-calibration to start 6 mm up, because the new dish height is only an
-  estimate until the tip touches it;
-- runs the stage-direction measurement. With Kinesis closed and the arm at home, the stage moves
-  ±0.5 mm in X and Y and back while Claude watches the image. Nothing for you to do;
-- updates Part B below, and tells you when it is ready.
+- runs the stage-direction measurement (the stage moves ±0.5 mm and back; nothing for you to
+  do);
+- widens the dish in the collision model to cover the stage range;
+- tells you Part B is ready.
 
 # Part B: after Claude says it's ready (about 45 min)
 
 ## B1. Re-calibrate (15 min)
-Run `auto_calibrate.py`, with `START_ABOVE_DISH_MM` as Claude set it (see "Re-calibrating" below).
-Keep a hand near the e-stop on the first descent. Send Claude the terminal output and wait for a
-go-ahead before B2.
+1. Check the stage is at (55, 37.5) and Kinesis is closed.
+2. Run `.venv\Scripts\python.exe scripts\meca500\auto_calibrate.py`. It is set to start 6 mm above
+   the ESTIMATED dish height (z 27). Keep a hand near the e-stop on the first descent.
+3. Send Claude the terminal output and wait for a go-ahead before B2. Claude moves the dish in
+   the collision model to the measured height.
 
 ## B2. Hover check (10 min)
 1. In `scripts\meca500\record_auto.py`, set:
@@ -161,8 +102,8 @@ real dataset.
 |---|---|
 | `REFUSING TO START: Focus K-Cube ... not found` | Power the focus K-Cube, plug in its USB, close Kinesis, rerun. |
 | `REFUSING TO START: The microscope focus is at ... but the bench was calibrated at ...` | The dish or focus changed since calibration. Don't override it: tell Claude. |
-| Focus jog greys out before the dish is sharp (A2) | End of travel: the focus can't reach the dish. Stop, note the position, tell Claude. |
-| Kinesis jog button greyed out (other times) | The axis is at the end of its travel: only the other direction is allowed. |
+| A stage axis won't enable in Kinesis | Check its cable at the BBD302, power-cycle the BBD302, try again; then tell Claude what the front panel shows. |
+| Kinesis jog button greyed out | The axis is at the end of its travel: only the other direction is allowed. |
 | `capture_frames.py` or a script can't open the camera | Close the pylon Viewer and any other script using the Basler, then rerun. |
 | `calibration residual ... exceeds` | The script won't run on a poor calibration. Rerun `auto_calibrate.py` (below). |
 | `... already holds N episodes` | That `NAME` is already in use. Pick a new one. |

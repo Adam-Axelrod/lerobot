@@ -52,17 +52,29 @@ class BoxField:
 
 
 class CylinderField:
-    """Vertical cylinder: ``base`` is the centre of its bottom face, mm."""
+    """Vertical cylinder: ``base`` is the centre of its bottom face, mm.
 
-    def __init__(self, base, radius: float, height: float, name: str = "cylinder"):
+    With ``inner_radius`` > 0 it is a tube (e.g. a dish wall): hollow inside, so the tip can reach
+    into it.
+    """
+
+    def __init__(self, base, radius: float, height: float, name: str = "cylinder", inner_radius: float = 0.0):
         self.name = name
         self.base = np.asarray(base, dtype=float)
         self.radius = float(radius)
         self.height = float(height)
+        self.inner_radius = float(inner_radius)
+        if not 0.0 <= self.inner_radius < self.radius:
+            raise ValueError(f"{name}: inner_radius must be in [0, radius)")
 
     def distance(self, pts: np.ndarray) -> np.ndarray:
         d = pts - self.base
-        dr = np.linalg.norm(d[:, :2], axis=1) - self.radius
+        r = np.linalg.norm(d[:, :2], axis=1)
+        if self.inner_radius > 0:
+            mid, half = (self.radius + self.inner_radius) / 2, (self.radius - self.inner_radius) / 2
+            dr = np.abs(r - mid) - half
+        else:
+            dr = r - self.radius
         dz = np.abs(d[:, 2] - self.height / 2) - self.height / 2
         q = np.stack([dr, dz], axis=1)
         return np.linalg.norm(np.maximum(q, 0), axis=1) + np.minimum(q.max(axis=1), 0)

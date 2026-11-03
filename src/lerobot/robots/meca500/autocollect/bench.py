@@ -88,7 +88,11 @@ class BenchConfig:
         for b in obs.get("boxes", []):
             fields.append(BoxField(b["center"], b["size"], b.get("yaw_deg", 0.0), b.get("name", "box")))
         for c in obs.get("cylinders", []):
-            fields.append(CylinderField(c["base"], c["radius"], c["height"], c.get("name", "cylinder")))
+            fields.append(
+                CylinderField(
+                    c["base"], c["radius"], c["height"], c.get("name", "cylinder"), c.get("inner_radius", 0.0)
+                )
+            )
         reg = self.registration_transform()
         if reg is not None:
             fields = [TransformedField(f, reg) for f in fields]
