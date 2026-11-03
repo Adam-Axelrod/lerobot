@@ -21,17 +21,21 @@ obstacles:
   # Since 2026-11-03 the dish sits on a 2 mm acrylic plate in the MLS203P1 insert, recessed 8 mm
   # below the stage top (z 31): acrylic z 21-23, dish (56 mm OD, 10 mm tall, 2 mm floor) z 23-33,
   # so the touch surface is z ~25 and the rim stands 2 mm above the stage. User's measurements.
-  # The dish wall is a TUBE (inner_radius) so the tip can reach inside. The dish is centred on the
-  # camera's field of view, (238.4, -95.0) from the scope calibration, which is ~9.5 mm from the
-  # CAD optical axis above; centring it on the CAD axis put edge targets 13 mm from the wall.
+  # The dish wall is a TUBE (inner_radius) so the tip can reach inside.
+  # Position: the camera's field of view is centred at (238.4, -95.0) (scope calibration), ~9.5 mm
+  # from the CAD optical axis above. The user jogged the stage until the wall came into view
+  # (2026-11-03, rough): the dish centre is under the camera at stage (50.3, 34.8), so with the
+  # stage at (55, 37.5) it sits at (241.2, -99.8) (stage +X = robot -y, +Y = robot +x). The wall
+  # is padded 2 mm each side (24-30 mm) for those rough readings.
+  # VALID ONLY WITH THE STAGE AT (55, 37.5). A ring swept over +-10 mm of stage travel (16-38 mm)
+  # made targets unreachable, so random stage moves need the dish placed per episode.
   # Heights are raised 2 mm from the measurements to match the calibration estimate (surface z 27);
-  # reset them from the surface auto_calibrate measures. Stage at (55, 37.5); the stage moves the
-  # dish, so widen these once the stage range is set.
+  # reset them from the surface auto_calibrate measures.
   boxes:
     - {name: acrylic_plate, center: [237.5, -85.5, 24.0], size: [78, 118, 2]}
   cylinders:
-    - {name: dish_floor, base: [238.4, -95.0, 25.0], radius: 28, height: 2}
-    - {name: dish_wall, base: [238.4, -95.0, 25.0], radius: 28, inner_radius: 26, height: 10}
+    - {name: dish_floor, base: [241.2, -99.8, 25.0], radius: 30, height: 2}
+    - {name: dish_wall, base: [241.2, -99.8, 25.0], radius: 30, inner_radius: 24, height: 10}
 
 tool:
   # Holder + pipette as one STL in the FLANGE frame (Meca FRF: origin on the flange face,

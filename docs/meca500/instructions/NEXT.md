@@ -2,7 +2,7 @@
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
 **Last updated:** 2026-11-03
-**Time needed:** Part A about 10 min. Part B about 45 min, after Claude says it's ready.
+**Time needed:** about 45 min (Part B). Part A is done.
 
 **Where things stand.**
 - **Done:**
@@ -14,40 +14,25 @@
   dish; the real-bead test comes later.
 - **Stage working:** after a BBD302 power cycle, both axes enabled from Python (the X axis had a
   latched fault before). Both are homed and at (55, 37.5). The stage-direction measurement is
-  done: +X moves the image down, +Y moves it right, 12.85 µm/px.
+  done: +X moves the image down, +Y moves it right, 12.85 µm/px. Stage range measured: the dish
+  is centred under the camera at stage (50.3, 34.8) and is usable over about ±10 mm.
+- **Model ready:** the dry run plans 100/100 episodes, tightest 1.3 mm beyond the margin.
 - **2026-11-03 incident:** `record_auto.py` ran before the model was updated and bent the
   pipette on the raised dish. `record_auto.py` and `auto_calibrate.py` now refuse to start unless
   the focus K-Cube reads `scope.focus_mm`. This needs the K-Cube on, plugged in by USB, and
   Kinesis closed.
 
 ## Before you start
-- **Do not run `auto_calibrate.py` or `record_auto.py`** until Claude says Part B is ready.
-  Teleop and **H** (home) are fine.
+- **Inspect the pipette** (it bent on 2026-11-03). Replace it if it is bent, cracked or chipped.
+  The re-calibration starts 6 mm up either way.
+- **Keep the stage at (55, 37.5)** for all of Part B. The collision model places the dish for
+  that stage position only; random stage moves come later, once Claude has written the stage
+  driver.
 - **Kinesis.** Only one program can hold the Thorlabs controllers at a time. Close Kinesis before
   any step where Claude reads or moves the stage or the focus.
 - **Do not home or move the focus K-Cube.** It must stay at 4.000 mm.
 
-# Part A: now (about 10 min, arm at home throughout)
-
-## A1. Stage range (5 min)
-Use Kinesis on the MLS203 (BBD302, serial 103476364), jogging only. Both axes are already enabled
-and homed; if Kinesis shows them disabled (e.g. after a power cycle), Enable and Home both first,
-with the arm at home.
-1. Start from (55, 37.5), with the camera view open
-   (`.venv\Scripts\python.exe scripts\meca500\capture_frames.py`, q to quit).
-2. Move the stage in each direction (+X, −X, +Y, −Y) until the dish wall comes into view.
-3. Write down each position.
-4. Go back to (55, 37.5) and **close Kinesis**.
-
-## A2. Send Claude
-- the four stage positions from A1;
-- whether the pipette was replaced, or looked undamaged.
-
-Claude then:
-- widens the dish in the collision model to cover the stage range;
-- tells you Part B is ready.
-
-# Part B: after Claude says it's ready (about 45 min)
+# Part B: ready now (about 45 min)
 
 ## B1. Re-calibrate (15 min)
 1. Check the stage is at (55, 37.5) and Kinesis is closed.
