@@ -566,7 +566,7 @@ def test_stage_model_maps_stage_moves_and_samples_inside_the_disc():
     scope = {
         "stage_px_per_mm": [[0.0, 78.0], [78.0, 0.0]],
         "stage_xy_mm": [55.0, 37.5],
-        "stage_dish_centre_mm": [50.0, 35.0],
+        "stage_random_centre_mm": [50.0, 35.0],
         "stage_random_radius_mm": 10.0,
     }
     m = StageModel.from_bench(scope, cal)

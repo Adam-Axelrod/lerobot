@@ -108,11 +108,14 @@ scope:
   # image down (+v = robot -y), +Y moves it right (+u = robot +x). 12.85 um/px, ~3% finer than the
   # pre-holder scope calibration (13.25), which was made at the old dish height.
   stage_px_per_mm: [[1.01, 77.6], [77.87, -0.88]]
-  # Random stage positions between episodes (record_auto STAGE_MOVES): uniform in a disc around the
-  # stage position that centres the dish under the camera (from the user's wall sightings,
-  # 2026-11-03, rough). 10 mm keeps the field of view well inside the 26 mm inner radius.
-  stage_dish_centre_mm: [50.3, 34.8]
-  stage_random_radius_mm: 10.0
+  # Random stage positions between episodes (record_auto STAGE_MOVES): uniform in a disc. The dish
+  # is centred under the camera at stage (50.3, 34.8) (the user's wall sightings, 2026-11-03,
+  # rough). Moving it in -X brings its wall into the pipette's approach: planner acceptance fell
+  # to 20% at 10 mm and 0% at 13 mm, against 45-90% in +X, +Y and -Y (2026-11-03 probe). So the
+  # disc sits 3 mm towards +X: it reaches 6 mm in -X and 12 mm in +X, and keeps the field of view
+  # >= 9 mm inside the dish wall.
+  stage_random_centre_mm: [53.3, 34.8]
+  stage_random_radius_mm: 9.0
 
 start:
   # Derived from the measured touch pose by suggest_touch_pose.suggest_start (tip backed 60 mm out

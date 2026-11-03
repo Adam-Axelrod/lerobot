@@ -117,8 +117,8 @@ class StageModel:
 
     ``reference_xy``: the stage position the bench's dish obstacles are written for.
     ``robot_per_stage_mm``: 2x2, robot (x, y) mm moved per stage (X, Y) mm.
-    ``centre_xy`` and ``radius_mm``: random positions are drawn in this disc (the dish centred
-    under the camera at ``centre_xy``; ``radius_mm`` keeps the field of view inside the dish).
+    ``centre_xy`` and ``radius_mm``: random positions are drawn in this disc (bench.yaml
+    stage_random_centre_mm, stage_random_radius_mm: chosen to keep the approach clear of the wall).
     ``travel``: the stage's limits, mm.
     """
 
@@ -140,7 +140,7 @@ class StageModel:
         return cls(
             reference_xy=np.asarray(scope["stage_xy_mm"], float),
             robot_per_stage_mm=mm_per_px @ px_per_mm,
-            centre_xy=np.asarray(scope.get("stage_dish_centre_mm", scope["stage_xy_mm"]), float),
+            centre_xy=np.asarray(scope.get("stage_random_centre_mm", scope["stage_xy_mm"]), float),
             radius_mm=float(scope.get("stage_random_radius_mm", 0.0)),
         )
 
@@ -156,4 +156,4 @@ class StageModel:
             xy = self.centre_xy + r * np.array([np.cos(a), np.sin(a)])
             if all(lo <= v <= hi for v, (lo, hi) in zip(xy, self.travel, strict=True)):
                 return xy
-        raise StageError("No stage position inside the travel; check stage_dish_centre_mm and the radius.")
+        raise StageError("No stage position inside the travel; check stage_random_centre_mm and the radius.")
