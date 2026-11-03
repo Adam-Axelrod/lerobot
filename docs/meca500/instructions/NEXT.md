@@ -82,7 +82,7 @@ see the dish bottom, clear of the rim (jog in Kinesis, then close it again).
    NUM_EPISODES = 3
    ```
    `touch_offset_mm` in `bench.yaml` is already `0.0` (the tip just touches the dish).
-3. Run `.venv\Scripts\python.exe scripts\meca500\record_auto.py` with a hand near the e-stop.
+4. Run `.venv\Scripts\python.exe scripts\meca500\record_auto.py` with a hand near the e-stop.
    The tip should come into sharp focus on the marker without visibly sliding.
 5. Tell Claude when it has finished. Claude measures each episode's final tip-to-target error
    from the recording; you don't need to send anything unless the terminal shows an error.
