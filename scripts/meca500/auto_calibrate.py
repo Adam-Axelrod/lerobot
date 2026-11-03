@@ -74,6 +74,11 @@ SERVO_TOL_PX = 10.0
 PIVOT_TILTS_DEG = 10.0  # tilt about world x and y, both ways
 PIVOT_TWIST_DEG = 12.0  # twist about the pipette axis, both ways
 MIN_PIVOT_TOUCHES = 4
+# Before each pivot orientation the tip backs out this far along the pipette (out of view, same
+# wrist angle) for a fresh background. Since the dish was raised (2026-11-03), some wrist angles put
+# the arm or holder in the illuminator's light: the field goes dark on one side, auto-exposure
+# shifts, and against the home background nothing was detected ("Lost the tip", 6 of 9 skipped).
+PIVOT_BACKGROUND_BACKOUT_MM = 12.0
 GRID_OUTER, GRID_INNER = 8, 4  # scope points on two rings inside the visible circle
 VERIFY_POINTS = 3
 # Force-sensor BACKSTOP only (vision senses contact). Well above the 0.3 mNm / 0.05 N that a
@@ -280,6 +285,20 @@ class Session:
         self.save_debug("detect", best)
         return best
 
+    def recapture_background(self, label: str) -> None:
+        """Take a new background with the tip where it is now (which must be out of view)."""
+        import cv2
+
+        self.display.sleep(1.0)  # let auto-exposure settle
+        frames = [self.display.frame().astype(np.float32) for _ in range(5)]
+        self.background = np.median(frames, axis=0).astype(np.uint8)
+        if self.debug_dir is not None:
+            self._n_debug += 1
+            cv2.imwrite(
+                str(self.debug_dir / f"{self._n_debug:04d}_background_{label}.png"),
+                cv2.cvtColor(self.background, cv2.COLOR_RGB2BGR),
+            )
+
     def save_debug(self, tag: str, det=None) -> None:
         """Write the latest frame (with the detection, if any) to this run's debug folder."""
         import cv2
@@ -477,6 +496,7 @@ def stage_tip_calibration(s: Session, first: dict) -> np.ndarray:
     z_dish = first["z_dish"]
     ref_xy = first["xy"]
     z_safe, z_hover = z_dish + 3.0, z_dish + HOVER_MM  # ABSOLUTE heights over the measured dish
+    home_background = s.background
     for i, (axis, ang) in enumerate(poses):
         rot = axis_angle(axis, np.radians(ang)) @ rot0
         s.display.message = f"touch the same spot from wrist angle {i + 1} of {len(poses)} ({ang:+.0f} deg)"
@@ -484,6 +504,11 @@ def stage_tip_calibration(s: Session, first: dict) -> np.ndarray:
             t = s.tip()
             s.move_tip([t[0, 3], t[1, 3], z_safe], t[:3, :3], "lift before rotating")
             s.move_tip([ref_xy[0], ref_xy[1], z_safe], rot, f"rotate {i + 1}")
+            # Fresh background at this wrist angle (see PIVOT_BACKGROUND_BACKOUT_MM).
+            out = np.array([ref_xy[0], ref_xy[1], z_safe]) - rot[:, 2] * PIVOT_BACKGROUND_BACKOUT_MM
+            s.move_tip(out, rot, f"tip out of view {i + 1}")
+            s.recapture_background(f"orientation{i + 1}")
+            s.move_tip([ref_xy[0], ref_xy[1], z_safe], rot, f"back in {i + 1}")
             s.move_tip([ref_xy[0], ref_xy[1], z_hover], rot, "down to hover")
             s.servo(ref_px, f"orientation {i + 1}")
             # The tip model is the unknown here, so each orientation's dish height in the model
@@ -509,6 +534,7 @@ def stage_tip_calibration(s: Session, first: dict) -> np.ndarray:
         t = s.tip()
         s.move_tip([t[0, 3], t[1, 3], z_safe], t[:3, :3], "lift")
         s.move_tip([ref_xy[0], ref_xy[1], z_safe], rot0, "back to the reference orientation")
+    s.background = home_background  # the reference wrist angle detects fine against it
     if len(flanges) < MIN_PIVOT_TOUCHES:
         raise CalibrationFailedError(f"Only {len(flanges)} usable pivot touches (need {MIN_PIVOT_TOUCHES}).")
     # R_k t + p_k = c + e_k, with e_k the known image offset of touch k from the reference pixel.

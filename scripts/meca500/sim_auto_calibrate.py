@@ -48,10 +48,12 @@ if SAME_PIPETTE:  # recalibrating the same pipette: tip barely moved, start at t
 else:  # a pipette change: the tip is mm off, so start high, as the CONFIG comment says to
     TRUE_DELTA = np.array([1.0, -0.8, 3.0])
     autocal.START_ABOVE_DISH_MM = 6.0
-TRUE_DISH_Z = 8.0
 SPEEDUP = 5.0  # sim time runs faster during velocity moves (higher = coarser touch-downs)
 
 bench = BenchConfig.load("meca500_basler")
+# The true dish sits a little off the calibrated one, as on the arm (2026-11-03: estimate 27.0,
+# found 27.72). Relative, so the sim follows the bench when the dish moves (it was a fixed 8.0).
+TRUE_DISH_Z = bench.calibration().surface_z_mm + 0.7
 model_kin = bench.kinematics()
 true_tool = model_kin.tool.copy()
 true_tool[:3, 3] += TRUE_DELTA
@@ -154,12 +156,15 @@ def render(meca):
         px = A_inv_lin @ (tip[:2] - np.asarray(cam.px_to_xy)[:, 2])
         back = tip[:2] - 30 * t[:2, 2]  # 30 mm back along the pipette, projected
         px_back = A_inv_lin @ (back - np.asarray(cam.px_to_xy)[:, 2])
-        layer = img.copy()
-        cv2.line(layer, (int(px[0]), int(px[1])), (int(px_back[0]), int(px_back[1])), (30, 25, 10), 7)
+        # Only the pipette is out of focus - the dish stays sharp (blurring the whole frame made a
+        # background taken with the tip backed out match nothing).
+        mask = np.zeros(img.shape[:2], np.float32)
+        cv2.line(mask, (int(px[0]), int(px[1])), (int(px_back[0]), int(px_back[1])), 1.0, 7)
         s = 3 * max(h, 0)  # blur grows smoothly with height, as through a real objective
         k = int(2 * round(2 * s) + 1)
-        layer = cv2.GaussianBlur(layer, (k, k), s) if s > 0.3 else layer
-        img = layer
+        mask = cv2.GaussianBlur(mask, (k, k), s) if s > 0.3 else mask
+        a = mask[..., None]
+        img = (img * (1 - a) + np.array([30, 25, 10], np.float32) * a).astype(np.uint8)
     return img
 
 
