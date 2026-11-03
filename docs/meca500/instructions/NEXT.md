@@ -2,7 +2,7 @@
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
 **Last updated:** 2026-11-03
-**Time needed:** about 15 min (B4).
+**Time needed:** about 10 min (B5).
 
 **Where things stand.**
 - **Done:**
@@ -32,7 +32,7 @@
   any step where Claude reads or moves the stage or the focus.
 - **Do not home or move the focus K-Cube.** It must stay at 4.000 mm.
 
-# Part B: B4 now (about 15 min)
+# Part B: B5 now (about 10 min)
 
 ## B1. Re-calibrate: DONE (2026-11-03)
 Tip moved ~1.2 mm (the pipette shifted when it bent); pivot 0.076 mm, scope 1.26 px (16 µm),
@@ -46,20 +46,32 @@ Hover and open-loop touch tests ran cleanly. The touches landed 62-122 µm from 
 and 0.4 mm before the touch), detects the tip, and shifts the rest of the approach onto the
 target. The pauses are part of the recorded episode.
 
-## B4. Touch test with the vision correction (15 min)
-1. Keep the stage at (55, 37.5) and Kinesis closed.
+## B4. Touch test with the vision correction: DONE (2026-11-03)
+Final tip-to-target errors 12, 49 and 16 µm (live measurement on the raw frames). The open-loop
+error the checkpoints measured was 5-7 px (70-90 µm). Episode 1's pre-touch point was outside
+the image, so only the 0.4 mm checkpoint corrected, and it ended just inside 50 µm.
+
+## B5. Ten corrected touch episodes (about 10 min)
+Three episodes are too few to judge the error distribution. This run gives ten.
+1. Keep the stage at (55, 37.5) and Kinesis closed. The focus K-Cube must be on (USB) for the
+   startup check.
 2. In `scripts\meca500\record_auto.py`, set:
    ```python
-   NAME = "basler_touch_corrected_2026-MM-DD"   # today's date
+   NAME = "basler_touch_corrected10_2026-MM-DD"   # today's date
    STAGE = "touch"
-   NUM_EPISODES = 3
+   NUM_EPISODES = 10
    ```
-3. Run it with a hand near the e-stop. On the way in, the arm stops twice, for about half a second
-   each time. It may then move very slightly sideways, by up to ~0.1 mm, before touching.
-4. The terminal prints `correction at pretouch`, `correction at near` and `final: ... um` for each
-   episode. `tip not detected` at the pretouch checkpoint is normal when the pre-touch point is
-   outside the image.
-5. Tell Claude when it has finished. Claude checks the final errors against 50 µm.
+3. Run `.venv\Scripts\python.exe scripts\meca500\record_auto.py` with a hand near the e-stop.
+   Each episode takes about 30-40 s, so the whole run takes about 6 min plus the moves between
+   episodes.
+4. As in B4: two short stops on the final approach, then the touch. The terminal prints
+   `final: ... um` per episode.
+5. Tell Claude when it has finished; there's no need to copy the output. Claude reads the final
+   errors from the dataset's `autocollect_episodes.jsonl`. Mention anything odd you saw (a
+   slide, a bend, a discarded episode).
+
+What happens next depends on the spread: if several episodes end near or over 50 µm, Claude adds
+a touch-and-retry step (lift 0.3 mm, shift, touch again).
 
 ## If something goes wrong
 | Symptom | What to do |
