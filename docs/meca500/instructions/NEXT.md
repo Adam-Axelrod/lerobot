@@ -18,6 +18,15 @@ the arm's model.
   is at z = 31 mm. The focus, the collision model, the touch and start poses and the scope
   calibration are all out of date.
 
+**2026-11-03 incident.** `record_auto.py` was run with the raised dish. It planned to the old
+dish height and the pipette bent on the dish. Before Part B:
+- **Inspect the pipette.** Replace it if it is bent, cracked or chipped. Even if it looks fine,
+  the tip has probably moved in the holder, so Part B's re-calibration starts 6 mm up.
+- `record_auto.py` and `auto_calibrate.py` now **refuse to start** unless the focus K-Cube is at
+  the focus stored with the calibration (`scope.focus_mm`). This needs the K-Cube on and plugged
+  in by USB, and Kinesis closed. Claude updates `focus_mm` together with the dish height, so a
+  refocus blocks the arm until the model matches.
+
 **How this session works.** In Part A the arm stays at home the whole time: you refocus, measure
 the holder, and take the bead images. Claude then updates the arm's model, with no bench time.
 Part B, the re-calibration and touch test, comes after that.
@@ -150,6 +159,8 @@ real dataset.
 ## If something goes wrong
 | Symptom | What to do |
 |---|---|
+| `REFUSING TO START: Focus K-Cube ... not found` | Power the focus K-Cube, plug in its USB, close Kinesis, rerun. |
+| `REFUSING TO START: The microscope focus is at ... but the bench was calibrated at ...` | The dish or focus changed since calibration. Don't override it: tell Claude. |
 | Focus jog greys out before the dish is sharp (A2) | End of travel: the focus can't reach the dish. Stop, note the position, tell Claude. |
 | Kinesis jog button greyed out (other times) | The axis is at the end of its travel: only the other direction is allowed. |
 | `capture_frames.py` or a script can't open the camera | Close the pylon Viewer and any other script using the Basler, then rerun. |

@@ -50,6 +50,7 @@ from lerobot.processor import (
     transition_to_observation,
 )
 from lerobot.robots.meca500.autocollect.bench import BenchConfig, PlannerLimits
+from lerobot.robots.meca500.autocollect.focus_check import FocusMismatchError, check_focus
 from lerobot.robots.meca500.autocollect.overlay import TargetOverlayStep
 from lerobot.robots.meca500.autocollect.planner import Planner, PlanningError
 from lerobot.robots.utils import make_robot_from_config
@@ -66,7 +67,7 @@ from lerobot.utils.visualization_utils import init_rerun
 # ----------------------------- CONFIG -----------------------------
 RIG = "meca500_basler"
 USER = "AdamAxelrod"
-NAME = "basler_hover_2026-10-28"  # one dataset per rig and target style - never mix
+NAME = "basler_hover_2026-11-03"  # one dataset per rig and target style - never mix
 TASK = "move_pipette_to_target"
 NUM_EPISODES = 3
 RESUME = False  # append to an existing local dataset of the same NAME
@@ -218,6 +219,11 @@ def main() -> None:
         init_rerun(session_name="record_auto")
     register_third_party_plugins()
     bench = BenchConfig.load(RIG)
+    try:
+        pos = check_focus(bench.section("scope"))
+    except FocusMismatchError as e:
+        sys.exit(f"\nREFUSING TO START: {e}\n")
+    print(f"Focus check passed: K-Cube at {pos:.4f} mm, as calibrated.")
     planner = build_planner(bench)
     home = np.asarray(require_home_joints(RIG), dtype=float)
     fps = planner.lim.fps

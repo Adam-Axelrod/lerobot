@@ -48,6 +48,7 @@ from rigs import bota_config_path, require_home_joints, rig_config
 from lerobot.robots.meca500.autocollect.bench import BenchConfig, PlannerLimits
 from lerobot.robots.meca500.autocollect.calibration import ScopeCalibration
 from lerobot.robots.meca500.autocollect.contact import ContactDetector, ContactThresholds, WrenchStream
+from lerobot.robots.meca500.autocollect.focus_check import FocusMismatchError, check_focus
 from lerobot.robots.meca500.autocollect.kinematics import axis_angle, make_transform
 from lerobot.robots.meca500.autocollect.planner import Planner, PlanningError
 from lerobot.robots.meca500.autocollect.tip_detect import detect_tip, field_mask
@@ -634,6 +635,11 @@ def main() -> None:
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
     register_third_party_plugins()
     bench = BenchConfig.load(RIG)
+    try:
+        pos = check_focus(bench.section("scope"))
+    except FocusMismatchError as e:
+        sys.exit(f"\nREFUSING TO START: {e}\n")
+    print(f"Focus check passed: K-Cube at {pos:.4f} mm, as calibrated.")
     home = np.asarray(require_home_joints(RIG), dtype=float)
 
     view = LiveView(TITLE)  # window first: nothing connected if it cannot open
