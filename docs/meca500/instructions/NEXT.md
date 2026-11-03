@@ -2,7 +2,7 @@
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
 **Last updated:** 2026-11-03
-**Time needed:** about 45 min (Part B). Part A is done.
+**Time needed:** about 25 min (B2 and B3).
 
 **Where things stand.**
 - **Done:**
@@ -32,14 +32,12 @@
   any step where Claude reads or moves the stage or the focus.
 - **Do not home or move the focus K-Cube.** It must stay at 4.000 mm.
 
-# Part B: ready now (about 45 min)
+# Part B: B2 and B3 now (about 25 min)
 
-## B1. Re-calibrate (15 min)
-1. Check the stage is at (55, 37.5) and Kinesis is closed.
-2. Run `.venv\Scripts\python.exe scripts\meca500\auto_calibrate.py`. It is set to start 6 mm above
-   the ESTIMATED dish height (z 27). Keep a hand near the e-stop on the first descent.
-3. Send Claude the terminal output and wait for a go-ahead before B2. Claude moves the dish in
-   the collision model to the measured height.
+## B1. Re-calibrate: DONE (2026-11-03)
+Tip moved ~1.2 mm (the pipette shifted when it bent); pivot 0.076 mm, scope 1.26 px (16 µm),
+dish z 26.83, verify ≤ 1 px. The collision model now uses the measured dish height, and the dry
+run still plans 100/100. `START_ABOVE_DISH_MM` is back to 2.0.
 
 ## B2. Hover check (10 min)
 1. In `scripts\meca500\record_auto.py`, set:

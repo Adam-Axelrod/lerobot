@@ -29,13 +29,13 @@ obstacles:
   # is padded 2 mm each side (24-30 mm) for those rough readings.
   # VALID ONLY WITH THE STAGE AT (55, 37.5). A ring swept over +-10 mm of stage travel (16-38 mm)
   # made targets unreachable, so random stage moves need the dish placed per episode.
-  # Heights are raised 2 mm from the measurements to match the calibration estimate (surface z 27);
-  # reset them from the surface auto_calibrate measures.
+  # Heights follow the dish surface MEASURED by auto_calibrate (z 26.83, 2026-11-03): floor top =
+  # surface; acrylic below it, wall 10 mm tall from the floor bottom. Reset after a recalibration.
   boxes:
-    - {name: acrylic_plate, center: [237.5, -85.5, 24.0], size: [78, 118, 2]}
+    - {name: acrylic_plate, center: [237.5, -85.5, 23.83], size: [78, 118, 2]}
   cylinders:
-    - {name: dish_floor, base: [241.2, -99.8, 25.0], radius: 30, height: 2}
-    - {name: dish_wall, base: [241.2, -99.8, 25.0], radius: 30, inner_radius: 24, height: 10}
+    - {name: dish_floor, base: [241.2, -99.8, 24.83], radius: 30, height: 2}
+    - {name: dish_wall, base: [241.2, -99.8, 24.83], radius: 30, inner_radius: 24, height: 10}
 
 tool:
   # Holder + pipette as one STL in the FLANGE frame (Meca FRF: origin on the flange face,
@@ -52,7 +52,7 @@ tool:
   # because J4 and J6 are collinear there.
   # (Huanyu's basler_pipette_2026-09-16 demos used a DIFFERENT pipette: their end poses
   # imply a tip ~118 mm out, so they say nothing about this one.)
-  tip_pose_in_flange: [104.99, -3.95, 66.72, 38.81, 86.24, -38.75]
+  tip_pose_in_flange: [104.93, -5.22, 67.46, 38.81, 86.24, -38.75]
   # Tool points closer than this to the tip are not collision-checked: the tip touches
   # the dish by design.
   tip_exempt_mm: 10
@@ -65,7 +65,7 @@ tool:
   # Measured tip position in the FRF (mm), written by calibrate_tip.py. Overrides the CAD tip:
   # the import shifts the CAD pipette so its tip lands here. Re-measure after EVERY pipette
   # change - pulled glass pipettes differ in length and seat differently - or a bend.
-  measured_tip_in_flange: [104.99, -3.95, 66.72]
+  measured_tip_in_flange: [104.93, -5.22, 67.46]
 
 safety:
   link_margin_mm: 15        # clearance required for the arm links
