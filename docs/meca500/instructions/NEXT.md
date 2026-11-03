@@ -2,7 +2,7 @@
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
 **Last updated:** 2026-11-03
-**Time needed:** about 25 min (B2 and B3).
+**Time needed:** about 15 min (B4).
 
 **Where things stand.**
 - **Done:**
@@ -32,41 +32,34 @@
   any step where Claude reads or moves the stage or the focus.
 - **Do not home or move the focus K-Cube.** It must stay at 4.000 mm.
 
-# Part B: B2 and B3 now (about 25 min)
+# Part B: B4 now (about 15 min)
 
 ## B1. Re-calibrate: DONE (2026-11-03)
 Tip moved ~1.2 mm (the pipette shifted when it bent); pivot 0.076 mm, scope 1.26 px (16 µm),
 dish z 26.83, verify ≤ 1 px. The collision model now uses the measured dish height, and the dry
 run still plans 100/100. `START_ABOVE_DISH_MM` is back to 2.0.
 
-## B2. Hover check (10 min)
-1. In `scripts\meca500\record_auto.py`, set:
-   ```python
-   NAME = "basler_hover_2026-MM-DD"   # today's date
-   STAGE = "hover"
-   NUM_EPISODES = 3
-   ```
-2. Run `.venv\Scripts\python.exe scripts\meca500\record_auto.py` with a hand near the e-stop.
-   The tip should stop just above the marker without touching.
-3. Tell Claude when it's done.
+## B2-B3: DONE (2026-11-03)
+Hover and open-loop touch tests ran cleanly. The touches landed 62-122 µm from the target (mean
+~95), above the 50 µm threshold, so Claude added a vision correction to `record_auto.py`
+(`VISION_CORRECTION = True`): on the final approach the arm pauses twice (at the pre-touch point,
+and 0.4 mm before the touch), detects the tip, and shifts the rest of the approach onto the
+target. The pauses are part of the recorded episode.
 
-## B3. Touch test (15 min)
-1. In `record_auto.py`, set:
+## B4. Touch test with the vision correction (15 min)
+1. Keep the stage at (55, 37.5) and Kinesis closed.
+2. In `scripts\meca500ecord_auto.py`, set:
    ```python
-   NAME = "basler_touch_test_2026-MM-DD"   # today's date
+   NAME = "basler_touch_corrected_2026-MM-DD"   # today's date
    STAGE = "touch"
    NUM_EPISODES = 3
    ```
-   `touch_offset_mm` in `bench.yaml` is already `0.0` (the tip just touches the dish).
-2. Run it again with a hand near the e-stop. The tip should come into sharp focus on the marker
-   without visibly sliding.
-3. Tell Claude when it's done. Claude measures each episode's final tip-to-target error from the
-   recording.
-
-What happens next depends on that error. If it is still well over 50 µm, Claude adds a final
-vision correction to the recorder (detect the tip just before the touch and nudge it onto the
-target) before the real dataset. Then Claude rewrites this file with the steps for recording the
-real dataset.
+3. Run it with a hand near the e-stop. On the way in, the arm stops twice, for about half a second
+   each time. It may then move very slightly sideways, by up to ~0.1 mm, before touching.
+4. The terminal prints `correction at pretouch`, `correction at near` and `final: ... um` for each
+   episode. `tip not detected` at the pretouch checkpoint is normal when the pre-touch point is
+   outside the image.
+5. Tell Claude when it has finished. Claude checks the final errors against 50 µm.
 
 ## If something goes wrong
 | Symptom | What to do |
@@ -84,6 +77,7 @@ real dataset.
 | The robot portal or scripts can't reach `192.168.0.100` | The USB-C Ethernet adapter needs `192.168.0.50/24` (see Claude's memory notes); a different adapter needs it set again in an admin PowerShell. |
 | The arm stops with a collision or planning error | Send Claude the output. Nothing has hit anything: every path is checked before the arm moves. |
 | The pipette slides at the end of a touch episode | Press **Esc**. Set `touch_offset_mm` to 0.1 and tell Claude. |
+| `Episode N discarded: ... would collide` | A correction move failed its collision check; the next episode carries on. Send Claude the output if it happens often. |
 
 ## Re-calibrating (after the dish is reseated, the focus changes, or the pipette is knocked)
 This takes about 10–15 min and runs hands off:

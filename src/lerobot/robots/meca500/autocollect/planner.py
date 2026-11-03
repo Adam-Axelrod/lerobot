@@ -110,10 +110,20 @@ class EpisodePlan:
     target_xyz: tuple[float, float, float]
     clearance: Clearance
     phase_frames: dict[str, int] = field(default_factory=dict)
+    # Approach geometry, for the recorder's vision correction before the touch.
+    touch_axis: tuple[float, float, float] = (0.0, 0.0, -1.0)  # pipette axis, out of the tip
+    pretouch_back_mm: float = 0.0  # where the precision phase starts, back along the axis
+    precision_speed_mm_s: float = 0.0
+    dwell_frames: int = 0
 
     @property
     def start_joints(self) -> np.ndarray:
         return self.joints[0]
+
+    @property
+    def pretouch_index(self) -> int:
+        """Index in ``joints`` of the last frame before the precision phase (at the pre-touch point)."""
+        return self.phase_frames.get("coarse", 0) + self.phase_frames.get("gate", 0)
 
     @property
     def duration_s(self) -> float:
@@ -246,9 +256,10 @@ class Planner:
             ),
         ]
 
-        joints, precision, phase_frames = [q_start], [0.0], {}
+        joints, precision, phase_frames, speeds = [q_start], [0.0], {}, {}
         for name, poly, r0, r1, speed, max_step, flag in phases:
-            qs = self._time_and_solve(poly, r0, r1, rng.uniform(*speed), max_step, joints[-1], name)
+            speeds[name] = rng.uniform(*speed)
+            qs = self._time_and_solve(poly, r0, r1, speeds[name], max_step, joints[-1], name)
             joints.extend(qs)
             precision.extend([flag] * len(qs))
             phase_frames[name] = len(qs)
@@ -274,6 +285,10 @@ class Planner:
             target_xyz=tuple(float(v) for v in p_touch),
             clearance=clearance,
             phase_frames=phase_frames,
+            touch_axis=tuple(float(v) for v in axis),
+            pretouch_back_mm=float(np.dot(p_touch - p_pre, axis)),
+            precision_speed_mm_s=float(speeds["precision"]),
+            dwell_frames=n_dwell,
         )
 
     def _time_and_solve(self, poly, r0, r1, speed, max_step, q_seed, name) -> list[np.ndarray]:
@@ -301,6 +316,27 @@ class Planner:
                 return qs
             duration *= steps / max_step * 1.05
         raise _RejectedSampleError(f"{name} joint speed")
+
+    # ------------------------------------------------------------------ near the dish
+
+    def plan_line(self, q_from, p_to, speed_mm_s: float, name: str = "correction") -> np.ndarray:
+        """Straight, slow tip move from ``q_from`` to ``p_to`` keeping the orientation, at the
+        precision-phase joint-step limit; collision-checked. For the recorder's vision correction:
+        a sub-millimetre move between two points near the dish. Raises PlanningError."""
+        q_from = np.asarray(q_from, float)
+        t = self.kin.tip(q_from)
+        poly = np.vstack([t[:3, 3], np.asarray(p_to, float)])
+        try:
+            qs = self._time_and_solve(
+                poly, t[:3, :3], t[:3, :3], speed_mm_s, self.lim.max_joint_step_precision_deg, q_from, name
+            )
+        except _RejectedSampleError as e:
+            raise PlanningError(f"{name}: {e}") from e
+        qs = np.array(qs)
+        c = self.checker.check_path(np.vstack([q_from, qs]), self.lim.check_step_deg)
+        if c.min_mm < 0:
+            raise PlanningError(f"{name} would collide ({c.where} vs {c.obstacle}, {c.min_mm:.1f} mm)")
+        return qs
 
     # ------------------------------------------------------------------ transit
 

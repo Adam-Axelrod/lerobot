@@ -8,14 +8,18 @@ Per episode:
                joint move to the new start.
     3. record - the marker appears at the target pixel; the scripted teleop replays the plan
                as absolute MoveJoints targets, one per frame, ending with the tip touching the
-               dish on the marker in precision mode.
+               dish on the marker in precision mode. With VISION_CORRECTION the final approach
+               stops twice (at the pre-touch point and CORRECTION_NEAR_MM before the touch),
+               detects the tip and shifts the rest of the approach onto the target
+               (autocollect/correction.py); the pauses are recorded, the detection is not.
 
 The dataset schema is identical to the SpaceMouse recordings (joint_1..6.pos +
 precision.state, microscope_cam), but the action is the COMMANDED target rather than a
 position readback. Train on the delta version as usual:
     python scripts/meca500/convert_to_delta_actions.py   (point it at this dataset)
 
-Each episode's seed, target pixel, start pose and clearance go to autocollect_episodes.jsonl
+Each episode's seed, target pixel, start pose, clearance, the corrections made and the final
+detected tip-to-target error go to autocollect_episodes.jsonl
 in the dataset folder (NOT dataset features, so nothing leaks into the policy's inputs),
 next to a copy of the bench config and scope calibration used.
 
@@ -50,6 +54,7 @@ from lerobot.processor import (
     transition_to_observation,
 )
 from lerobot.robots.meca500.autocollect.bench import BenchConfig, PlannerLimits
+from lerobot.robots.meca500.autocollect.correction import measure
 from lerobot.robots.meca500.autocollect.focus_check import FocusMismatchError, check_focus
 from lerobot.robots.meca500.autocollect.overlay import TargetOverlayStep
 from lerobot.robots.meca500.autocollect.planner import Planner, PlanningError
@@ -67,7 +72,7 @@ from lerobot.utils.visualization_utils import init_rerun
 # ----------------------------- CONFIG -----------------------------
 RIG = "meca500_basler"
 USER = "AdamAxelrod"
-NAME = "basler_hover_2026-11-03"  # one dataset per rig and target style - never mix
+NAME = "basler_touch_test_2026-11-03"  # one dataset per rig and target style - never mix
 TASK = "move_pipette_to_target"
 NUM_EPISODES = 3
 RESUME = False  # append to an existing local dataset of the same NAME
@@ -76,7 +81,7 @@ DISPLAY_DATA = True
 
 # "hover": touch target raised 5 mm and every speed halved - for watching the first runs.
 # "touch": the real thing.
-STAGE = "hover"
+STAGE = "touch"
 HOVER_RAISE_MM = 5.0
 
 # Refuse to collect with a calibration worse than this: its residual is the label noise of
@@ -95,6 +100,13 @@ MAX_REL_TARGET = 1.5
 PRECISION_MAX_REL_TARGET = 0.15
 # Seeds are SEED_BASE + episode index, so a resumed dataset never repeats an episode.
 SEED_BASE = 1_000_000
+
+# Vision correction of the final approach (see autocollect/correction.py). Open loop the tip
+# landed 60-120 um off the target on 2026-11-03, against a 50 um success threshold.
+VISION_CORRECTION = True
+CORRECTION_HOLD_S = 0.4  # recorded pause at each checkpoint, so the arm is still when detected
+CORRECTION_NEAR_MM = 0.4  # second checkpoint, back along the pipette from the touch
+CORRECTION_FRAMES = 3  # median of this many frames per detection
 # -----------------------------------------------------------------
 
 
@@ -211,6 +223,77 @@ def run_plan(robot, teleop, joints, precision, fps, events, processors, dataset=
     )
 
 
+class EpisodeAbortedError(RuntimeError):
+    """The episode cannot be finished as planned (e.g. a correction would collide): discard it."""
+
+
+def grab(robot, key: str, n: int = CORRECTION_FRAMES) -> np.ndarray:
+    """Median of ``n`` raw camera frames (no target overlay: that is an observation processor step)."""
+    frames = [robot.get_observation()[key].astype(np.float32) for _ in range(n)]
+    return np.median(frames, axis=0).astype(np.uint8)
+
+
+def run_corrected_episode(robot, teleop, plan, planner, key, background, events, processors, dataset) -> dict:
+    """Record one episode in segments, correcting the final approach from the image.
+
+    1. the plan up to the pre-touch point; 2. a still pause, then detect and shift the touch
+    point; 3. a straight move to CORRECTION_NEAR_MM before the corrected touch; 4. pause, detect
+    and shift again; 5. the touch and the dwell. Then one more (unrecorded) detection measures
+    the final error. Returns the correction record for the episode metadata.
+    """
+    fps = planner.lim.fps
+    axis = np.asarray(plan.touch_axis, float)
+    hold = max(int(round(CORRECTION_HOLD_S * fps)), 1)
+    i = plan.pretouch_index
+
+    def record(joints, precision):
+        run_plan(robot, teleop, joints, precision, fps, events, processors, dataset, DISPLAY_DATA)
+        if events["rerecord_episode"] or events["stop_recording"]:
+            raise EpisodeAbortedError("stopped from the keyboard")
+
+    record(plan.joints[: i + 1], plan.precision[: i + 1])
+    q = plan.joints[i]
+    p_plan = np.asarray(plan.target_xyz, float)
+    p_touch, shift = p_plan, np.zeros(2)
+    corrections = []
+    for name, back_mm in (("pretouch", CORRECTION_NEAR_MM), ("near", None)):
+        record(np.repeat(q[None], hold, axis=0), np.ones(hold))
+        expected = planner.calib.xy_to_pixel(planner.kin.tip(q)[:2, 3])[0]  # model tip, now
+        c = measure(grab(robot, key), background, expected, planner.calib)
+        corrections.append({"checkpoint": name, **c.meta()})
+        logging.info(f"  correction at {name}: {c.meta()}")
+        # Each checkpoint measures the same model error (detected vs model-predicted tip), so the
+        # newest estimate REPLACES the last one - adding them would correct twice. The model stays
+        # wrong by the same amount after a shift; a skipped measurement (note set) keeps the last one.
+        if not c.note:
+            shift = np.asarray(c.shift_mm, float)
+        p_touch = p_plan + np.array([*shift, 0.0])
+        if back_mm is None:
+            break
+        try:
+            seg = planner.plan_line(q, p_touch - axis * back_mm, plan.precision_speed_mm_s, "approach")
+        except PlanningError as e:
+            raise EpisodeAbortedError(str(e)) from e
+        record(seg, np.ones(len(seg)))
+        q = seg[-1]
+    try:
+        seg = planner.plan_line(q, p_touch, plan.precision_speed_mm_s, "touch")
+    except PlanningError as e:
+        raise EpisodeAbortedError(str(e)) from e
+    dwell = max(plan.dwell_frames, 1)
+    record(np.vstack([seg, np.repeat(seg[-1][None], dwell, axis=0)]), np.ones(len(seg) + dwell))
+    final = measure(grab(robot, key), background, plan.target_px, planner.calib)
+    um = 1000 * float(np.linalg.norm(np.asarray(planner.calib.px_to_xy)[:, 0]))
+    final_um = None if final.error_px is None else final.error_px * um
+    logging.info("  final: " + ("tip not detected" if final_um is None else f"{final.error_px:.1f} px = {final_um:.0f} um"))
+    return {
+        "corrections": corrections,
+        "final": final.meta(),
+        "final_error_um": None if final_um is None else round(final_um, 1),
+        "corrected_target_xyz_mm": [round(float(v), 4) for v in p_touch],
+    }
+
+
 def main() -> None:
     init_logging()
     if DISPLAY_DATA:
@@ -313,15 +396,32 @@ def main() -> None:
                 if events["stop_recording"]:
                     break
 
+                # Background for the tip detector: the start pose keeps the tip out of view.
+                background = grab(robot, bench.camera_key) if VISION_CORRECTION else None
                 overlay.set_target(plan.target_px)
                 log_say(f"Recording episode {ep}", False)
                 events["exit_early"] = False
                 t0 = time.perf_counter()
-                run_plan(
-                    robot, teleop, plan.joints, plan.precision, fps, events, processors, dataset, DISPLAY_DATA
-                )
+                extra: dict = {}
+                aborted = None
+                if VISION_CORRECTION:
+                    try:
+                        extra = run_corrected_episode(
+                            robot, teleop, plan, planner, bench.camera_key, background, events, processors, dataset
+                        )
+                    except EpisodeAbortedError as e:
+                        aborted = str(e)
+                else:
+                    run_plan(
+                        robot, teleop, plan.joints, plan.precision, fps, events, processors, dataset, DISPLAY_DATA
+                    )
                 q_now = np.array(robot.robot.GetRtJointPos())
                 retreat = True
+                if aborted is not None:
+                    dataset.clear_episode_buffer()
+                    events["rerecord_episode"] = events["exit_early"] = False
+                    logging.warning(f"Episode {ep} discarded: {aborted}")
+                    continue
 
                 if robot.robot.GetStatusRobot().error_status:
                     raise RuntimeError("Robot reported an error during the episode; stopping.")
@@ -333,10 +433,15 @@ def main() -> None:
                     logging.info(f"Episode {ep} discarded.")
                     continue
 
+                n_frames = int(dataset.writer.episode_buffer.get("size", 0))
                 dataset.save_episode()
                 recorded += 1
                 with meta_path.open("a") as f:
-                    f.write(json.dumps({"episode_index": ep, "stage": STAGE, **plan.meta()}) + "\n")
+                    # n_frames: what the dataset holds (the plan's own count can differ by a frame or
+                    # two, because record_loop paces by wall time).
+                    record_meta = {"episode_index": ep, "stage": STAGE, **plan.meta(), **extra}
+                    record_meta["planned_frames"], record_meta["n_frames"] = record_meta["n_frames"], n_frames
+                    f.write(json.dumps(record_meta) + "\n")
                 logging.info(
                     f"episode {ep}: {plan.duration_s:.1f}s planned, {time.perf_counter() - t0:.1f}s wall, "
                     f"target px {np.round(plan.target_px, 1).tolist()}, clearance {plan.clearance.min_mm:.1f} mm"

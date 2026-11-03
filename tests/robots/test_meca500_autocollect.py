@@ -486,3 +486,53 @@ def test_tip_detection_rejects_a_pipette_crossing_the_field():
     crossing = bg.copy()
     cv2.line(crossing, (15, 300), (410, 360), (30, 25, 10), 7)  # edge to edge
     assert detect_tip(crossing, bg) is None
+
+
+def test_vision_correction_cancels_a_model_error_on_the_final_approach(kin, monkeypatch):
+    """record_auto.run_corrected_episode against a simulated camera in which the tip shows up
+    BIAS px away from where the model puts it (the open-loop error seen on the arm): the two
+    checkpoint corrections must land the tip on the target anyway."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "meca500"))
+    import record_auto
+
+    planner, cal = _planner(kin, [BoxField([-150, 0, 300], [60, 60, 60], name="lamp")])
+    # A target near the centre, so both checkpoints are inside the synthetic lit field (at this
+    # test's 3 um/px the checkpoints sit 36-200 px back along the approach).
+    plan = next(
+        p
+        for p in (planner.sample_episode(seed=k) for k in range(40))
+        if np.hypot(p.target_px[0] - 213, p.target_px[1] - 400) < 60
+    )
+    bias = np.array([7.0, -5.0])
+    state = {"q": plan.joints[0]}
+
+    def true_px(q):
+        return cal.xy_to_pixel(kin.tip(q)[:2, 3])[0] + bias
+
+    class Robot:
+        def get_observation(self):
+            t = kin.tip(state["q"])
+            px = true_px(state["q"])
+            back = cal.xy_to_pixel((t[:3, 3] - 5 * t[:3, 2])[:2])[0] + bias - px
+            return {"microscope_cam": _microscope_frames(tuple(px), np.degrees(np.arctan2(back[1], back[0])))[0]}
+
+    def fake_run_plan(robot, teleop, joints, precision, fps, events, processors, dataset=None, display=False):
+        state["q"] = np.asarray(joints)[-1]
+
+    monkeypatch.setattr(record_auto, "run_plan", fake_run_plan)
+    events = {"exit_early": False, "rerecord_episode": False, "stop_recording": False}
+    _, bg = _microscope_frames()
+    extra = record_auto.run_corrected_episode(Robot(), None, plan, planner, "microscope_cam", bg, events, None, None)
+
+    open_loop = np.linalg.norm(true_px(plan.joints[-1]) - plan.target_px)
+    corrected = np.linalg.norm(true_px(state["q"]) - plan.target_px)
+    assert open_loop > 8.0
+    # The synthetic detector finds the drawn tip end of a 7 px line to within a few px (the
+    # detection test allows 4), so that is the floor here; the detector's own view is ~1 px.
+    assert corrected < 3.5, (open_loop, corrected, extra)
+    assert [c["checkpoint"] for c in extra["corrections"]] == ["pretouch", "near"]
+    assert all(c["note"] == "" for c in extra["corrections"])
+    assert extra["final"]["error_px"] is not None and extra["final"]["error_px"] < 1.5
