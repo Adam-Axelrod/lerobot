@@ -85,8 +85,8 @@ scope:
   # 2026-11-03: its surface_z_mm was set by hand to 27.0, an ESTIMATE for the dish on the new
   # acrylic holder: hand measurements give z 25 (see obstacles), the 20.1 mm refocus gives z ~28.
   # The midpoint keeps auto_calibrate's unguarded first move (6 mm up) above the dish either way.
-  # After auto_calibrate, move the dish/acrylic obstacles to match the measured surface. The previous calibration is in
-  # scope_calibration.20261103-preholder.bak.json. auto_calibrate re-measures it.
+  # After auto_calibrate, move the dish/acrylic obstacles to match the measured surface. The
+  # previous calibration is in scope_calibration.20261103-preholder.bak.json.
   # Focus drive: KST201 K-Cube (serial 26006298) on a ZST225 actuator, position in mm from its
   # homed zero. Homing it (2026-10-27) lost the focus; refocused by eye on the dish bottom at
   # this position. Move back here after any re-home. Re-run auto_calibrate after a change.
@@ -98,6 +98,11 @@ scope:
   # 110 x 75 mm, so (55, 37.5) is the middle of its travel.
   stage_serial: "103476364"
   stage_xy_mm: [55.0, 37.5]
+  # Image shift per mm of stage travel, [[du/dX, du/dY], [dv/dX, dv/dY]] px/mm, measured 2026-11-03
+  # (+-0.5 mm per axis, phase correlation; back at the centre to 0.04 px). Stage +X moves the
+  # image down (+v = robot -y), +Y moves it right (+u = robot +x). 12.85 um/px, ~3% finer than the
+  # pre-holder scope calibration (13.25), which was made at the old dish height.
+  stage_px_per_mm: [[1.01, 77.6], [77.87, -0.88]]
 
 start:
   # Derived from the measured touch pose by suggest_touch_pose.suggest_start (tip backed 60 mm out

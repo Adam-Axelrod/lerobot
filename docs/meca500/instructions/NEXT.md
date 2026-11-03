@@ -2,7 +2,7 @@
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
 **Last updated:** 2026-11-03
-**Time needed:** Part A about 20 min. Part B about 45 min, after Claude says it's ready.
+**Time needed:** Part A about 10 min. Part B about 45 min, after Claude says it's ready.
 
 **Where things stand.**
 - **Done:**
@@ -12,8 +12,9 @@
     model, new touch and start poses, a dish-height estimate of z 27.
 - **Dropped for now:** the zirconia beads. The dataset uses the digital target over the empty
   dish; the real-bead test comes later.
-- **Stage problem:** the MLS203 Y axis enables and is homed (at 37.5 mm), but the **X axis will
-  not enable**, in Kinesis or from Python. It worked on 2026-10-27.
+- **Stage working:** after a BBD302 power cycle, both axes enabled from Python (the X axis had a
+  latched fault before). Both are homed and at (55, 37.5). The stage-direction measurement is
+  done: +X moves the image down, +Y moves it right, 12.85 µm/px.
 - **2026-11-03 incident:** `record_auto.py` ran before the model was updated and bent the
   pipette on the raised dish. `record_auto.py` and `auto_calibrate.py` now refuse to start unless
   the focus K-Cube reads `scope.focus_mm`. This needs the K-Cube on, plugged in by USB, and
@@ -26,36 +27,23 @@
   any step where Claude reads or moves the stage or the focus.
 - **Do not home or move the focus K-Cube.** It must stay at 4.000 mm.
 
-# Part A: now (about 20 min, arm at home throughout)
+# Part A: now (about 10 min, arm at home throughout)
 
-## A1. Fix the stage X axis (10 min)
-1. Send the arm home (teleop, **H**) and close teleop.
-2. Close Kinesis.
-3. On the back of the BBD302, check that the **X-axis stage cable** (channel 1) is fully pushed in
-   and its screws are tight. Compare it with the Y cable. The cables run to the MLS203; check
-   none got pulled while the holder was fitted.
-4. **Power-cycle the BBD302:** switch it off, wait 10 s, switch it on. Look at the front panel:
-   note any channel showing a fault or error light.
-5. Open Kinesis. **Enable** both channels, then **Home** both (the dish moves with the stage, so
-   keep the pipette at home). Then move to **X 55, Y 37.5**.
-6. If X still won't enable, note what the front panel shows, close Kinesis and tell Claude.
-
-## A2. Stage range (5 min)
-Use Kinesis on the MLS203 (BBD302, serial 103476364), jogging only.
+## A1. Stage range (5 min)
+Use Kinesis on the MLS203 (BBD302, serial 103476364), jogging only. Both axes are already enabled
+and homed; if Kinesis shows them disabled (e.g. after a power cycle), Enable and Home both first,
+with the arm at home.
 1. Start from (55, 37.5), with the camera view open
    (`.venv\Scripts\python.exe scripts\meca500\capture_frames.py`, q to quit).
 2. Move the stage in each direction (+X, −X, +Y, −Y) until the dish wall comes into view.
 3. Write down each position.
 4. Go back to (55, 37.5) and **close Kinesis**.
 
-## A3. Send Claude
-- whether X now enables and both axes homed (or what the front panel showed);
-- the four stage positions from A2;
+## A2. Send Claude
+- the four stage positions from A1;
 - whether the pipette was replaced, or looked undamaged.
 
 Claude then:
-- runs the stage-direction measurement (the stage moves ±0.5 mm and back; nothing for you to
-  do);
 - widens the dish in the collision model to cover the stage range;
 - tells you Part B is ready.
 
@@ -102,7 +90,7 @@ real dataset.
 |---|---|
 | `REFUSING TO START: Focus K-Cube ... not found` | Power the focus K-Cube, plug in its USB, close Kinesis, rerun. |
 | `REFUSING TO START: The microscope focus is at ... but the bench was calibrated at ...` | The dish or focus changed since calibration. Don't override it: tell Claude. |
-| A stage axis won't enable in Kinesis | Check its cable at the BBD302, power-cycle the BBD302, try again; then tell Claude what the front panel shows. |
+| A stage axis won't enable in Kinesis | Power-cycle the BBD302, close Kinesis and ask Claude to enable it from Python (that worked on 2026-11-03). |
 | Kinesis jog button greyed out | The axis is at the end of its travel: only the other direction is allowed. |
 | `capture_frames.py` or a script can't open the camera | Close the pylon Viewer and any other script using the Basler, then rerun. |
 | `calibration residual ... exceeds` | The script won't run on a poor calibration. Rerun `auto_calibrate.py` (below). |
