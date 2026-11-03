@@ -48,8 +48,7 @@ target. The pauses are part of the recorded episode.
 
 ## B4. Touch test with the vision correction (15 min)
 1. Keep the stage at (55, 37.5) and Kinesis closed.
-2. In `scripts\meca500
-ecord_auto.py`, set:
+2. In `scripts\meca500\record_auto.py`, set:
    ```python
    NAME = "basler_touch_corrected_2026-MM-DD"   # today's date
    STAGE = "touch"
