@@ -19,7 +19,7 @@ FOLLOWER_CALIBRATION_DIR = CALIBRATION_DIR / "robots" / "so_follower"
 LEADER_CALIBRATION_DIR = CALIBRATION_DIR / "teleoperators" / "so_leader"
 
 PORTS = {
-    "win32": {"follower": "COM4", "leader": "COM10"},
+    "win32": {"follower": "COM4", "leader": "COM6"},
     "darwin": {"follower": "/dev/tty.wchusbserial5B420742321", "leader": "/dev/tty.wchusbserial1330"},
 }
 
