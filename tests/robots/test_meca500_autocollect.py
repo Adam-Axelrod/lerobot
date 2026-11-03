@@ -536,3 +536,58 @@ def test_vision_correction_cancels_a_model_error_on_the_final_approach(kin, monk
     assert [c["checkpoint"] for c in extra["corrections"]] == ["pretouch", "near"]
     assert all(c["note"] == "" for c in extra["corrections"])
     assert extra["final"]["error_px"] is not None and extra["final"]["error_px"] < 1.5
+
+
+# ----------------------------------------------------------------------------- dish stage
+
+
+def test_moving_field_follows_the_stage_offset(kin):
+    from lerobot.robots.meca500.autocollect.collision import MovingField
+
+    q = np.zeros(6)
+    flange = kin.flange(q)[:3, 3]
+    box = MovingField(BoxField(flange + [40, 0, 0], [20, 20, 20], name="dish"))
+    checker = _checker(kin, [box])
+    assert checker.is_clear(q)
+    checker.set_stage_offset([-40, 0, 0])  # the stage carries the dish onto the flange
+    assert not checker.is_clear(q)
+    np.testing.assert_allclose(checker.stage_offset, [-40, 0, 0])
+
+
+def test_stage_model_maps_stage_moves_and_samples_inside_the_disc():
+    from lerobot.robots.meca500.autocollect.stage import StageModel
+
+    # Bench 2: stage +X moves the image down 78 px/mm (+v), +Y moves it right (+u), with the
+    # Basler map u -> robot +x, v -> robot -y at 13 um/px.
+    cal = ScopeCalibration(
+        px_to_xy=[[0.013, 0.0, 230.0], [0.0, -0.013, -90.0]], surface_z_mm=27.0, image_size=[427, 640],
+        residual_px_rms=1.0, residual_um_rms=13.0, n_points=13,
+    )
+    scope = {
+        "stage_px_per_mm": [[0.0, 78.0], [78.0, 0.0]],
+        "stage_xy_mm": [55.0, 37.5],
+        "stage_dish_centre_mm": [50.0, 35.0],
+        "stage_random_radius_mm": 10.0,
+    }
+    m = StageModel.from_bench(scope, cal)
+    np.testing.assert_allclose(m.dish_offset([56.0, 37.5]), [0.0, -1.014, 0.0], atol=1e-9)  # +X -> robot -y
+    np.testing.assert_allclose(m.dish_offset([55.0, 38.5]), [1.014, 0.0, 0.0], atol=1e-9)  # +Y -> robot +x
+    rng = np.random.default_rng(0)
+    pts = np.array([m.sample(rng) for _ in range(500)])
+    assert np.linalg.norm(pts - m.centre_xy, axis=1).max() <= 10.0
+    assert pts[:, 0].min() >= 0 and pts[:, 1].max() <= 75
+
+
+def test_dish_height_map_fits_a_tilted_plane_and_drops_a_late_touch(tmp_path):
+    from lerobot.robots.meca500.autocollect.dish_map import DishHeightMap
+
+    rng = np.random.default_rng(1)
+    xy = np.array([[55, 37.5], [50, 35], [60, 35], [40, 35], [50, 45], [50, 25], [57, 42], [43, 28]], float)
+    z = 27.5 + 0.004 * (xy[:, 0] - 55) - 0.006 * (xy[:, 1] - 37.5) + rng.normal(0, 0.003, len(xy))
+    z[2] += 0.096  # one slide detected late
+    m = DishHeightMap.fit(xy, z, [55, 37.5])
+    assert m.rejected == [2]
+    np.testing.assert_allclose(m.plane[1:], [0.004, -0.006], atol=0.0015)
+    assert abs(m.surface_z([45, 30]) - (27.5 - 0.04 + 0.045)) < 0.01
+    m.save(tmp_path / "map.json")
+    assert DishHeightMap.load(tmp_path / "map.json").plane == m.plane

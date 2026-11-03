@@ -48,9 +48,11 @@ from rigs import bota_config_path, require_home_joints, rig_config
 from lerobot.robots.meca500.autocollect.bench import BenchConfig, PlannerLimits
 from lerobot.robots.meca500.autocollect.calibration import ScopeCalibration
 from lerobot.robots.meca500.autocollect.contact import ContactDetector, ContactThresholds, WrenchStream
+from lerobot.robots.meca500.autocollect.dish_map import DishHeightMap
 from lerobot.robots.meca500.autocollect.focus_check import FocusMismatchError, check_focus
 from lerobot.robots.meca500.autocollect.kinematics import axis_angle, make_transform
 from lerobot.robots.meca500.autocollect.planner import Planner, PlanningError
+from lerobot.robots.meca500.autocollect.stage import MLS203Stage, StageError, StageModel
 from lerobot.robots.meca500.autocollect.tip_detect import detect_tip, field_mask
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.utils.import_utils import register_third_party_plugins
@@ -79,6 +81,13 @@ MIN_PIVOT_TOUCHES = 4
 # the arm or holder in the illuminator's light: the field goes dark on one side, auto-exposure
 # shifts, and against the home background nothing was detected ("Lost the tip", 6 of 9 skipped).
 PIVOT_BACKGROUND_BACKOUT_MM = 12.0
+# Stage 6: dish height over the stage range (autocollect/dish_map.py), for record_auto's random
+# stage moves. Needs the MLS203 (Kinesis closed). The tip touches the field centre at the stage
+# reference and at 9 positions on the random-move disc; the dish moves only while the tip is backed
+# out of view and lifted by this much.
+HEIGHT_MAP = True
+HEIGHT_MAP_LIFT_MM = 10.0
+MIN_HEIGHT_MAP_TOUCHES = 6
 GRID_OUTER, GRID_INNER = 8, 4  # scope points on two rings inside the visible circle
 VERIFY_POINTS = 3
 # Force-sensor BACKSTOP only (vision senses contact). Well above the 0.3 mNm / 0.05 N that a
@@ -655,6 +664,72 @@ def stage_verify(s: Session, fit: ScopeCalibration, rot) -> list:
     return errs
 
 
+def move_stage_with_tip_out(s: Session, stage, model: StageModel, xy, rot, hover, label: str) -> None:
+    """Back the tip out of view and lift it, check the arm against the dish all along the stage
+    move, move the stage, update the collision model, and take a fresh background."""
+    out = np.asarray(hover, float) - rot[:, 2] * PIVOT_BACKGROUND_BACKOUT_MM + [0, 0, HEIGHT_MAP_LIFT_MM]
+    s.move_tip(out, rot, f"{label}: tip out of view")
+    q, start = s.q(), stage.position()
+    for f in np.linspace(0, 1, 11):  # the dish sweeps under the parked arm
+        s.checker.set_stage_offset(model.dish_offset(start + f * (np.asarray(xy, float) - start)))
+        c = s.checker.clearance(q)
+        if c.min_mm < 0:
+            s.checker.set_stage_offset(model.dish_offset(start))
+            raise CalibrationFailedError(f"{label}: the dish would hit the parked arm ({c.where} vs {c.obstacle}).")
+    s.display.message = f"{label}: moving the stage to {np.round(xy, 2).tolist()}"
+    stage.move_to(xy)
+    s.checker.set_stage_offset(model.dish_offset(xy))
+    s.recapture_background(label.replace(" ", ""))
+
+
+def stage_dish_height_map(s: Session, stage, model: StageModel, rot) -> DishHeightMap:
+    """Touch the field centre at several stage positions and fit the dish's height as a plane."""
+    s.display.phase = "6/6 dish height over the stage range"
+    s.display.marks.clear()
+    xy_c = s.calib.pixel_to_xy([s.fov_centre])[0]
+    ring = [(1, 0), (-1, 0), (0, 1), (0, -1), (0.7, 0.7), (-0.7, 0.7), (0.7, -0.7), (-0.7, -0.7)]
+    pts = [model.reference_xy, model.centre_xy] + [model.centre_xy + model.radius_mm * np.array(d) for d in ring]
+    done_xy, done_z = [], []
+
+    def z_estimate(xy):
+        if len(done_z) >= 3:
+            return DishHeightMap.fit(done_xy, done_z, model.reference_xy).surface_z(xy)
+        return s.calib.surface_z_mm
+
+    try:
+        for i, xy in enumerate(pts):
+            label = f"height {i + 1}/{len(pts)}"
+            z0 = z_estimate(xy)
+            try:
+                move_stage_with_tip_out(s, stage, model, xy, rot, [*xy_c, z0 + 3.0], label)
+                s.move_tip([xy_c[0], xy_c[1], z0 + 3.0], rot, f"{label}: back in")
+                s.move_tip([xy_c[0], xy_c[1], z0 + HOVER_MM], rot, f"{label}: down to hover")
+                r = s.touch(z0 - MAX_OVERTRAVEL_MM, DESCENT_MM_S)
+            except (CalibrationFailedError, StageError) as e:
+                print(f"  {label} at stage {np.round(xy, 2).tolist()}: skipped ({e})")
+                with contextlib.suppress(Exception):
+                    s.shift(0, 0, HOVER_MM + 3.0, "recover")
+                continue
+            z = float(s.kin.tip(s.contact_q(r))[2, 3])
+            done_xy.append([float(v) for v in xy])
+            done_z.append(z)
+            print(f"  {label}: stage {np.round(xy, 2).tolist()} -> dish z {z:.3f}")
+            s.shift(0, 0, HOVER_MM, "lift")
+    finally:
+        # Leave the stage where the calibration was made, with the tip out of the way.
+        with contextlib.suppress(Exception):
+            t = s.tip()
+            move_stage_with_tip_out(s, stage, model, model.reference_xy, rot, t[:3, 3], "back to the reference")
+    if len(done_z) < MIN_HEIGHT_MAP_TOUCHES:
+        raise CalibrationFailedError(f"Only {len(done_z)} dish height touches (need {MIN_HEIGHT_MAP_TOUCHES}).")
+    m = DishHeightMap.fit(done_xy, done_z, model.reference_xy)
+    print(
+        f"Dish height map over {len(done_z)} touches: tilt {m.tilt_deg:.3f} deg, residual {m.residual_um_rms:.0f} um rms, "
+        f"up to {m.max_change_um(model.centre_xy, model.radius_mm):.0f} um across the random-move disc"
+    )
+    return m
+
+
 def main() -> None:
     import bota_driver
 
@@ -682,6 +757,16 @@ def main() -> None:
     robot.configure()
     display = Display(view, robot, detector, bench.camera_key, TITLE)
     s = Session(robot, display, bench, detector)
+    stage = None
+    if HEIGHT_MAP:
+        stage = MLS203Stage(bench.section("scope")["stage_serial"])
+        try:
+            stage.connect()
+        except StageError as e:
+            robot.disconnect()
+            view.close()
+            stream.stop()
+            sys.exit(f"{e}\n(Set HEIGHT_MAP = False to calibrate without the stage.)")
     ok = False
     try:
         make_ready(s.meca)
@@ -694,6 +779,15 @@ def main() -> None:
         s.debug_dir.mkdir(parents=True, exist_ok=True)
         print(f"Debug images: {s.debug_dir}")
         stage_home_and_background(s, home)
+        if stage is not None:
+            model = StageModel.from_bench(s.bench.section("scope"), s.calib)
+            if not stage.is_homed:
+                s.display.message = "homing the stage (the dish moves; the arm is at home)"
+                stage.home()
+            if np.abs(stage.position() - model.reference_xy).max() > 0.01:
+                s.display.message = "moving the stage to its reference position"
+                stage.move_to(model.reference_xy)
+                s.recapture_background("reference")
         first = stage_find_tip(s, home)
         tip = stage_tip_calibration(s, first)
         save_tip_and_reimport(s, tip)
@@ -706,6 +800,11 @@ def main() -> None:
         fit.save(cal_path)
         s.reload(BenchConfig.load(RIG))
         errs = stage_verify(s, fit, first["rot"])
+        hmap = None
+        if stage is not None:
+            hmap = stage_dish_height_map(s, stage, StageModel.from_bench(s.bench.section("scope"), s.calib), first["rot"])
+            hmap.save(s.bench.dish_map_path())
+            print(f"Saved {s.bench.dish_map_path().name}")
         ok = True
         s.display.phase = "done - returning home"
         if errs:
@@ -723,6 +822,8 @@ def main() -> None:
         )
         if errs:
             print(f"  verify: {len(errs)} touches, median {np.median(errs):.1f} px, max {max(errs):.1f} px")
+        if hmap is not None:
+            print(f"  dish height map: tilt {hmap.tilt_deg:.3f} deg, residual {hmap.residual_um_rms:.0f} um rms")
     except AbortedError:
         print("Aborted by the user - the arm stops and holds its pose.")
         with contextlib.suppress(Exception):
@@ -740,6 +841,9 @@ def main() -> None:
             sensor.deactivate()
             sensor.shutdown()
         robot.disconnect()
+        if stage is not None:
+            with contextlib.suppress(Exception):
+                stage.disconnect()
     if not ok:
         sys.exit(1)
 

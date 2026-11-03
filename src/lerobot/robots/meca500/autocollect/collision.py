@@ -171,6 +171,20 @@ class TransformedField:
         return self.inner.distance(pts @ self._r.T + self._p)
 
 
+class MovingField:
+    """An obstacle carried by the dish stage (the dish, its acrylic plate). ``offset`` is the
+    robot-frame shift (mm) from where bench.yaml puts it; set it with
+    ``CollisionChecker.set_stage_offset`` before planning for a new stage position."""
+
+    def __init__(self, inner):
+        self.inner = inner
+        self.name = inner.name
+        self.offset = np.zeros(3)
+
+    def distance(self, pts: np.ndarray) -> np.ndarray:
+        return self.inner.distance(pts - self.offset)
+
+
 def fit_rigid(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
     """Least-squares rigid transform (Kabsch) mapping ``src`` points onto ``dst``, as 4x4."""
     src, dst = np.asarray(src, float), np.asarray(dst, float)
@@ -277,6 +291,17 @@ class CollisionChecker:
                 if d < best.min_mm:
                     best = Clearance(d, part, f.name)
         return best
+
+    def set_stage_offset(self, offset) -> None:
+        """Move every stage-carried obstacle (MovingField) to ``offset`` (robot frame, mm)."""
+        for f in self.fields:
+            if isinstance(f, MovingField):
+                f.offset = np.asarray(offset, dtype=float).copy()
+
+    @property
+    def stage_offset(self) -> np.ndarray:
+        moving = [f for f in self.fields if isinstance(f, MovingField)]
+        return moving[0].offset.copy() if moving else np.zeros(3)
 
     def is_clear(self, q_deg) -> bool:
         return self.clearance(q_deg).min_mm >= 0

@@ -55,9 +55,11 @@ from lerobot.processor import (
 )
 from lerobot.robots.meca500.autocollect.bench import BenchConfig, PlannerLimits
 from lerobot.robots.meca500.autocollect.correction import measure
+from lerobot.robots.meca500.autocollect.dish_map import DishHeightMap
 from lerobot.robots.meca500.autocollect.focus_check import FocusMismatchError, check_focus
 from lerobot.robots.meca500.autocollect.overlay import TargetOverlayStep
 from lerobot.robots.meca500.autocollect.planner import Planner, PlanningError
+from lerobot.robots.meca500.autocollect.stage import MLS203Stage, StageError, StageModel
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.scripts.lerobot_record import record_loop
 from lerobot.teleoperators.meca500_scripted.config_meca500_scripted import Meca500ScriptedConfig
@@ -72,9 +74,9 @@ from lerobot.utils.visualization_utils import init_rerun
 # ----------------------------- CONFIG -----------------------------
 RIG = "meca500_basler"
 USER = "AdamAxelrod"
-NAME = "basler_touch_corrected_2026-11-03"  # one dataset per rig and target style - never mix
+NAME = "basler_touch_corrected10_2026-11-03"  # one dataset per rig and target style - never mix
 TASK = "move_pipette_to_target"
-NUM_EPISODES = 3
+NUM_EPISODES = 10
 RESUME = False  # append to an existing local dataset of the same NAME
 PUSH_TO_HUB = False
 DISPLAY_DATA = True
@@ -106,7 +108,16 @@ SEED_BASE = 1_000_000
 VISION_CORRECTION = True
 CORRECTION_HOLD_S = 0.4  # recorded pause at each checkpoint, so the arm is still when detected
 CORRECTION_NEAR_MM = 0.4  # second checkpoint, back along the pipette from the touch
+CORRECTION_MID_MM = 1.0  # extra checkpoint, only when the pre-touch one cannot see the tip
 CORRECTION_FRAMES = 3  # median of this many frames per detection
+
+# Random dish-stage position per episode (autocollect/stage.py), so the policy never sees the same
+# patch of dish twice. Needs the MLS203 (Kinesis closed) and the dish height map auto_calibrate
+# writes; each episode touches at the mapped height, and the dish sits in the collision model where
+# the stage puts it. The stage moves only while the arm waits at the episode's start pose.
+STAGE_MOVES = True
+STAGE_ATTEMPTS = 10  # stage positions tried per episode before giving up
+MAX_MAP_MISMATCH_MM = 0.05  # the height map must agree with the scope calibration at the reference
 # -----------------------------------------------------------------
 
 
@@ -237,8 +248,9 @@ def run_corrected_episode(robot, teleop, plan, planner, key, background, events,
     """Record one episode in segments, correcting the final approach from the image.
 
     1. the plan up to the pre-touch point; 2. a still pause, then detect and shift the touch
-    point; 3. a straight move to CORRECTION_NEAR_MM before the corrected touch; 4. pause, detect
-    and shift again; 5. the touch and the dwell. Then one more (unrecorded) detection measures
+    point (if the tip is not seen there, one more stop CORRECTION_MID_MM out); 3. a straight move
+    to CORRECTION_NEAR_MM before the corrected touch; 4. pause, detect and shift again; 5. the
+    touch and the dwell. Then one more (unrecorded) detection measures
     the final error. Returns the correction record for the episode metadata.
     """
     fps = planner.lim.fps
@@ -256,7 +268,9 @@ def run_corrected_episode(robot, teleop, plan, planner, key, background, events,
     p_plan = np.asarray(plan.target_xyz, float)
     p_touch, shift = p_plan, np.zeros(2)
     corrections = []
-    for name, back_mm in (("pretouch", CORRECTION_NEAR_MM), ("near", None)):
+
+    def checkpoint(name: str):
+        nonlocal shift, p_touch
         record(np.repeat(q[None], hold, axis=0), np.ones(hold))
         expected = planner.calib.xy_to_pixel(planner.kin.tip(q)[:2, 3])[0]  # model tip, now
         c = measure(grab(robot, key), background, expected, planner.calib)
@@ -268,14 +282,24 @@ def run_corrected_episode(robot, teleop, plan, planner, key, background, events,
         if not c.note:
             shift = np.asarray(c.shift_mm, float)
         p_touch = p_plan + np.array([*shift, 0.0])
-        if back_mm is None:
-            break
+        return c
+
+    def approach(back_mm: float) -> None:
+        nonlocal q
         try:
             seg = planner.plan_line(q, p_touch - axis * back_mm, plan.precision_speed_mm_s, "approach")
         except PlanningError as e:
             raise EpisodeAbortedError(str(e)) from e
         record(seg, np.ones(len(seg)))
         q = seg[-1]
+
+    if checkpoint("pretouch").note and plan.pretouch_back_mm > CORRECTION_MID_MM + 0.2:
+        # The pre-touch tip was off-screen or not detected. With only the near checkpoint, two of
+        # ten touches ended at ~45 um (2026-11-03), so look once more, 1 mm out, where it is in view.
+        approach(CORRECTION_MID_MM)
+        checkpoint("mid")
+    approach(CORRECTION_NEAR_MM)
+    checkpoint("near")
     try:
         seg = planner.plan_line(q, p_touch, plan.precision_speed_mm_s, "touch")
     except PlanningError as e:
@@ -294,6 +318,73 @@ def run_corrected_episode(robot, teleop, plan, planner, key, background, events,
     }
 
 
+class StagePlanner:
+    """Draws the stage position for each episode and keeps the planner in step with the dish.
+
+    ``place(xy)`` puts the dish obstacles where the stage puts them and sets the touch height from
+    the dish height map; ``plan_episode`` tries stage positions until one plans.
+    """
+
+    def __init__(self, planner: Planner, model: StageModel, hmap: DishHeightMap, base_calib):
+        self.planner, self.model, self.hmap, self.base_calib = planner, model, hmap, base_calib
+
+    def place(self, xy) -> float:
+        z = self.hmap.surface_z(xy)
+        self.planner.checker.set_stage_offset(self.model.dish_offset(xy))
+        self.planner.calib = replace(self.base_calib, surface_z_mm=z)
+        return z
+
+    def plan_episode(self, seed: int):
+        rng = np.random.default_rng(seed + 7_000_000)  # stage draws: separate from the path's
+        last = None
+        for _ in range(STAGE_ATTEMPTS):
+            xy = self.model.sample(rng)
+            self.place(xy)
+            try:
+                return xy, self.planner.sample_episode(seed)
+            except PlanningError as e:
+                last = e
+        raise PlanningError(f"No stage position in {STAGE_ATTEMPTS} tries gave a plan ({last}).")
+
+    def check_parked_arm(self, q, xy_from, xy_to) -> None:
+        """The dish sweeps under the parked arm while the stage moves: check every 10%."""
+        try:
+            for f in np.linspace(0, 1, 11):
+                self.planner.checker.set_stage_offset(
+                    self.model.dish_offset(np.asarray(xy_from) + f * (np.asarray(xy_to) - np.asarray(xy_from)))
+                )
+                c = self.planner.checker.clearance(q)
+                if c.min_mm < 0:
+                    raise PlanningError(f"the stage move would bring the dish into the arm ({c.where} vs {c.obstacle})")
+        finally:
+            self.planner.checker.set_stage_offset(self.model.dish_offset(xy_from))
+
+
+def connect_stage(bench, base_calib):
+    """Stage driver, model and height map for STAGE_MOVES; refuses on anything stale."""
+    path = bench.dish_map_path()
+    if not path.exists():
+        sys.exit(f"STAGE_MOVES needs {path.name}: run auto_calibrate.py (HEIGHT_MAP = True) first, or set STAGE_MOVES = False.")
+    hmap = DishHeightMap.load(path)
+    model = StageModel.from_bench(bench.section("scope"), base_calib)
+    z_map = hmap.surface_z(model.reference_xy)
+    if abs(z_map - base_calib.surface_z_mm) > MAX_MAP_MISMATCH_MM:
+        sys.exit(
+            f"The dish height map ({z_map:.3f}) disagrees with the scope calibration ({base_calib.surface_z_mm:.3f}) "
+            "at the reference stage position: they are from different calibrations. Re-run auto_calibrate.py."
+        )
+    stage = MLS203Stage(bench.section("scope")["stage_serial"])
+    try:
+        stage.connect()
+    except StageError as e:
+        sys.exit(f"{e}\n(Or set STAGE_MOVES = False to record with the stage at its reference position.)")
+    logging.info(
+        f"Stage moves on: {path.name} tilt {hmap.tilt_deg:.3f} deg; positions within {model.radius_mm} mm of "
+        f"{model.centre_xy.tolist()}."
+    )
+    return stage, model, hmap
+
+
 def main() -> None:
     init_logging()
     if DISPLAY_DATA:
@@ -308,6 +399,11 @@ def main() -> None:
         sys.exit(f"\nREFUSING TO START: {e}\n")
     print(f"Focus check passed: K-Cube at {pos:.4f} mm, as calibrated.")
     planner = build_planner(bench)
+    base_calib = planner.calib
+    stage = stager = None
+    if STAGE_MOVES:
+        stage, model, hmap = connect_stage(bench, base_calib)
+        stager = StagePlanner(planner, model, hmap, base_calib)
     home = np.asarray(require_home_joints(RIG), dtype=float)
     fps = planner.lim.fps
     repo_id = f"{USER}/{NAME}"
@@ -376,6 +472,15 @@ def main() -> None:
     listener, events = init_keyboard_listener()
     try:
         make_ready(robot.robot)
+        stage_xy = None
+        if stager is not None:
+            if not stage.is_homed:
+                # Homing sweeps the dish to the middle of the travel: only with the arm at home.
+                if np.abs(np.array(robot.robot.GetRtJointPos()) - home).max() > START_TOLERANCE_DEG:
+                    sys.exit("The stage is not homed. Home it in Kinesis with the arm at home (or rerun with the arm at home).")
+                stage.home()
+            stage_xy = stage.position()
+            stager.place(stage_xy)
         q_now = go_home(robot, teleop, planner, home, events, processors)
         retreat = False  # the first episode's transit starts from home, not the dish
         with VideoEncodingManager(dataset):
@@ -383,7 +488,14 @@ def main() -> None:
             while recorded < NUM_EPISODES and not events["stop_recording"]:
                 ep = dataset.num_episodes
                 try:
-                    plan = planner.sample_episode(SEED_BASE + ep)
+                    if stager is None:
+                        plan = planner.sample_episode(SEED_BASE + ep)
+                        new_xy = None
+                    else:
+                        new_xy, plan = stager.plan_episode(SEED_BASE + ep)
+                        # The transit runs before the stage moves: plan it against the dish where it is.
+                        stager.place(stage_xy)
+                        stager.check_parked_arm(plan.start_joints, stage_xy, new_xy)
                     transit = planner.plan_transit(q_now, plan.start_joints, retreat=retreat)
                 except PlanningError as e:
                     logging.error(str(e))
@@ -396,6 +508,13 @@ def main() -> None:
                 if events["stop_recording"]:
                     break
 
+                if stager is not None:
+                    log_say(f"Moving the dish to stage {np.round(new_xy, 2).tolist()}", False)
+                    stage_xy = stage.move_to(new_xy)
+                    surface_z = stager.place(stage_xy)
+                    extra_stage = {"stage_xy_mm": [round(float(v), 4) for v in stage_xy], "surface_z_mm": round(surface_z, 4)}
+                else:
+                    extra_stage = {}
                 # Background for the tip detector: the start pose keeps the tip out of view.
                 background = grab(robot, bench.camera_key) if VISION_CORRECTION else None
                 overlay.set_target(plan.target_px)
@@ -439,7 +558,7 @@ def main() -> None:
                 with meta_path.open("a") as f:
                     # n_frames: what the dataset holds (the plan's own count can differ by a frame or
                     # two, because record_loop paces by wall time).
-                    record_meta = {"episode_index": ep, "stage": STAGE, **plan.meta(), **extra}
+                    record_meta = {"episode_index": ep, "stage": STAGE, **plan.meta(), **extra_stage, **extra}
                     record_meta["planned_frames"], record_meta["n_frames"] = record_meta["n_frames"], n_frames
                     f.write(json.dumps(record_meta) + "\n")
                 logging.info(
@@ -465,6 +584,9 @@ def main() -> None:
             robot.disconnect()
         with contextlib.suppress(Exception):
             teleop.disconnect()
+        if stage is not None:
+            with contextlib.suppress(Exception):
+                stage.disconnect()
         if not is_headless() and listener is not None:
             with contextlib.suppress(Exception):
                 listener.stop()

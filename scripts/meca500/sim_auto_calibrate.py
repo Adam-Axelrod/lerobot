@@ -34,7 +34,8 @@ import auto_calibrate as autocal  # noqa: E402
 from arm_session import Display  # noqa: E402
 from live_view import LiveView  # noqa: E402
 
-from lerobot.robots.meca500.autocollect.bench import BenchConfig  # noqa: E402
+from lerobot.robots.meca500.autocollect.bench import BenchConfig
+from lerobot.robots.meca500.autocollect.stage import StageModel  # noqa: E402
 from lerobot.robots.meca500.autocollect.contact import (  # noqa: E402
     ContactDetector,
     ContactThresholds,
@@ -54,6 +55,31 @@ bench = BenchConfig.load("meca500_basler")
 # The true dish sits a little off the calibrated one, as on the arm (2026-11-03: estimate 27.0,
 # found 27.72). Relative, so the sim follows the bench when the dish moves (it was a fixed 8.0).
 TRUE_DISH_Z = bench.calibration().surface_z_mm + 0.7
+# The true dish is tilted (~0.4 deg), so its height under the camera follows the stage; the
+# height-map stage must recover this plane.
+TRUE_DISH_SLOPE = np.array([0.004, -0.006])  # mm of height per stage mm (X, Y)
+STAGE_MODEL = StageModel.from_bench(bench.section("scope"), bench.calibration())
+
+
+class FakeStage:
+    def __init__(self):
+        self.xy = STAGE_MODEL.reference_xy.copy()
+        self.is_homed = True
+
+    def position(self):
+        return self.xy.copy()
+
+    def move_to(self, xy):
+        self.xy = np.asarray(xy, float).copy()
+        return self.position()
+
+
+stage = FakeStage()
+
+
+def dish_z() -> float:
+    return float(TRUE_DISH_Z + TRUE_DISH_SLOPE @ (stage.xy - STAGE_MODEL.reference_xy))
+
 model_kin = bench.kinematics()
 true_tool = model_kin.tool.copy()
 true_tool[:3, 3] += TRUE_DELTA
@@ -123,14 +149,14 @@ class SimMeca:
         slides it FORWARD along the dish in the pipette's direction, like the shallow glass
         pipette on the arm (2026-10-14)."""
         t = self.raw_tip()
-        pen = TRUE_DISH_Z - t[2, 3]
+        pen = dish_z() - t[2, 3]
         if pen > 0:
             axis = t[:3, 2]
             horiz = axis[:2] / max(np.linalg.norm(axis[:2]), 1e-9)
             elev = np.arcsin(np.clip(-axis[2], 0.05, 1.0))  # angle below horizontal
             t = t.copy()
             t[:2, 3] += horiz * pen / np.tan(elev)
-            t[2, 3] = TRUE_DISH_Z
+            t[2, 3] = dish_z()
         return t
 
 
@@ -150,7 +176,7 @@ for _ in range(300):
 
 def render(meca):
     t = meca.true_tip()
-    tip, h = t[:3, 3], t[2, 3] - TRUE_DISH_Z
+    tip, h = t[:3, 3], t[2, 3] - dish_z()
     img = BG.copy()
     if h < 15:
         px = A_inv_lin @ (tip[:2] - np.asarray(cam.px_to_xy)[:, 2])
@@ -186,7 +212,7 @@ class Sensor:
         # Torque builds up only gradually with the descent past contact (the tip slides rather
         # than pushes): it reaches the 0.3 mNm threshold 0.2 mm past contact, so vision (the
         # slide) must catch the touch first, as on the arm.
-        pen = TRUE_DISH_Z - meca.raw_tip()[2, 3]
+        pen = dish_z() - meca.raw_tip()[2, 3]
         ty = 0.3e-3 * max(pen, 0.0) / 0.2 + rng.normal(0, 3e-5)
         return SimpleNamespace(force=[0, 0, 0], torque=[0, ty, 0], timestamp=next(ts))
 
@@ -224,6 +250,17 @@ fake_save(s, tip)
 fit = autocal.stage_scope_calibration(s, first["rot"])
 print("fit dish z", round(fit.surface_z_mm, 3), "true", TRUE_DISH_Z)
 errs = autocal.stage_verify(s, fit, first["rot"])
-print("verify errors px", np.round(errs, 2).tolist(), f" sim took {time.time() - t0:.0f} s")
+print("verify errors px", np.round(errs, 2).tolist())
+s.calib = fit
+hmap = autocal.stage_dish_height_map(s, stage, STAGE_MODEL, first["rot"])
+worst = max(
+    abs(hmap.surface_z(xy) - (TRUE_DISH_Z + TRUE_DISH_SLOPE @ (np.asarray(xy) - STAGE_MODEL.reference_xy)))
+    for xy in [STAGE_MODEL.centre_xy + STAGE_MODEL.radius_mm * np.array(d) for d in ((0, 0), (1, 0), (0, 1), (-1, -1))]
+)
+print(
+    f"height map slopes {np.round(hmap.plane[1:], 4).tolist()} TRUE {TRUE_DISH_SLOPE.tolist()}; "
+    f"worst height error over the disc {worst * 1000:.0f} um; stage back at {stage.position().tolist()}"
+)
+print(f"sim took {time.time() - t0:.0f} s")
 stream.stop()
 view.close()

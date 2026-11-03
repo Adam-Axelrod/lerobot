@@ -17,7 +17,15 @@ import numpy as np
 import yaml
 
 from .calibration import ScopeCalibration
-from .collision import BoxField, CollisionChecker, CylinderField, GridField, RobotPoints, TransformedField
+from .collision import (
+    BoxField,
+    CollisionChecker,
+    CylinderField,
+    GridField,
+    MovingField,
+    RobotPoints,
+    TransformedField,
+)
 from .kinematics import REPO_ROOT, Meca500Kinematics, pose_to_matrix
 from .overlay import TargetStyle
 
@@ -85,6 +93,9 @@ class BenchConfig:
             g = GridField.from_meshes([m], pitch=float(obs.get("sdf_pitch_mm", 2.0)))
             g.name = m.stem
             fields.append(g)
+        moving = {
+            e.get("name") for e in [*obs.get("boxes", []), *obs.get("cylinders", [])] if e.get("moves_with_stage")
+        }
         for b in obs.get("boxes", []):
             fields.append(BoxField(b["center"], b["size"], b.get("yaw_deg", 0.0), b.get("name", "box")))
         for c in obs.get("cylinders", []):
@@ -96,6 +107,8 @@ class BenchConfig:
         reg = self.registration_transform()
         if reg is not None:
             fields = [TransformedField(f, reg) for f in fields]
+        # Outermost, so CollisionChecker.set_stage_offset can find them.
+        fields = [MovingField(f) if f.name in moving else f for f in fields]
         if not fields:
             raise ValueError(
                 f"{self.root / 'bench.yaml'} defines no obstacles. Refusing to plan against an empty "
@@ -137,6 +150,10 @@ class BenchConfig:
 
     def calibration_path(self) -> Path:
         return self.root / self.section("scope").get("calibration", "scope_calibration.json")
+
+    def dish_map_path(self) -> Path:
+        """Dish height over the stage range (autocollect/dish_map.py), written by auto_calibrate."""
+        return self.root / self.section("scope").get("dish_height_map", "dish_height_map.json")
 
     def calibration(self) -> ScopeCalibration:
         path = self.calibration_path()
