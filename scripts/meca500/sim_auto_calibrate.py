@@ -54,7 +54,7 @@ SPEEDUP = 5.0  # sim time runs faster during velocity moves (higher = coarser to
 bench = BenchConfig.load("meca500_basler")
 # The true dish sits a little off the calibrated one, as on the arm (2026-11-03: estimate 27.0,
 # found 27.72). Relative, so the sim follows the bench when the dish moves (it was a fixed 8.0).
-TRUE_DISH_Z = bench.calibration().surface_z_mm + 0.7
+TRUE_DISH_Z = bench.calibration().surface_z_mm + 1.6  # 2026-11-04: the re-taped dish sat 1.63 mm higher
 # The true dish is tilted (~0.4 deg), so its height under the camera follows the stage; the
 # height-map stage must recover this plane.
 TRUE_DISH_SLOPE = np.array([0.004, -0.006])  # mm of height per stage mm (X, Y)
@@ -247,7 +247,7 @@ print(
     "mm",
 )
 fake_save(s, tip)
-fit = autocal.stage_scope_calibration(s, first["rot"])
+fit = autocal.stage_scope_calibration(s, first)
 print("fit dish z", round(fit.surface_z_mm, 3), "true", TRUE_DISH_Z)
 errs = autocal.stage_verify(s, fit, first["rot"])
 print("verify errors px", np.round(errs, 2).tolist())

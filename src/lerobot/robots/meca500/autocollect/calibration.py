@@ -65,6 +65,37 @@ class ScopeCalibration:
             pairs=np.hstack([pixels, xy]).tolist(),
         )
 
+    @classmethod
+    def fit_robust(
+        cls,
+        pixels,
+        xy,
+        z,
+        image_size,
+        z_outlier_mm: float = 0.1,
+        outlier_um: float = 60.0,
+        max_rejected: int = 2,
+    ) -> tuple[ScopeCalibration, list[int]]:
+        """``fit`` without bad touches; returns (fit, rejected indices).
+
+        A touch is dropped if its contact height is more than ``z_outlier_mm`` off the median (the
+        tip was pressed into the dish, or contact was seen late: it slid before the pixel was taken),
+        then the worst point while it is more than ``outlier_um`` off the fit of the others. On
+        2026-11-04 one touch that started 0.6 mm inside the dish was 578 um off; without it the other
+        11 fitted to 16 um rms. The surface height is the mean over the kept touches.
+        """
+        pixels, xy, z = np.asarray(pixels, float), np.asarray(xy, float), np.asarray(z, float)
+        keep = np.abs(z - np.median(z)) <= z_outlier_mm
+        while True:
+            a = fit_affine(pixels[keep], xy[keep])
+            res = np.linalg.norm(apply_affine(a, pixels) - xy, axis=1)
+            worst = int(np.argmax(np.where(keep, res, -1)))
+            if keep.sum() - 1 < 6 or (~keep).sum() >= max_rejected or res[worst] * 1000 <= outlier_um:
+                break
+            keep[worst] = False
+        fit = cls.fit(pixels[keep], xy[keep], float(np.mean(z[keep])), image_size)
+        return fit, [int(i) for i in np.flatnonzero(~keep)]
+
     @property
     def mm_per_px(self) -> float:
         """Mean scale, for reporting errors in physical units."""

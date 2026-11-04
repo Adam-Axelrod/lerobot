@@ -1,48 +1,32 @@
 # Next at the bench
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
-**Last updated:** 2026-11-03
-**Time needed:** about 40 min (C1-C3).
+**Last updated:** 2026-11-04
+**Time needed:** about 20 min (C2-C3).
 
 **Where things stand.**
-- **The dish sits on an acrylic holder** in the MLS203 stage, refocused (focus K-Cube at
-  **4.000 mm**), and the arm model and calibration match it (2026-11-03): tip pivot 0.076 mm, scope
-  1.26 px, dish z 26.83.
+- **C1 is done (2026-11-04).**
+  - The re-taped dish sits **1.63 mm higher** than before, at dish z 28.55.
+  - Tip pivot fit: 0.057 mm.
+  - Dish height map: tilt 0.11°, residual 14 µm. Height changes by at most 24 µm across the
+    random-move area.
+- **The scope fit needed one fix.** The first grid touch used the old dish height, started 0.6 mm
+  inside the dish and was 0.58 mm off. Claude refitted the calibration without it, from the saved
+  touches: 1.18 px rms (16 µm), agreeing with the height map to 6 µm. `auto_calibrate.py` now uses
+  the measured height, drops bad touches itself, and starts 4 mm up instead of 2. No need to rerun C1.
 - **Vision correction works:** 10 of 10 touches ended within 50 µm of the target (median 12 µm,
   worst 45). The arm pauses on the final approach, finds the tip in the image and corrects.
-- **New, not yet tried on the arm:**
-  - random dish-stage moves between episodes (`record_auto.py`, `STAGE_MOVES = True`), so the
-    policy sees a different patch of dish each time;
-  - a dish-height map, the new 6th stage of `auto_calibrate.py`, so each episode touches at the
-    right height for its stage position;
-  - an extra correction checkpoint 1 mm out when the first one can't see the tip.
-  All of it passed the offline tests and the simulator.
+- **New, not yet tried in `record_auto`:** random dish-stage moves between episodes
+  (`STAGE_MOVES = True`), touching at the mapped height for each stage position, and an extra
+  correction checkpoint 1 mm out when the first one can't see the tip.
 - **Dropped for now:** the zirconia beads. The dataset uses the digital target over the empty dish.
 
 ## Before you start
-- **Fix the dish to the acrylic,** with a few small pieces of double-sided tape under its rim.
-  From now on the stage moves the dish between episodes; it moves gently, but a loose dish could
-  still creep, and every creep shifts the dish under the calibration.
 - **Close Kinesis.** The scripts drive the stage and read the focus K-Cube themselves; only one
   program can hold the controllers. Both controllers must be on and plugged in by USB.
-- **Do not home or move the focus K-Cube.** It must stay at 4.000 mm (the scripts refuse to
-  start otherwise).
+- **Do not home or move the focus K-Cube**, and don't touch the dish or its tape: the calibration
+  and height map are for the dish exactly where it is now.
 - Keep a hand near the e-stop for the first run of each step.
-
-## C1. Re-calibrate with the dish height map (about 20 min, hands off)
-The dish was taped down, so it may have shifted slightly: recalibrate, now with the new stage 6.
-```powershell
-.venv\Scripts\python.exe scripts\meca500\auto_calibrate.py
-```
-- Stages 1-5 run as before.
-- **Stage 6 is new:** the arm backs the tip out of view and lifts it, the stage moves the dish to
-  a new position, then the tip comes back and touches the dish. This repeats for 10 stage
-  positions, and the stage returns to (55, 37.5) at the end.
-- Watch the first two or three stage moves: the dish must ride with the stage, not slide, and
-  nothing may come near the pipette.
-- A good result ends with `dish height map: tilt ... deg, residual ... um rms`, with a residual of
-  a few tens of µm or less. Up to two touches may be dropped as outliers.
-- Send Claude the terminal output.
 
 ## C2. Hover check with stage moves (3 episodes, about 5 min)
 1. In `scripts\meca500\record_auto.py`, set:
@@ -67,8 +51,7 @@ The dish was taped down, so it may have shifted slightly: recalibrate, now with 
 If C3 looks like B5 (within 50 µm, no slides), the next step is the real 200-episode dataset.
 
 ## Send Claude
-- C1: the `auto_calibrate` terminal output;
-- C2/C3: that they finished, and anything odd you saw.
+- C2/C3: that they finished, and anything odd you saw (dish sliding, discarded episodes).
 
 ## If something goes wrong
 | Symptom | What to do |
@@ -96,7 +79,7 @@ If C3 looks like B5 (within 50 µm, no slides), the next step is the real 200-ep
 ```
 - Close Kinesis first: stage 6 moves the stage.
 - **After a pipette change or a knock**, first set `START_ABOVE_DISH_MM = 6.0` in its CONFIG
-  block, because the move to the start position is not guarded. Set it back to 2.0 afterwards.
+  block, because the move to the start position is not guarded. Set it back to 4.0 afterwards.
 - Watch the first descent: the banner should turn red and the arm should stop the moment the tip
   touches.
 - A good result has a pivot residual of about 0.1 mm or less, a scope fit of about 3 px or less,

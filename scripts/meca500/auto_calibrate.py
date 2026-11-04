@@ -60,15 +60,18 @@ from lerobot.utils.import_utils import register_third_party_plugins
 # ----------------------------- CONFIG -----------------------------
 RIG = "meca500_basler"
 # First approach height above the dish of the LAST calibration, with the last measured tip.
-# 2 mm is enough when the pipette has not changed. After a pipette change or a knock, the new tip
-# can sit several mm lower than the model thinks; set this to ~6 for that run, or the move to the
-# start (not guarded) could drive the tip into the dish.
-START_ABOVE_DISH_MM = 2.0
+# The move to the start is not guarded. On 2026-11-04 the re-taped dish sat 1.63 mm higher than
+# the last calibration, leaving 0.37 mm of a 2 mm start: so 4 mm. After a pipette change or a
+# knock, the new tip can sit several mm lower than the model thinks; set ~6 for that run.
+START_ABOVE_DISH_MM = 4.0
 HOVER_MM = 1.0  # working hover above the measured dish, once found
 FIND_HOVER_MM = 0.5  # search height just above the dish, where the tip is nearly in focus
 DESCENT_MM_S = 0.15
 FIRST_DESCENT_MM_S = 0.3  # the first, longer descent from the search height
 MAX_OVERTRAVEL_MM = 2.5  # never go further than this below the expected dish without contact
+# ... once the dish is measured (scope grid, verify, height map). A shallow pipette slides along the
+# dish without loading the force backstop, so when vision misses the slide this is all that stops it.
+MEASURED_OVERTRAVEL_MM = 0.5
 SEARCH_STEP_MM = 2.0  # spiral search step if the tip is not in view (field ~5 mm across)
 # Centring only needs the tip NEAR the target: what matters is measured at contact, and the
 # pivot fit corrects each touch's leftover pixel offset. 2 px stalled on the arm (2026-10-14).
@@ -481,7 +484,7 @@ def stage_find_tip(s: Session, home) -> dict:
     s.display.marks.append((px[0], px[1], "lime", "o"))
     xy = s.tip(s.contact_q(r))[:2, 3].copy()
     s.shift(0, 0, HOVER_MM, "lift")
-    return {"z_dish": r["tip_z"], "px": px, "rot": rot, "xy": xy}
+    return {"z_dish": r["tip_z"], "px": px, "rot": rot, "xy": xy, "q": s.contact_q(r)}
 
 
 def stage_tip_calibration(s: Session, first: dict) -> np.ndarray:
@@ -590,19 +593,22 @@ def touch_at_pixel(s: Session, px, rot, z_dish: float, xy_of_px, label: str):
     xy = xy_of_px(px)
     s.display.overlays["target"] = (px[0], px[1], "yellow", "+")
     s.move_tip([xy[0], xy[1], z_dish + HOVER_MM], rot, label)
-    r = s.touch(z_dish - MAX_OVERTRAVEL_MM, DESCENT_MM_S)
+    r = s.touch(z_dish - MEASURED_OVERTRAVEL_MM, DESCENT_MM_S)
     px = s.contact_px(r)
     q = s.contact_q(r)
     s.shift(0, 0, HOVER_MM, "lift")
     return (None if px is None else SimpleNamespace(px=px)), q
 
 
-def stage_scope_calibration(s: Session, rot) -> ScopeCalibration:
+def stage_scope_calibration(s: Session, first: dict) -> ScopeCalibration:
     s.display.phase = "4/5 scope calibration (grid of touches)"
+    rot = first["rot"]
+    # The dish height from the first contact, under the tip model the pivot fit just wrote (it can
+    # move the tip by a mm after a pipette change). Not the old calibration's: on 2026-11-04 the
+    # dish sat 1.63 mm higher, the anchor hover went 0.6 mm into it and that touch was 578 um off.
+    z_dish = float(s.kin.tip(first["q"])[2, 3])
     # Re-anchor the old affine at the current tip: one touch at the field centre.
-    d, q = touch_at_pixel(
-        s, s.fov_centre, rot, s.calib.surface_z_mm, lambda p: s.calib.pixel_to_xy([p])[0], "anchor"
-    )
+    d, q = touch_at_pixel(s, s.fov_centre, rot, z_dish, lambda p: s.calib.pixel_to_xy([p])[0], "anchor")
     if d is None:
         raise CalibrationFailedError("Tip not detected at the anchor touch.")
     t = s.kin.tip(q)
@@ -633,10 +639,13 @@ def stage_scope_calibration(s: Session, rot) -> ScopeCalibration:
     if len(pixels) < 6:
         raise CalibrationFailedError(f"Only {len(pixels)} scope points (need 6).")
     w, h = s.display.last_frame.shape[1], s.display.last_frame.shape[0]
-    fit = ScopeCalibration.fit(pixels, xys, float(np.mean(zs)), (w, h))
+    fit, rejected = ScopeCalibration.fit_robust(pixels, xys, zs, (w, h))
+    for i in rejected:
+        print(f"  dropped {'the anchor' if i == 0 else 'a grid touch'} (contact z {zs[i]:.3f}, px {np.round(pixels[i], 1).tolist()})")
+    kept = np.delete(np.asarray(zs), rejected)
     print(
-        f"Scope fit over {len(pixels)} points: {fit.residual_px_rms:.2f} px rms = {fit.residual_um_rms:.1f} um, "
-        f"{fit.mm_per_px * 1000:.2f} um/px, dish z {fit.surface_z_mm:.3f} (+/- {np.std(zs) * 1000:.0f} um)"
+        f"Scope fit over {fit.n_points} points: {fit.residual_px_rms:.2f} px rms = {fit.residual_um_rms:.1f} um, "
+        f"{fit.mm_per_px * 1000:.2f} um/px, dish z {fit.surface_z_mm:.3f} (+/- {np.std(kept) * 1000:.0f} um)"
     )
     return fit
 
@@ -704,7 +713,7 @@ def stage_dish_height_map(s: Session, stage, model: StageModel, rot) -> DishHeig
                 move_stage_with_tip_out(s, stage, model, xy, rot, [*xy_c, z0 + 3.0], label)
                 s.move_tip([xy_c[0], xy_c[1], z0 + 3.0], rot, f"{label}: back in")
                 s.move_tip([xy_c[0], xy_c[1], z0 + HOVER_MM], rot, f"{label}: down to hover")
-                r = s.touch(z0 - MAX_OVERTRAVEL_MM, DESCENT_MM_S)
+                r = s.touch(z0 - MEASURED_OVERTRAVEL_MM, DESCENT_MM_S)
             except (CalibrationFailedError, StageError) as e:
                 print(f"  {label} at stage {np.round(xy, 2).tolist()}: skipped ({e})")
                 with contextlib.suppress(Exception):
@@ -791,7 +800,7 @@ def main() -> None:
         first = stage_find_tip(s, home)
         tip = stage_tip_calibration(s, first)
         save_tip_and_reimport(s, tip)
-        fit = stage_scope_calibration(s, first["rot"])
+        fit = stage_scope_calibration(s, first)
         cal_path = s.bench.calibration_path()
         if cal_path.exists():
             backup = cal_path.with_name(f"scope_calibration.{time.strftime('%Y%m%d-%H%M%S')}.bak.json")

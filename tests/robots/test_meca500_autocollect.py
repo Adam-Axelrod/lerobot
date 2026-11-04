@@ -164,6 +164,22 @@ def test_affine_calibration_recovers_a_mirrored_rotated_map():
     assert cal.mm_per_px == pytest.approx(0.003)
 
 
+def test_robust_scope_fit_drops_a_pressed_touch_and_a_stray_pixel():
+    rng = np.random.default_rng(1)
+    lin = 0.013 * np.diag([1.0, -1.0])
+    px = rng.uniform([40, 40], [380, 600], size=(12, 2))
+    xy = px @ lin.T + [235.0, -91.0] + rng.normal(0, 0.01, (12, 2))
+    z = 28.54 + rng.normal(0, 0.015, 12)
+    xy[0] += [0.08, 0.57]  # 2026-11-04: the anchor started inside the dish and slid
+    z[0] = 27.83
+    xy[5] += [0.3, 0.0]  # a late slide detection at the right height
+    cal, rejected = ScopeCalibration.fit_robust(px, xy, z, (427, 640))
+    assert rejected == [0, 5]
+    assert cal.n_points == 10
+    assert cal.residual_um_rms < 20
+    assert cal.surface_z_mm == pytest.approx(28.54, abs=0.02)
+
+
 def test_calibration_save_load(tmp_path):
     px = np.array([[0, 0], [100, 0], [0, 100], [100, 100.0]])
     cal = ScopeCalibration.fit(px, px * 0.01, 5.0, (427, 640))
