@@ -2,28 +2,24 @@
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
 **Last updated:** 2026-11-04
-**Time needed:** about 1.5 h per 50-episode batch, mostly hands off.
+**Time needed:** about 45 min per 50-episode batch, mostly hands off.
 
-**Where things stand.**
-- **E1 (batch 1, 50 episodes) ran cleanly:** no discards. By eye on the raw frames, 44 of 50 end
-  on the target.
-  - **Clear misses:** episodes 10, 21, 35 and 44.
-  - **Borderline:** episode 9 (~70 um), and episode 34, where debris hides the tip.
-  - Claude will leave these out at training time; nothing to do at the bench.
-- **Cause found and fixed.** The detector's background frame was grabbed the moment the stage move
-  returned. It sat 3-11 px off the later frames (0.85 px per mm of stage Y move). Specks then joined
-  the tip blob, and the near-checkpoint correction pushed the tip the wrong way.
-  - `record_auto.py` now waits until two background frames agree before taking one.
-  - It logs the background shift at every checkpoint, and warns if a shift is over 1 px.
-- E0 before E1 (17:04): dish +28 um since C1, corrected automatically.
-- Calibration (C1, 2026-11-04): pivot 0.057 mm, scope 1.18 px, dish z 28.55, height-map tilt 0.11 deg.
+**Where things stand.** The dataset has 100 episodes (E1: 0-49, E2: 50-99).
+- **E2 (20:03-20:47):** all 50 recorded, and all 50 end on the target by eye.
+  - 49 measured within 50 um (median about 17 um).
+  - Episode 87 read 1732 um, a false reading: the shaft ran over the large loose debris particle,
+    and the detector stopped there.
+  - The background fix works: the largest shift was 0.08 px, against 3-11 px in E1.
+- **E1:** 44 of 50 on target. Claude leaves out 9, 10, 21, 34, 35 and 44 at training time.
+- **The large debris particle wanders around the dish.** It was in episodes 34, 44, 78 and 87.
+- E0 before E2 (20:02): dish -22 um from the map, within tolerance.
 
 ## Before you start
 - **Close Kinesis.** The scripts drive the stage and read the focus K-Cube themselves; only one
   program can hold the controllers. Both controllers must be on and plugged in by USB.
 - **Do not home or move the focus K-Cube.**
-- **Debris (optional):** if there is a large loose particle in the dish, blow it out gently with an
-  air duster without touching the dish. Then run E0.
+- **Debris (recommended):** blow the large loose particle out of the dish gently with an air
+  duster, without touching the dish. Then run E0.
 - Keep a hand near the e-stop for the first few episodes.
 
 ## E0. Height check (about 3 min), before every batch
@@ -31,23 +27,20 @@
 `.venv\Scripts\python.exe scripts\meca500\auto_calibrate.py` and check that it ends with
 `HEIGHT CHECK COMPLETE`. A drift is corrected automatically. Send Claude the `Height check:` line.
 
-## E2. Dataset batch 2 (50 episodes, about 1.5 h)
+## E3. Dataset batch 3 (50 episodes, about 45 min)
 1. Run E0.
-2. In `scripts\meca500\record_auto.py`, keep `NAME = "basler_stage_touch_dataset_2026-11"`
-   and `NUM_EPISODES = 50`, and set `RESUME = True`.
-3. Run it. Watch the first few episodes: each `correction at ...` line now ends with
-   `(background shift N px)`, which should be about 0.1 px. If you see the warning
-   `the dish image moved ... since the background`, tell Claude.
-4. Tell Claude when it has finished.
+2. Run `scripts\meca500\record_auto.py` unchanged. It is already set to
+   `NAME = "basler_stage_touch_dataset_2026-11"`, `NUM_EPISODES = 50` and `RESUME = True`.
+3. Tell Claude when it has finished.
 
-## Later batches (E3, E4)
+## Later batches (E4)
 For each batch: E0 height check, then the same `NAME` with `RESUME = True` and `NUM_EPISODES = 50`.
 Each batch carries on with new targets and paths (the episode seeds follow the episode count).
 Claude checks each batch before the next.
 
 ## Send Claude
 - E0: the `Height check:` line;
-- E2: that it finished, and anything odd you saw.
+- E3: that it finished, and anything odd you saw.
 
 ## If something goes wrong
 | Symptom | What to do |
