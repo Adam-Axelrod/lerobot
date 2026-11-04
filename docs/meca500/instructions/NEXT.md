@@ -7,19 +7,18 @@
 **Where things stand.** The dataset has 100 episodes (E1: 0-49, E2: 50-99).
 - **E2 (20:03-20:47):** all 50 recorded, and all 50 end on the target by eye.
   - 49 measured within 50 um (median about 17 um).
-  - Episode 87 read 1732 um, a false reading: the shaft ran over the large loose debris particle,
+  - Episode 87 read 1732 um, a false reading: the shaft ran over the large scratch on the dish,
     and the detector stopped there.
   - The background fix works: the largest shift was 0.08 px, against 3-11 px in E1.
 - **E1:** 44 of 50 on target. Claude leaves out 9, 10, 21, 34, 35 and 44 at training time.
-- **The large debris particle wanders around the dish.** It was in episodes 34, 44, 78 and 87.
+- **The large dark feature is a scratch in the dish.** It moves with the stage, so it appears
+  in different places in different episodes (34, 44, 78, 87). It is harmless; leave it.
 - E0 before E2 (20:02): dish -22 um from the map, within tolerance.
 
 ## Before you start
 - **Close Kinesis.** The scripts drive the stage and read the focus K-Cube themselves; only one
   program can hold the controllers. Both controllers must be on and plugged in by USB.
 - **Do not home or move the focus K-Cube.**
-- **Debris (recommended):** blow the large loose particle out of the dish gently with an air
-  duster, without touching the dish. Then run E0.
 - Keep a hand near the e-stop for the first few episodes.
 
 ## E0. Height check (about 3 min), before every batch
