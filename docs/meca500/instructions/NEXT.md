@@ -1,37 +1,34 @@
 # Next at the bench
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
-**Last updated:** 2026-11-04
-**Time needed:** about 45 min per 50-episode batch, mostly hands off.
+**Last updated:** 2026-11-04 (late)
 
-**Where things stand.** The dataset has 150 episodes (E1: 0-49, E2: 50-99, E3: 100-149), 144 usable.
-- **E3 (21:18):** all 50 within 50 um and on the target by eye (median 13 um, max 47 um).
-  E0 before it: drift -7 um.
-- **E2:** all 50 on the target. Episode 87's 1732 um was a false reading (the shaft over the scratch).
-- **E1:** 44 of 50 on the target. Claude leaves out 9, 10, 21, 34, 35 and 44 at training time.
-  The cause (a background frame taken before the stage settled) is fixed.
-- The large dark feature is a scratch in the dish. It moves with the stage; leave it.
+**Collection is complete. Nothing is waiting at the bench.**
 
-## Before you start
-- **Close Kinesis.** The scripts drive the stage and read the focus K-Cube themselves; only one
-  program can hold the controllers. Both controllers must be on and plugged in by USB.
-- **Do not home or move the focus K-Cube.**
-- Keep a hand near the e-stop for the first few episodes.
+`basler_stage_touch_dataset_2026-11` holds 206 episodes, 200 of them usable.
 
-## E0. Height check (about 3 min), before every batch
-`HEIGHT_CHECK_ONLY = True` is already set in `auto_calibrate.py`. Run
-`.venv\Scripts\python.exe scripts\meca500\auto_calibrate.py` and check that it ends with
-`HEIGHT CHECK COMPLETE`. A drift is corrected automatically. Send Claude the `Height check:` line.
+| Batch | Episodes | On target (checked by eye on the raw frames) |
+|---|---|---|
+| E1 | 0-49 | 44 of 50 |
+| E2 | 50-99 | 50 of 50 |
+| E3 | 100-149 | 50 of 50 |
+| E4 | 150-205 | 56 of 56 (median 15 um, max 44 um) |
 
-## E4. Last batch (56 episodes, about 50 min)
-56 episodes bring the dataset to 200 usable.
-1. Run E0.
-2. In `scripts\meca500\record_auto.py`, set `NUM_EPISODES = 56`. Keep the same `NAME` and `RESUME = True`.
-3. Tell Claude when it has finished.
+- **Exclusions:** E1 episodes 9, 10, 21, 34, 35 and 44 are left out at training time. They are listed
+  in the dataset's `autocollect/excluded_episodes.json`.
+- **Dish drift:** the height checks drifted +3, +28, -22, -7 and -43 um over the day (Blu-tack).
+  Each was corrected before its batch.
+- **Next (Claude, no bench time):** convert to delta actions, then train ACT and Diffusion.
+  After that comes policy evaluation on the bench, which will get its own steps here.
 
-## Send Claude
-- E0: the `Height check:` line;
-- E4: that it finished, and anything odd you saw.
+## If you record more later
+1. **E0 height check (about 3 min):** `HEIGHT_CHECK_ONLY = True` is already set. Run
+   `.venv\Scripts\python.exe scripts\meca500\auto_calibrate.py`; it should end with
+   `HEIGHT CHECK COMPLETE`.
+2. **Batch:** `scripts\meca500\record_auto.py` with the same `NAME` and `RESUME = True`.
+   A 50-episode batch takes about 45 min.
+- **Close Kinesis first, and do not move the focus K-Cube.**
+- The large dark feature in the dish is a scratch; leave it.
 
 ## If something goes wrong
 | Symptom | What to do |
