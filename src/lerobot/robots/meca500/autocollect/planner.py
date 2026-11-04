@@ -97,6 +97,22 @@ def random_rotation(rng: np.random.Generator, max_deg: float) -> np.ndarray:
     return axis_angle(axis / np.linalg.norm(axis), np.radians(rng.uniform(0, max_deg)))
 
 
+def sample_target_px(rng: np.random.Generator, lim: PlannerLimits, image_size) -> np.ndarray:
+    """A uniform target pixel, ``target_edge_margin_px`` inside the image and, if the lit field is
+    set, within ``target_field_radius_frac`` of it. In the dark corners the tip detector misses
+    the tip: on 2026-11-04 the two targets beyond the lit circle gave the one unmeasured episode
+    and the one 79 um miss, while all six inside it ended within 50 um."""
+    w, h = image_size
+    m = lim.target_edge_margin_px
+    for _ in range(1000):
+        px = np.array([rng.uniform(m, w - 1 - m), rng.uniform(m, h - 1 - m)])
+        if lim.target_field_centre_px is None or lim.target_field_radius_px is None:
+            return px
+        if np.linalg.norm(px - lim.target_field_centre_px) <= lim.target_field_radius_frac * lim.target_field_radius_px:
+            return px
+    raise ValueError("No target pixel inside both the edge margin and the lit field: check bench.yaml target.")
+
+
 # ----------------------------------------------------------------------------- plans
 
 
@@ -194,9 +210,7 @@ class Planner:
         )
 
     def sample_target_px(self, rng: np.random.Generator) -> np.ndarray:
-        w, h = self.calib.image_size
-        m = self.lim.target_edge_margin_px
-        return np.array([rng.uniform(m, w - 1 - m), rng.uniform(m, h - 1 - m)])
+        return sample_target_px(rng, self.lim, self.calib.image_size)
 
     def _try_episode(self, rng: np.random.Generator, target_px=None) -> EpisodePlan:
         lim = self.lim
@@ -207,7 +221,7 @@ class Planner:
             target_px = self.sample_target_px(rng)
         target_px = np.asarray(target_px, dtype=float)
         xy = self.calib.pixel_to_xy(target_px)[0]
-        p_touch = np.array([xy[0], xy[1], surface + lim.touch_offset_mm])
+        p_touch = np.array([xy[0] + lim.touch_bias_xy_mm[0], xy[1] + lim.touch_bias_xy_mm[1], surface + lim.touch_offset_mm])
         r_touch = random_rotation(rng, lim.touch_rot_jitter_deg) @ self.touch_nominal[:3, :3]
         axis = r_touch[:, 2]  # pipette axis, pointing out of the tip
         lateral = rng.normal(size=3)

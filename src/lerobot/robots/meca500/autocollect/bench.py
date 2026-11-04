@@ -188,7 +188,13 @@ class PlannerLimits:
     start_min_height_mm: float = 5.0  # above the dish surface: out of focus at the start
     # target
     target_edge_margin_px: float = 60.0
+    # The lit circle of the microscope field (auto_calibrate prints it: "Visible field"). Targets are
+    # kept within field_radius_frac of it; None = edge margin only.
+    target_field_centre_px: tuple[float, float] | None = None
+    target_field_radius_px: float | None = None
+    target_field_radius_frac: float = 0.9
     touch_offset_mm: float = 0.0  # +ve stops above the measured surface
+    touch_bias_xy_mm: tuple[float, float] = (0.0, 0.0)  # added to every touch point, base frame
     touch_nominal_joints: list[float] | None = None  # sets the approach orientation
     touch_rot_jitter_deg: float = 2.0
     # path
@@ -228,7 +234,11 @@ class PlannerLimits:
             start_rot_jitter_deg=get(s, "rot_jitter_deg", d.start_rot_jitter_deg, float),
             start_min_height_mm=get(s, "min_height_above_surface_mm", d.start_min_height_mm, float),
             target_edge_margin_px=get(t, "edge_margin_px", d.target_edge_margin_px, float),
+            target_field_centre_px=get(t, "field_centre_px", None, tuple),
+            target_field_radius_px=get(t, "field_radius_px", None, float),
+            target_field_radius_frac=get(t, "field_radius_frac", d.target_field_radius_frac, float),
             touch_offset_mm=get(t, "touch_offset_mm", d.touch_offset_mm, float),
+            touch_bias_xy_mm=get(t, "touch_bias_xy_mm", d.touch_bias_xy_mm, tuple),
             touch_nominal_joints=get(a, "touch_nominal_joints", None, list),
             touch_rot_jitter_deg=get(a, "touch_rot_jitter_deg", d.touch_rot_jitter_deg, float),
             gate_back_mm=get(a, "gate_back_mm", d.gate_back_mm, _range),

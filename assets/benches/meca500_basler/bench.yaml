@@ -133,7 +133,16 @@ start:
 
 target:
   edge_margin_px: 60        # keep the target this far from the image edges
+  # ... and inside the lit circle (auto_calibrate's "Visible field", 2026-11-04). Beyond it the tip
+  # detector misses the tip in the dark, so the touch can't be corrected or scored.
+  field_centre_px: [220.2, 351.4]
+  field_radius_px: 181
+  field_radius_frac: 0.9
   touch_offset_mm: 0.0      # +ve stops this far ABOVE the measured dish surface
+  # Added to every touch point (base frame, mm). After the last vision correction, the final 0.4 mm
+  # left the tip +15 um in y of the target, in both B5 (2026-11-03) and C3 (2026-11-04): mean final
+  # correction (2, -15) um, std ~15, 19 episodes.
+  touch_bias_xy_mm: [0.0, -0.015]
   style: {radius_px: 14, thickness_px: 2, cross_px: 6, color: [0, 255, 0], outline_color: [0, 0, 0]}
 
 approach:

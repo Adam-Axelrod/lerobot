@@ -244,16 +244,16 @@ def make_target_overlay():
     from lerobot.processor import RobotProcessorPipeline, observation_to_transition, transition_to_observation
     from lerobot.robots.meca500.autocollect.bench import BenchConfig, PlannerLimits
     from lerobot.robots.meca500.autocollect.overlay import TargetOverlayStep
+    from lerobot.robots.meca500.autocollect.planner import sample_target_px
 
     bench = BenchConfig.load(RIG)
     calib = bench.calibration()
-    margin = PlannerLimits.from_bench(bench).target_edge_margin_px
+    limits = PlannerLimits.from_bench(bench)  # the same target region as record_auto
     rng = np.random.default_rng(TARGET_SEED)
     targets: list[tuple[float, float]] = []
 
     def sample():
-        w, h = calib.image_size
-        px = (float(rng.uniform(margin, w - 1 - margin)), float(rng.uniform(margin, h - 1 - margin)))
+        px = tuple(float(v) for v in sample_target_px(rng, limits, calib.image_size))
         targets.append(px)
         print(f"[target] episode {len(targets) - 1}: pixel ({px[0]:.1f}, {px[1]:.1f})")
         return px

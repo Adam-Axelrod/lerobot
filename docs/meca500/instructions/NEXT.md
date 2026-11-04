@@ -2,56 +2,52 @@
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
 **Last updated:** 2026-11-04
-**Time needed:** about 20 min (C2-C3).
+**Time needed:** about 25 min (D1-D2).
 
 **Where things stand.**
-- **C1 is done (2026-11-04).**
-  - The re-taped dish sits **1.63 mm higher** than before, at dish z 28.55.
-  - Tip pivot fit: 0.057 mm.
-  - Dish height map: tilt 0.11°, residual 14 µm. Height changes by at most 24 µm across the
-    random-move area.
-- **The scope fit needed one fix.** The first grid touch used the old dish height, started 0.6 mm
-  inside the dish and was 0.58 mm off. Claude refitted the calibration without it, from the saved
-  touches: 1.18 px rms (16 µm), agreeing with the height map to 6 µm. `auto_calibrate.py` now uses
-  the measured height, drops bad touches itself, and starts 4 mm up instead of 2. No need to rerun C1.
-- **Vision correction works:** 10 of 10 touches ended within 50 µm of the target (median 12 µm,
-  worst 45). The arm pauses on the final approach, finds the tip in the image and corrects.
-- **New, not yet tried in `record_auto`:** random dish-stage moves between episodes
-  (`STAGE_MOVES = True`), touching at the mapped height for each stage position, and an extra
-  correction checkpoint 1 mm out when the first one can't see the tip.
-- **Dropped for now:** the zirconia beads. The dataset uses the digital target over the empty dish.
+- **C3 (10 touch episodes with stage moves) ran cleanly** on 2026-11-04: no discards, no dish
+  sliding.
+  - 8 of the 9 measured episodes ended within 50 µm (median 22 µm).
+  - The two misses had targets in the dark corners of the image, outside the lit circle. One was
+    79 µm; the other couldn't be measured because the tip detector couldn't see the tip there.
+  - All six targets inside the lit circle ended within 50 µm.
+- **Changed since C3:**
+  - targets now stay inside the lit circle (90% of its radius);
+  - every touch is offset 15 µm in −y, cancelling a push that repeated in both 10-episode runs;
+  - `auto_calibrate.py` has a quick dish-height check (`HEIGHT_CHECK_ONLY`). The dish sits on
+    **Blu-tack**, which can creep down slowly.
+- Calibration (C1, 2026-11-04): pivot 0.057 mm, scope 1.18 px, dish z 28.55, height-map tilt 0.11°.
 
 ## Before you start
 - **Close Kinesis.** The scripts drive the stage and read the focus K-Cube themselves; only one
   program can hold the controllers. Both controllers must be on and plugged in by USB.
-- **Do not home or move the focus K-Cube**, and don't touch the dish or its tape: the calibration
-  and height map are for the dish exactly where it is now.
+- **Do not home or move the focus K-Cube**, and don't touch the dish or the Blu-tack: the
+  calibration and height map are for the dish exactly where it is now.
 - Keep a hand near the e-stop for the first run of each step.
 
-## C2. Hover check with stage moves (3 episodes, about 5 min)
-1. In `scripts\meca500\record_auto.py`, set:
-   ```python
-   NAME = "basler_stage_hover_2026-MM-DD"   # today's date
-   STAGE = "hover"
-   NUM_EPISODES = 3
-   ```
-   (`STAGE_MOVES = True` and `VISION_CORRECTION = True` are already set.)
-2. Run `.venv\Scripts\python.exe scripts\meca500\record_auto.py`.
-3. Before each episode, while the arm waits at its start pose, the stage moves the dish (the
-   terminal says `Moving the dish to stage [...]`). Then the episode runs; the tip stops 5 mm
-   above the marker. The dish background should look different each time.
+## D1. Dish height check (about 3 min, hands off)
+This also measures how far the Blu-tack has crept since C1 this morning.
+1. In `scripts\meca500\auto_calibrate.py`, set `HEIGHT_CHECK_ONLY = True`.
+2. Run `.venv\Scripts\python.exe scripts\meca500\auto_calibrate.py`.
+3. The arm finds the dish, touches the middle of the field three times and goes home. The output ends with:
+   - `Height check: ... drift ... um` and `HEIGHT CHECK COMPLETE`;
+   - a drift over 25 µm (and under 0.2 mm) is corrected automatically: `shifted dish_height_map.json
+     and scope_calibration.json by ...`.
+4. **Leave `HEIGHT_CHECK_ONLY = True`:** it is what you will run between dataset batches.
+5. Send Claude the output.
 
-## C3. Touch test with stage moves (10 episodes, about 10 min)
-1. Set `NAME = "basler_stage_touch10_2026-MM-DD"`, `STAGE = "touch"`, `NUM_EPISODES = 10`.
-2. Run it again. Each episode: stage move, approach, two short correction pauses, touch.
-3. Tell Claude when it has finished. Claude reads the final errors and stage positions from the
-   dataset. Mention anything odd: the dish sliding, a slide or bend at a touch, discarded
-   episodes.
+## D2. 20-episode touch check (about 20 min)
+1. In `scripts\meca500\record_auto.py`, set `NAME = "basler_stage_touch20_2026-MM-DD"` (today's
+   date), `STAGE = "touch"`, `NUM_EPISODES = 20`.
+2. Run it. Same as C3: stage move, approach, correction pauses, touch.
+3. Tell Claude when it has finished, and mention anything odd.
 
-If C3 looks like B5 (within 50 µm, no slides), the next step is the real 200-episode dataset.
+If D2 is within 50 µm on (nearly) every episode, the next step is the 200-episode dataset, recorded
+in batches with a D1 height check between them.
 
 ## Send Claude
-- C2/C3: that they finished, and anything odd you saw (dish sliding, discarded episodes).
+- D1: the terminal output (the drift is the Blu-tack creep since this morning);
+- D2: that it finished, and anything odd you saw.
 
 ## If something goes wrong
 | Symptom | What to do |
@@ -65,6 +61,7 @@ If C3 looks like B5 (within 50 µm, no slides), the next step is the real 200-ep
 | `... dish would hit the parked arm` or `No stage position ... gave a plan` | Send Claude the output. Nothing moved. |
 | The dish slides when the stage moves | Press **Esc** (record_auto) or **q** (auto_calibrate), tape the dish down better, rerun C1. |
 | `calibration residual ... exceeds` | The script won't run on a poor calibration. Rerun `auto_calibrate.py`. |
+| `CALIBRATION FAILED: The dish moved ... too far to patch` (height check) | The dish has sunk or shifted more than 0.2 mm: set `HEIGHT_CHECK_ONLY = False` and run the full calibration. |
 | `... already holds N episodes` | That `NAME` is already in use. Pick a new one. |
 | `No collision-free path home from the current pose` | Jog the arm straight up 25–30 mm with `teleoperate_microscope.py`, press **H**, close teleop, rerun. |
 | `Timed out waiting for frame from camera` | Check the microscope lamp is on and the pylon Viewer / `capture_frames.py` is closed, then rerun. |

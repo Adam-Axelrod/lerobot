@@ -261,6 +261,20 @@ print(
     f"height map slopes {np.round(hmap.plane[1:], 4).tolist()} TRUE {TRUE_DISH_SLOPE.tolist()}; "
     f"worst height error over the disc {worst * 1000:.0f} um; stage back at {stage.position().tolist()}"
 )
+# Height check (HEIGHT_CHECK_ONLY) after the Blu-tack creeps 40 um down, on temp copies of the files.
+import tempfile  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+tmp = Path(tempfile.mkdtemp())
+hmap.save(tmp / "dish_height_map.json")
+fit.save(tmp / "scope_calibration.json")
+s.bench.dish_map_path = lambda: tmp / "dish_height_map.json"
+s.bench.calibration_path = lambda: tmp / "scope_calibration.json"
+z_before = hmap.surface_z(STAGE_MODEL.reference_xy)
+TRUE_DISH_Z -= 0.040
+autocal.stage_height_check(s, first, STAGE_MODEL)
+z_after = autocal.DishHeightMap.load(tmp / "dish_height_map.json").surface_z(STAGE_MODEL.reference_xy)
+print(f"height check: map moved {(z_after - z_before) * 1000:+.0f} um for a true creep of -40 um")
 print(f"sim took {time.time() - t0:.0f} s")
 stream.stop()
 view.close()

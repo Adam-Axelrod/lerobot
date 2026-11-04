@@ -305,6 +305,16 @@ def test_planner_keeps_the_target_while_resampling_start_and_path(kin):
     assert planner.rejections["target replaced (unreachable)"] == 1
 
 
+def test_targets_stay_inside_the_lit_field():
+    from lerobot.robots.meca500.autocollect.planner import sample_target_px
+
+    lim = PlannerLimits(target_field_centre_px=(220.0, 350.0), target_field_radius_px=180.0)
+    rng = np.random.default_rng(0)
+    px = np.array([sample_target_px(rng, lim, (427, 640)) for _ in range(2000)])
+    assert np.linalg.norm(px - [220.0, 350.0], axis=1).max() <= 0.9 * 180.0 + 1e-9
+    assert px.min() >= lim.target_edge_margin_px
+
+
 def test_planner_refuses_when_every_path_is_blocked(kin):
     # a slab covering the whole work area just above the dish blocks every approach
     touch = kin.tip(TOUCH_Q)[:3, 3]

@@ -89,6 +89,15 @@ PIVOT_BACKGROUND_BACKOUT_MM = 12.0
 # reference and at 9 positions on the random-move disc; the dish moves only while the tip is backed
 # out of view and lifted by this much.
 HEIGHT_MAP = True
+# Quick dish-height check instead of a calibration (~3 min), between record_auto runs: the dish sits
+# on Blu-tack (2026-11-04), which can creep. Finds the dish, touches the field centre at the stage
+# reference three times, compares with dish_height_map.json. A drift beyond HEIGHT_CHECK_TOL_UM shifts the
+# map and the scope calibration's height by it (backups kept); beyond HEIGHT_CHECK_MAX_MM it asks
+# for a full calibration instead.
+HEIGHT_CHECK_ONLY = False
+HEIGHT_CHECK_TOUCHES = 3  # real touches scatter ~15 um (C1 grid), so one or two would chase noise
+HEIGHT_CHECK_TOL_UM = 25.0
+HEIGHT_CHECK_MAX_MM = 0.2
 HEIGHT_MAP_LIFT_MM = 10.0
 MIN_HEIGHT_MAP_TOUCHES = 6
 GRID_OUTER, GRID_INNER = 8, 4  # scope points on two rings inside the visible circle
@@ -739,6 +748,39 @@ def stage_dish_height_map(s: Session, stage, model: StageModel, rot) -> DishHeig
     return m
 
 
+def stage_height_check(s: Session, first: dict, model: StageModel) -> None:
+    """Re-measure the dish height at the stage reference; shift the map and calibration if it moved."""
+    s.display.phase = "dish height check"
+    path = s.bench.dish_map_path()
+    hmap = DishHeightMap.load(path)
+    z_map = hmap.surface_z(model.reference_xy)
+    zs = []
+    for i in range(HEIGHT_CHECK_TOUCHES):
+        s.display.message = f"height check touch {i + 1}/{HEIGHT_CHECK_TOUCHES}"
+        _, q = touch_at_pixel(s, s.fov_centre, first["rot"], z_map, lambda p: s.calib.pixel_to_xy([p])[0], "height check")
+        zs.append(float(s.kin.tip(q)[2, 3]))
+    drift = float(np.mean(zs)) - z_map
+    print(
+        f"Height check: dish z {np.round(zs, 3).tolist()} vs map {z_map:.3f} at the reference -> "
+        f"drift {drift * 1000:+.0f} um (touches agree to {abs(zs[0] - zs[-1]) * 1000:.0f} um)"
+    )
+    if abs(drift) * 1000 <= HEIGHT_CHECK_TOL_UM:
+        print("  within tolerance: nothing changed.")
+        return
+    if abs(drift) > HEIGHT_CHECK_MAX_MM:
+        raise CalibrationFailedError(
+            f"The dish moved {drift * 1000:+.0f} um: too far to patch. Run the full auto_calibrate (HEIGHT_CHECK_ONLY = False)."
+        )
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    cal_path = s.bench.calibration_path()
+    for f in (path, cal_path):
+        shutil.copy(f, f.with_name(f"{f.stem}.{stamp}.bak.json"))
+    hmap.plane[0] += drift
+    hmap.save(path)
+    replace(s.calib, surface_z_mm=s.calib.surface_z_mm + drift).save(cal_path)
+    print(f"  shifted {path.name} and {cal_path.name} by {drift * 1000:+.0f} um (backups *.{stamp}.bak.json).")
+
+
 def main() -> None:
     import bota_driver
 
@@ -767,7 +809,7 @@ def main() -> None:
     display = Display(view, robot, detector, bench.camera_key, TITLE)
     s = Session(robot, display, bench, detector)
     stage = None
-    if HEIGHT_MAP:
+    if HEIGHT_MAP or HEIGHT_CHECK_ONLY:
         stage = MLS203Stage(bench.section("scope")["stage_serial"])
         try:
             stage.connect()
@@ -798,6 +840,16 @@ def main() -> None:
                 stage.move_to(model.reference_xy)
                 s.recapture_background("reference")
         first = stage_find_tip(s, home)
+        if HEIGHT_CHECK_ONLY:
+            stage_height_check(s, first, StageModel.from_bench(s.bench.section("scope"), s.calib))
+            ok = True
+            s.display.phase = "done - returning home"
+            try:
+                run_joint_path(s.meca, s.planner.plan_transit(s.q(), home, retreat=True), s.display)
+            except PlanningError as e:
+                print(f"Could not plan the way home ({e}); the arm holds its pose.")
+            print("\nHEIGHT CHECK COMPLETE")
+            return
         tip = stage_tip_calibration(s, first)
         save_tip_and_reimport(s, tip)
         fit = stage_scope_calibration(s, first)
