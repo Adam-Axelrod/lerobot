@@ -33,7 +33,7 @@
 
 ## E2. Dataset batch 2 (50 episodes, about 1.5 h)
 1. Run E0.
-2. In `scriptsecord_auto.py` (folder `scripts\meca500`), keep `NAME = "basler_stage_touch_dataset_2026-11"`
+2. In `scripts\meca500\record_auto.py`, keep `NAME = "basler_stage_touch_dataset_2026-11"`
    and `NUM_EPISODES = 50`, and set `RESUME = True`.
 3. Run it. Watch the first few episodes: each `correction at ...` line now ends with
    `(background shift N px)`, which should be about 0.1 px. If you see the warning
