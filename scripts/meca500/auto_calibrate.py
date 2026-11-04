@@ -94,7 +94,7 @@ HEIGHT_MAP = True
 # reference three times, compares with dish_height_map.json. A drift beyond HEIGHT_CHECK_TOL_UM shifts the
 # map and the scope calibration's height by it (backups kept); beyond HEIGHT_CHECK_MAX_MM it asks
 # for a full calibration instead.
-HEIGHT_CHECK_ONLY = False
+HEIGHT_CHECK_ONLY = True
 HEIGHT_CHECK_TOUCHES = 3  # real touches scatter ~15 um (C1 grid), so one or two would chase noise
 HEIGHT_CHECK_TOL_UM = 25.0
 HEIGHT_CHECK_MAX_MM = 0.2
@@ -762,7 +762,7 @@ def stage_height_check(s: Session, first: dict, model: StageModel) -> None:
     drift = float(np.mean(zs)) - z_map
     print(
         f"Height check: dish z {np.round(zs, 3).tolist()} vs map {z_map:.3f} at the reference -> "
-        f"drift {drift * 1000:+.0f} um (touches agree to {abs(zs[0] - zs[-1]) * 1000:.0f} um)"
+        f"drift {drift * 1000:+.0f} um (touches agree to {np.ptp(zs) * 1000:.0f} um)"
     )
     if abs(drift) * 1000 <= HEIGHT_CHECK_TOL_UM:
         print("  within tolerance: nothing changed.")
