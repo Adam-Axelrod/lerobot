@@ -4,16 +4,13 @@
 **Last updated:** 2026-11-04
 **Time needed:** about 45 min per 50-episode batch, mostly hands off.
 
-**Where things stand.** The dataset has 100 episodes (E1: 0-49, E2: 50-99).
-- **E2 (20:03-20:47):** all 50 recorded, and all 50 end on the target by eye.
-  - 49 measured within 50 um (median about 17 um).
-  - Episode 87 read 1732 um, a false reading: the shaft ran over the large scratch on the dish,
-    and the detector stopped there.
-  - The background fix works: the largest shift was 0.08 px, against 3-11 px in E1.
-- **E1:** 44 of 50 on target. Claude leaves out 9, 10, 21, 34, 35 and 44 at training time.
-- **The large dark feature is a scratch in the dish.** It moves with the stage, so it appears
-  in different places in different episodes (34, 44, 78, 87). It is harmless; leave it.
-- E0 before E2 (20:02): dish -22 um from the map, within tolerance.
+**Where things stand.** The dataset has 150 episodes (E1: 0-49, E2: 50-99, E3: 100-149), 144 usable.
+- **E3 (21:18):** all 50 within 50 um and on the target by eye (median 13 um, max 47 um).
+  E0 before it: drift -7 um.
+- **E2:** all 50 on the target. Episode 87's 1732 um was a false reading (the shaft over the scratch).
+- **E1:** 44 of 50 on the target. Claude leaves out 9, 10, 21, 34, 35 and 44 at training time.
+  The cause (a background frame taken before the stage settled) is fixed.
+- The large dark feature is a scratch in the dish. It moves with the stage; leave it.
 
 ## Before you start
 - **Close Kinesis.** The scripts drive the stage and read the focus K-Cube themselves; only one
@@ -26,20 +23,15 @@
 `.venv\Scripts\python.exe scripts\meca500\auto_calibrate.py` and check that it ends with
 `HEIGHT CHECK COMPLETE`. A drift is corrected automatically. Send Claude the `Height check:` line.
 
-## E3. Dataset batch 3 (50 episodes, about 45 min)
+## E4. Last batch (56 episodes, about 50 min)
+56 episodes bring the dataset to 200 usable.
 1. Run E0.
-2. Run `scripts\meca500\record_auto.py` unchanged. It is already set to
-   `NAME = "basler_stage_touch_dataset_2026-11"`, `NUM_EPISODES = 50` and `RESUME = True`.
+2. In `scripts\meca500\record_auto.py`, set `NUM_EPISODES = 56`. Keep the same `NAME` and `RESUME = True`.
 3. Tell Claude when it has finished.
-
-## Later batches (E4)
-For each batch: E0 height check, then the same `NAME` with `RESUME = True` and `NUM_EPISODES = 50`.
-Each batch carries on with new targets and paths (the episode seeds follow the episode count).
-Claude checks each batch before the next.
 
 ## Send Claude
 - E0: the `Height check:` line;
-- E3: that it finished, and anything odd you saw.
+- E4: that it finished, and anything odd you saw.
 
 ## If something goes wrong
 | Symptom | What to do |
