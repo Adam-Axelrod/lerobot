@@ -40,6 +40,7 @@ which is exactly where microscope_inference.py looks for them.
 Requires: pip install 'lerobot[training]'  (accelerate + wandb extras).
 """
 
+import json
 import random
 import re
 import sys
@@ -183,16 +184,29 @@ def build_episode_subset(repo_id: str) -> tuple[list[int] | None, int]:
     _report_action_representation(meta)
     _report_precision_channel(meta)
 
+    # Auto-collected datasets list the episodes that missed their target (judged on the raw
+    # frames after recording) in autocollect/excluded_episodes.json: the drawn target is not
+    # where the tip ended, so they would teach the wrong mapping.
+    excluded: set[int] = set()
+    excl_file = Path(meta.root) / "autocollect" / "excluded_episodes.json"
+    if excl_file.exists():
+        excluded = {int(e) for e in json.loads(excl_file.read_text())["excluded"]}
+        print(f"[subset] Excluding {len(excluded)} episodes listed in {excl_file.name}: {sorted(excluded)}")
+    pool = [e for e in range(total) if e not in excluded]
+
     if SUBSET_FRACTION >= 1.0:
-        print(f"[subset] Using all {total} episodes.")
-        return None, total
+        if not excluded:
+            print(f"[subset] Using all {total} episodes.")
+            return None, total
+        print(f"[subset] Using {len(pool)}/{total} episodes.")
+        return pool, total
 
     if not 0.0 < SUBSET_FRACTION < 1.0:
         raise ValueError(f"SUBSET_FRACTION must be in (0, 1], got {SUBSET_FRACTION}")
 
-    k = max(1, round(total * SUBSET_FRACTION))
+    k = max(1, round(len(pool) * SUBSET_FRACTION))
     rng = random.Random(SUBSET_SEED)
-    episodes = sorted(rng.sample(range(total), k))
+    episodes = sorted(rng.sample(pool, k))
     print(
         f"[subset] Training on {k}/{total} episodes "
         f"(fraction={SUBSET_FRACTION}, seed={SUBSET_SEED}): {episodes}"
