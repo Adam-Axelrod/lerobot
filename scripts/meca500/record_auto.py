@@ -74,9 +74,9 @@ from lerobot.utils.visualization_utils import init_rerun
 # ----------------------------- CONFIG -----------------------------
 RIG = "meca500_basler"
 USER = "AdamAxelrod"
-NAME = "basler_touch_corrected10_2026-11-03"  # one dataset per rig and target style - never mix
+NAME = "basler_stage_touch20_2026-11-04"  # one dataset per rig and target style - never mix
 TASK = "move_pipette_to_target"
-NUM_EPISODES = 10
+NUM_EPISODES = 20
 RESUME = False  # append to an existing local dataset of the same NAME
 PUSH_TO_HUB = False
 DISPLAY_DATA = True
@@ -110,6 +110,11 @@ CORRECTION_HOLD_S = 0.4  # recorded pause at each checkpoint, so the arm is stil
 CORRECTION_NEAR_MM = 0.4  # second checkpoint, back along the pipette from the touch
 CORRECTION_MID_MM = 1.0  # extra checkpoint, only when the pre-touch one cannot see the tip
 CORRECTION_FRAMES = 3  # median of this many frames per detection
+# Raw frames (no overlay) behind every detection, per episode, under <dataset>/autocollect/raw/:
+# the recorded video has the ring drawn over the tip, so measurements can't be re-checked on it.
+# On 2026-11-04 (D2) two ~200 um final readings were the detector reaching 16 px past a tip that
+# sat in the ring; with these frames the final errors can be re-scored offline.
+SAVE_RAW_FRAMES = True
 
 # Random dish-stage position per episode (autocollect/stage.py), so the policy never sees the same
 # patch of dish twice. Needs the MLS203 (Kinesis closed) and the dish height map auto_calibrate
@@ -244,7 +249,18 @@ def grab(robot, key: str, n: int = CORRECTION_FRAMES) -> np.ndarray:
     return np.median(frames, axis=0).astype(np.uint8)
 
 
-def run_corrected_episode(robot, teleop, plan, planner, key, background, events, processors, dataset) -> dict:
+def save_raw(raw_dir, name: str, frame: np.ndarray) -> None:
+    if raw_dir is None:
+        return
+    import cv2
+
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(raw_dir / f"{name}.png"), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+
+
+def run_corrected_episode(
+    robot, teleop, plan, planner, key, background, events, processors, dataset, raw_dir=None
+) -> dict:
     """Record one episode in segments, correcting the final approach from the image.
 
     1. the plan up to the pre-touch point; 2. a still pause, then detect and shift the touch
@@ -268,12 +284,15 @@ def run_corrected_episode(robot, teleop, plan, planner, key, background, events,
     p_plan = np.asarray(plan.target_xyz, float)
     p_touch, shift = p_plan, np.zeros(2)
     corrections = []
+    save_raw(raw_dir, "background", background)
 
     def checkpoint(name: str):
         nonlocal shift, p_touch
         record(np.repeat(q[None], hold, axis=0), np.ones(hold))
         expected = planner.calib.xy_to_pixel(planner.kin.tip(q)[:2, 3])[0]  # model tip, now
-        c = measure(grab(robot, key), background, expected, planner.calib)
+        frame = grab(robot, key)
+        save_raw(raw_dir, name, frame)
+        c = measure(frame, background, expected, planner.calib)
         corrections.append({"checkpoint": name, **c.meta()})
         logging.info(f"  correction at {name}: {c.meta()}")
         # Each checkpoint measures the same model error (detected vs model-predicted tip), so the
@@ -306,7 +325,9 @@ def run_corrected_episode(robot, teleop, plan, planner, key, background, events,
         raise EpisodeAbortedError(str(e)) from e
     dwell = max(plan.dwell_frames, 1)
     record(np.vstack([seg, np.repeat(seg[-1][None], dwell, axis=0)]), np.ones(len(seg) + dwell))
-    final = measure(grab(robot, key), background, plan.target_px, planner.calib)
+    frame = grab(robot, key)
+    save_raw(raw_dir, "final", frame)
+    final = measure(frame, background, plan.target_px, planner.calib)
     um = 1000 * float(np.linalg.norm(np.asarray(planner.calib.px_to_xy)[:, 0]))
     final_um = None if final.error_px is None else final.error_px * um
     logging.info("  final: " + ("tip not detected" if final_um is None else f"{final.error_px:.1f} px = {final_um:.0f} um"))
@@ -526,7 +547,8 @@ def main() -> None:
                 if VISION_CORRECTION:
                     try:
                         extra = run_corrected_episode(
-                            robot, teleop, plan, planner, bench.camera_key, background, events, processors, dataset
+                            robot, teleop, plan, planner, bench.camera_key, background, events, processors, dataset,
+                            raw_dir=prov / "raw" / f"ep{ep:04d}" if SAVE_RAW_FRAMES else None,
                         )
                     except EpisodeAbortedError as e:
                         aborted = str(e)

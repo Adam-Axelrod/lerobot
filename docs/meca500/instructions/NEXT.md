@@ -2,43 +2,55 @@
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
 **Last updated:** 2026-11-04
-**Time needed:** about 20 min (D2).
+**Time needed:** about 1.5 h per 50-episode batch, mostly hands off.
 
 **Where things stand.**
-- **C3 (10 touch episodes with stage moves) ran cleanly** on 2026-11-04: no discards, no dish
-  sliding.
-  - 8 of the 9 measured episodes ended within 50 µm (median 22 µm).
-  - The two misses had targets in the dark corners of the image, outside the lit circle. One was
-    79 µm; the other couldn't be measured because the tip detector couldn't see the tip there.
-  - All six targets inside the lit circle ended within 50 µm.
-- **Changed since C3:**
-  - targets now stay inside the lit circle (90% of its radius);
-  - every touch is offset 15 µm in −y, cancelling a push that repeated in both 10-episode runs;
-  - `auto_calibrate.py` has a quick dish-height check (`HEIGHT_CHECK_ONLY`). The dish sits on
-    **Blu-tack**, which can creep down slowly.
-- **D1 height check done (12:36):** dish within 3 µm of C1 (11:27): no Blu-tack creep so far.
-  `HEIGHT_CHECK_ONLY = True` stays set in `auto_calibrate.py` for checks between dataset batches.
+- **D2 (20 touch episodes with stage moves) ran cleanly:** no discards, no dish sliding.
+  - 14 of the 18 measured episodes were within 50 µm (median 22 µm).
+  - **Two of the four misses were false readings, not real misses.** In episodes 1 and 10 the
+    video shows the tip in the ring, but the tip detector placed it 16 px (~210 µm) past its real
+    end. This seems to happen only with the tip on the dish.
+  - **Episode 8:** a large piece of debris next to the tip fooled the detector at both checkpoints.
+    The 0.5 mm safety cap skipped both corrections, as intended.
+  - **Episode 9:** looks like a real 80 µm miss.
+- **`record_auto.py` now saves the raw frames** (no target ring) behind every measurement, so Claude
+  can fix the detector and re-score the final errors offline. The demonstrations themselves look
+  good, so the real dataset can start.
+- **D1 height check (12:36):** dish within 3 µm of C1 (11:27): no Blu-tack creep so far.
 - Calibration (C1, 2026-11-04): pivot 0.057 mm, scope 1.18 px, dish z 28.55, height-map tilt 0.11°.
 
 ## Before you start
 - **Close Kinesis.** The scripts drive the stage and read the focus K-Cube themselves; only one
   program can hold the controllers. Both controllers must be on and plugged in by USB.
-- **Do not home or move the focus K-Cube**, and don't touch the dish or the Blu-tack: the
-  calibration and height map are for the dish exactly where it is now.
-- Keep a hand near the e-stop for the first run of each step.
+- **Do not home or move the focus K-Cube.**
+- **Debris (optional):** if there is a large loose particle in the dish, blow it out gently with an
+  air duster without touching the dish. Then run E0.
+- Keep a hand near the e-stop for the first few episodes.
 
-## D2. 20-episode touch check (about 20 min)
-1. In `scripts\meca500\record_auto.py`, set `NAME = "basler_stage_touch20_2026-MM-DD"` (today's
-   date), `STAGE = "touch"`, `NUM_EPISODES = 20`.
-2. Run it. Same as C3: stage move, approach, correction pauses, touch.
-3. Tell Claude when it has finished, and mention anything odd.
+## E0. Height check (about 3 min), before every batch
+`HEIGHT_CHECK_ONLY = True` is already set in `auto_calibrate.py`. Run
+`.venv\Scripts\python.exe scripts\meca500\auto_calibrate.py` and check that it ends with
+`HEIGHT CHECK COMPLETE`. A drift is corrected automatically. Send Claude the `Height check:` line.
 
-If D2 is within 50 µm on (nearly) every episode, the next step is the 200-episode dataset, recorded
-in batches of ~50 episodes with a height check (`auto_calibrate.py`, `HEIGHT_CHECK_ONLY = True`,
-about 3 min) between them.
+## E1. Dataset batch 1 (50 episodes, about 1.5 h)
+1. In `scripts\meca500\record_auto.py`, set:
+   ```python
+   NAME = "basler_stage_touch_dataset_2026-11"
+   STAGE = "touch"
+   NUM_EPISODES = 50
+   RESUME = False
+   ```
+2. Run it. You don't have to watch after the first few episodes, but stay within reach.
+3. Tell Claude when it has finished (and the episode count it printed, if any were discarded).
+
+## Later batches (E2, E3, E4)
+For each batch: E0 height check, then the same `NAME` with `RESUME = True` and `NUM_EPISODES = 50`.
+Each batch carries on with new targets and paths (the episode seeds follow the episode count).
+Claude checks each batch before the next.
 
 ## Send Claude
-- D2: that it finished, and anything odd you saw.
+- E0: the `Height check:` line;
+- E1: that it finished, and anything odd you saw.
 
 ## If something goes wrong
 | Symptom | What to do |
