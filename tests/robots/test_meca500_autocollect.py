@@ -22,6 +22,7 @@ from lerobot.robots.meca500.autocollect.kinematics import (
 )
 from lerobot.robots.meca500.autocollect.overlay import TargetOverlayStep, TargetStyle, draw_target
 from lerobot.robots.meca500.autocollect.planner import Planner, PlanningError
+from lerobot.robots.meca500.autocollect.tip_detect import image_shift
 from lerobot.robots.meca500.config_meca500 import Meca500Config
 from lerobot.robots.meca500.meca500 import Meca500
 from lerobot.teleoperators.meca500_scripted.config_meca500_scripted import Meca500ScriptedConfig
@@ -178,6 +179,21 @@ def test_robust_scope_fit_drops_a_pressed_touch_and_a_stray_pixel():
     assert cal.n_points == 10
     assert cal.residual_um_rms < 20
     assert cal.surface_z_mm == pytest.approx(28.54, abs=0.02)
+
+
+def test_image_shift_finds_a_dish_texture_translation_despite_a_pipette():
+    import cv2
+
+    rng = np.random.default_rng(0)
+    dish = np.full((640, 480), 180, np.uint8)
+    for x, y in rng.uniform(20, [460, 620], size=(400, 2)):  # specks
+        cv2.circle(dish, (int(x), int(y)), int(rng.integers(1, 4)), 60, -1)
+    dish = cv2.GaussianBlur(dish, (0, 0), 0.8)
+    moved = cv2.warpAffine(dish, np.float32([[1, 0, 6.4], [0, 1, -0.3]]), (480, 640), borderMode=cv2.BORDER_REFLECT)
+    cv2.line(moved, (200, 639), (240, 380), 30, 25)  # the pipette, only in the live frame
+    rgb = lambda g: np.repeat(g[..., None], 3, axis=2)  # noqa: E731
+    dx, dy = image_shift(rgb(dish), rgb(moved))
+    assert dx == pytest.approx(6.4, abs=0.15) and dy == pytest.approx(-0.3, abs=0.15)
 
 
 def test_calibration_save_load(tmp_path):

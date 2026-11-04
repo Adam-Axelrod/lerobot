@@ -5,19 +5,18 @@
 **Time needed:** about 1.5 h per 50-episode batch, mostly hands off.
 
 **Where things stand.**
-- **D2 (20 touch episodes with stage moves) ran cleanly:** no discards, no dish sliding.
-  - 14 of the 18 measured episodes were within 50 µm (median 22 µm).
-  - **Two of the four misses were false readings, not real misses.** In episodes 1 and 10 the
-    video shows the tip in the ring, but the tip detector placed it 16 px (~210 µm) past its real
-    end. This seems to happen only with the tip on the dish.
-  - **Episode 8:** a large piece of debris next to the tip fooled the detector at both checkpoints.
-    The 0.5 mm safety cap skipped both corrections, as intended.
-  - **Episode 9:** looks like a real 80 µm miss.
-- **`record_auto.py` now saves the raw frames** (no target ring) behind every measurement, so Claude
-  can fix the detector and re-score the final errors offline. The demonstrations themselves look
-  good, so the real dataset can start.
-- **D1 height check (12:36):** dish within 3 µm of C1 (11:27): no Blu-tack creep so far.
-- Calibration (C1, 2026-11-04): pivot 0.057 mm, scope 1.18 px, dish z 28.55, height-map tilt 0.11°.
+- **E1 (batch 1, 50 episodes) ran cleanly:** no discards. By eye on the raw frames, 44 of 50 end
+  on the target.
+  - **Clear misses:** episodes 10, 21, 35 and 44.
+  - **Borderline:** episode 9 (~70 um), and episode 34, where debris hides the tip.
+  - Claude will leave these out at training time; nothing to do at the bench.
+- **Cause found and fixed.** The detector's background frame was grabbed the moment the stage move
+  returned. It sat 3-11 px off the later frames (0.85 px per mm of stage Y move). Specks then joined
+  the tip blob, and the near-checkpoint correction pushed the tip the wrong way.
+  - `record_auto.py` now waits until two background frames agree before taking one.
+  - It logs the background shift at every checkpoint, and warns if a shift is over 1 px.
+- E0 before E1 (17:04): dish +28 um since C1, corrected automatically.
+- Calibration (C1, 2026-11-04): pivot 0.057 mm, scope 1.18 px, dish z 28.55, height-map tilt 0.11 deg.
 
 ## Before you start
 - **Close Kinesis.** The scripts drive the stage and read the focus K-Cube themselves; only one
@@ -32,25 +31,23 @@
 `.venv\Scripts\python.exe scripts\meca500\auto_calibrate.py` and check that it ends with
 `HEIGHT CHECK COMPLETE`. A drift is corrected automatically. Send Claude the `Height check:` line.
 
-## E1. Dataset batch 1 (50 episodes, about 1.5 h)
-1. In `scripts\meca500\record_auto.py`, set:
-   ```python
-   NAME = "basler_stage_touch_dataset_2026-11"
-   STAGE = "touch"
-   NUM_EPISODES = 50
-   RESUME = False
-   ```
-2. Run it. You don't have to watch after the first few episodes, but stay within reach.
-3. Tell Claude when it has finished (and the episode count it printed, if any were discarded).
+## E2. Dataset batch 2 (50 episodes, about 1.5 h)
+1. Run E0.
+2. In `scriptsecord_auto.py` (folder `scripts\meca500`), keep `NAME = "basler_stage_touch_dataset_2026-11"`
+   and `NUM_EPISODES = 50`, and set `RESUME = True`.
+3. Run it. Watch the first few episodes: each `correction at ...` line now ends with
+   `(background shift N px)`, which should be about 0.1 px. If you see the warning
+   `the dish image moved ... since the background`, tell Claude.
+4. Tell Claude when it has finished.
 
-## Later batches (E2, E3, E4)
+## Later batches (E3, E4)
 For each batch: E0 height check, then the same `NAME` with `RESUME = True` and `NUM_EPISODES = 50`.
 Each batch carries on with new targets and paths (the episode seeds follow the episode count).
 Claude checks each batch before the next.
 
 ## Send Claude
 - E0: the `Height check:` line;
-- E1: that it finished, and anything odd you saw.
+- E2: that it finished, and anything odd you saw.
 
 ## If something goes wrong
 | Symptom | What to do |

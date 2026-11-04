@@ -45,6 +45,20 @@ def field_mask(frame: np.ndarray, thresh: int = 40) -> np.ndarray:
     return cv2.erode(mask, np.ones((9, 9), np.uint8)).astype(bool)
 
 
+def image_shift(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
+    """Sub-pixel translation (dx, dy) of frame ``b`` relative to ``a`` (RGB uint8).
+
+    Measured on the dish's fine texture (specks, scratches) with the illumination's slow falloff
+    removed, so a pipette in one frame barely moves it. A background that has shifted from the
+    live frame turns every speck into a difference blob, and blobs next to the tip join it: in E1
+    (2026-11-04) backgrounds 3-11 px off sent near-checkpoint corrections 150-280 um the wrong way.
+    """
+    g = [cv2.cvtColor(x, cv2.COLOR_RGB2GRAY).astype(np.float32) for x in (a, b)]
+    g = [x - cv2.GaussianBlur(x, (0, 0), 8) for x in g]
+    (dx, dy), _ = cv2.phaseCorrelate(g[0], g[1], cv2.createHanningWindow(g[0].shape[::-1], cv2.CV_32F))
+    return float(dx), float(dy)
+
+
 def detect_tip(
     frame: np.ndarray,
     background: np.ndarray,

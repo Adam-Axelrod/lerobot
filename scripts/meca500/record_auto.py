@@ -60,6 +60,7 @@ from lerobot.robots.meca500.autocollect.focus_check import FocusMismatchError, c
 from lerobot.robots.meca500.autocollect.overlay import TargetOverlayStep
 from lerobot.robots.meca500.autocollect.planner import Planner, PlanningError
 from lerobot.robots.meca500.autocollect.stage import MLS203Stage, StageError, StageModel
+from lerobot.robots.meca500.autocollect.tip_detect import image_shift
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.scripts.lerobot_record import record_loop
 from lerobot.teleoperators.meca500_scripted.config_meca500_scripted import Meca500ScriptedConfig
@@ -74,9 +75,9 @@ from lerobot.utils.visualization_utils import init_rerun
 # ----------------------------- CONFIG -----------------------------
 RIG = "meca500_basler"
 USER = "AdamAxelrod"
-NAME = "basler_stage_touch20_2026-11-04"  # one dataset per rig and target style - never mix
+NAME = "basler_stage_touch_dataset_2026-11"  # one dataset per rig and target style - never mix
 TASK = "move_pipette_to_target"
-NUM_EPISODES = 20
+NUM_EPISODES = 50
 RESUME = False  # append to an existing local dataset of the same NAME
 PUSH_TO_HUB = False
 DISPLAY_DATA = True
@@ -110,6 +111,14 @@ CORRECTION_HOLD_S = 0.4  # recorded pause at each checkpoint, so the arm is stil
 CORRECTION_NEAR_MM = 0.4  # second checkpoint, back along the pipette from the touch
 CORRECTION_MID_MM = 1.0  # extra checkpoint, only when the pre-touch one cannot see the tip
 CORRECTION_FRAMES = 3  # median of this many frames per detection
+# The detector's background must line up with the live frames. In E1 (2026-11-04) it was grabbed
+# as the stage move returned and sat 0.85 px per mm of stage Y move (up to 11 px) off the frames
+# that followed; the specks then joined the tip blob and misplaced it. So wait, then grab until
+# two backgrounds agree.
+BACKGROUND_WAIT_S = 1.0
+BACKGROUND_STILL_PX = 0.3  # two successive backgrounds this close: the dish image has settled
+BACKGROUND_TIMEOUT_S = 15.0
+BACKGROUND_WARN_PX = 1.0  # warn when a checkpoint frame has moved this far from the background
 # Raw frames (no overlay) behind every detection, per episode, under <dataset>/autocollect/raw/:
 # the recorded video has the ring drawn over the tip, so measurements can't be re-checked on it.
 # On 2026-11-04 (D2) two ~200 um final readings were the detector reaching 16 px past a tip that
@@ -249,6 +258,22 @@ def grab(robot, key: str, n: int = CORRECTION_FRAMES) -> np.ndarray:
     return np.median(frames, axis=0).astype(np.uint8)
 
 
+def settled_background(robot, key: str) -> tuple[np.ndarray, float]:
+    """Background for the tip detector once the dish image has stopped moving; returns it and the last step, px."""
+    time.sleep(BACKGROUND_WAIT_S)
+    prev, t0 = grab(robot, key), time.perf_counter()
+    while True:
+        time.sleep(0.5)
+        bg = grab(robot, key)
+        step = float(np.hypot(*image_shift(prev, bg)))
+        if step <= BACKGROUND_STILL_PX:
+            return bg, step
+        if time.perf_counter() - t0 > BACKGROUND_TIMEOUT_S:
+            logging.warning(f"The dish image still moves {step:.2f} px per 0.5 s; using the background anyway.")
+            return bg, step
+        prev = bg
+
+
 def save_raw(raw_dir, name: str, frame: np.ndarray) -> None:
     if raw_dir is None:
         return
@@ -293,8 +318,11 @@ def run_corrected_episode(
         frame = grab(robot, key)
         save_raw(raw_dir, name, frame)
         c = measure(frame, background, expected, planner.calib)
-        corrections.append({"checkpoint": name, **c.meta()})
-        logging.info(f"  correction at {name}: {c.meta()}")
+        bg_shift = float(np.hypot(*image_shift(background, frame)))
+        corrections.append({"checkpoint": name, **c.meta(), "background_shift_px": round(bg_shift, 2)})
+        logging.info(f"  correction at {name}: {c.meta()} (background shift {bg_shift:.2f} px)")
+        if bg_shift > BACKGROUND_WARN_PX:
+            logging.warning(f"  the dish image moved {bg_shift:.1f} px since the background: detections may be off")
         # Each checkpoint measures the same model error (detected vs model-predicted tip), so the
         # newest estimate REPLACES the last one - adding them would correct twice. The model stays
         # wrong by the same amount after a shift; a skipped measurement (note set) keeps the last one.
@@ -333,7 +361,7 @@ def run_corrected_episode(
     logging.info("  final: " + ("tip not detected" if final_um is None else f"{final.error_px:.1f} px = {final_um:.0f} um"))
     return {
         "corrections": corrections,
-        "final": final.meta(),
+        "final": {**final.meta(), "background_shift_px": round(float(np.hypot(*image_shift(background, frame))), 2)},
         "final_error_um": None if final_um is None else round(final_um, 1),
         "corrected_target_xyz_mm": [round(float(v), 4) for v in p_touch],
     }
@@ -537,7 +565,10 @@ def main() -> None:
                 else:
                     extra_stage = {}
                 # Background for the tip detector: the start pose keeps the tip out of view.
-                background = grab(robot, bench.camera_key) if VISION_CORRECTION else None
+                background = None
+                if VISION_CORRECTION:
+                    background, still_px = settled_background(robot, bench.camera_key)
+                    extra_stage["background_still_px"] = round(still_px, 2)
                 overlay.set_target(plan.target_px)
                 log_say(f"Recording episode {ep}", False)
                 events["exit_early"] = False
