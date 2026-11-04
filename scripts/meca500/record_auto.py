@@ -77,8 +77,8 @@ RIG = "meca500_basler"
 USER = "AdamAxelrod"
 NAME = "basler_stage_touch_dataset_2026-11"  # one dataset per rig and target style - never mix
 TASK = "move_pipette_to_target"
-NUM_EPISODES = 50
-RESUME = False  # append to an existing local dataset of the same NAME
+NUM_EPISODES = 56
+RESUME = True  # append to an existing local dataset of the same NAME
 PUSH_TO_HUB = False
 DISPLAY_DATA = True
 
