@@ -2,7 +2,7 @@
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
 **Last updated:** 2026-11-04
-**Time needed:** about 25 min (D1-D2).
+**Time needed:** about 20 min (D2).
 
 **Where things stand.**
 - **C3 (10 touch episodes with stage moves) ran cleanly** on 2026-11-04: no discards, no dish
@@ -16,6 +16,8 @@
   - every touch is offset 15 µm in −y, cancelling a push that repeated in both 10-episode runs;
   - `auto_calibrate.py` has a quick dish-height check (`HEIGHT_CHECK_ONLY`). The dish sits on
     **Blu-tack**, which can creep down slowly.
+- **D1 height check done (12:36):** dish within 3 µm of C1 (11:27): no Blu-tack creep so far.
+  `HEIGHT_CHECK_ONLY = True` stays set in `auto_calibrate.py` for checks between dataset batches.
 - Calibration (C1, 2026-11-04): pivot 0.057 mm, scope 1.18 px, dish z 28.55, height-map tilt 0.11°.
 
 ## Before you start
@@ -25,17 +27,6 @@
   calibration and height map are for the dish exactly where it is now.
 - Keep a hand near the e-stop for the first run of each step.
 
-## D1. Dish height check (about 3 min, hands off)
-This also measures how far the Blu-tack has crept since C1 this morning.
-1. In `scripts\meca500\auto_calibrate.py`, set `HEIGHT_CHECK_ONLY = True`.
-2. Run `.venv\Scripts\python.exe scripts\meca500\auto_calibrate.py`.
-3. The arm finds the dish, touches the middle of the field three times and goes home. The output ends with:
-   - `Height check: ... drift ... um` and `HEIGHT CHECK COMPLETE`;
-   - a drift over 25 µm (and under 0.2 mm) is corrected automatically: `shifted dish_height_map.json
-     and scope_calibration.json by ...`.
-4. **Leave `HEIGHT_CHECK_ONLY = True`:** it is what you will run between dataset batches.
-5. Send Claude the output.
-
 ## D2. 20-episode touch check (about 20 min)
 1. In `scripts\meca500\record_auto.py`, set `NAME = "basler_stage_touch20_2026-MM-DD"` (today's
    date), `STAGE = "touch"`, `NUM_EPISODES = 20`.
@@ -43,10 +34,10 @@ This also measures how far the Blu-tack has crept since C1 this morning.
 3. Tell Claude when it has finished, and mention anything odd.
 
 If D2 is within 50 µm on (nearly) every episode, the next step is the 200-episode dataset, recorded
-in batches with a D1 height check between them.
+in batches of ~50 episodes with a height check (`auto_calibrate.py`, `HEIGHT_CHECK_ONLY = True`,
+about 3 min) between them.
 
 ## Send Claude
-- D1: the terminal output (the drift is the Blu-tack creep since this morning);
 - D2: that it finished, and anything odd you saw.
 
 ## If something goes wrong
