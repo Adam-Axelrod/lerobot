@@ -98,6 +98,10 @@ HEIGHT_CHECK_ONLY = True
 HEIGHT_CHECK_TOUCHES = 3  # real touches scatter ~15 um (C1 grid), so one or two would chase noise
 HEIGHT_CHECK_TOL_UM = 25.0
 HEIGHT_CHECK_MAX_MM = 0.2
+# Touches further apart than this mean a bad touch, not drift: change nothing and stop. On
+# 2026-11-05 the F/T sensor lost sync, one touch read 463 um high, and the mean shifted the map
+# +107 um. The drift is the median, so a lone outlier cannot move it even below this limit.
+HEIGHT_CHECK_AGREE_UM = 60.0
 HEIGHT_MAP_LIFT_MM = 10.0
 MIN_HEIGHT_MAP_TOUCHES = 6
 GRID_OUTER, GRID_INNER = 8, 4  # scope points on two rings inside the visible circle
@@ -759,11 +763,16 @@ def stage_height_check(s: Session, first: dict, model: StageModel) -> None:
         s.display.message = f"height check touch {i + 1}/{HEIGHT_CHECK_TOUCHES}"
         _, q = touch_at_pixel(s, s.fov_centre, first["rot"], z_map, lambda p: s.calib.pixel_to_xy([p])[0], "height check")
         zs.append(float(s.kin.tip(q)[2, 3]))
-    drift = float(np.mean(zs)) - z_map
+    drift = float(np.median(zs)) - z_map
     print(
         f"Height check: dish z {np.round(zs, 3).tolist()} vs map {z_map:.3f} at the reference -> "
         f"drift {drift * 1000:+.0f} um (touches agree to {np.ptp(zs) * 1000:.0f} um)"
     )
+    if np.ptp(zs) * 1000 > HEIGHT_CHECK_AGREE_UM:
+        raise CalibrationFailedError(
+            f"The height-check touches disagree by {np.ptp(zs) * 1000:.0f} um (limit {HEIGHT_CHECK_AGREE_UM:.0f}): "
+            "a bad touch (F/T sensor sync?). Nothing was changed; run the height check again."
+        )
     if abs(drift) * 1000 <= HEIGHT_CHECK_TOL_UM:
         print("  within tolerance: nothing changed.")
         return
