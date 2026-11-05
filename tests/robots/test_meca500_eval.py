@@ -632,3 +632,5 @@ def test_dataset_row_counts_every_saved_episode(tmp_path):
     after_fix = score_eval.summarise(score_eval.dataset_trials(root, 1, kin))
     assert (after_fix["n"], after_fix["successes"]) == (2, 2)
     assert np.isfinite(after_fix["sparc_median"])
+    checked = score_eval.summarise(score_eval.dataset_trials(root, 0, kin, {"0": "hit"}))
+    assert (checked["n"], checked["successes"]) == (3, 3)

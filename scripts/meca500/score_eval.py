@@ -16,7 +16,8 @@ each epNNN/final_overlay.png. Put the verdicts in <run>/verdicts.json, keyed by 
 --dataset scores the automatic-collection row from what the recorder logged, against all saved
 episodes: autocollect_episodes.jsonl for the final error, and the commanded joints in the dataset
 for the motion. Episodes left out of training still count here. --from-episode reports only the
-batches after a fix, which the paper must then say.
+batches after a fix, which the paper must then say. --verdicts takes a JSON file of by-eye verdicts
+for it, in the form above, since the detector can be misled by debris.
 
 Definitions:
     success  final distance <= SUCCESS_UM, no collision stop (or the by-eye verdict)
@@ -140,7 +141,7 @@ def check_same_targets(sessions: dict[str, list[dict]]) -> list[str]:
     return problems
 
 
-def dataset_trials(root: Path, from_episode: int, kin) -> list[dict]:
+def dataset_trials(root: Path, from_episode: int, kin, verdicts: dict | None = None) -> list[dict]:
     """Automatic collection from its own logs: logged final error, commanded joints as the path."""
     import pandas as pd
 
@@ -164,7 +165,7 @@ def dataset_trials(root: Path, from_episode: int, kin) -> list[dict]:
             "vision_error_um": meta_row.get("final_error_um"),
             "_path": (np.arange(len(actions)) / FPS, actions),
         }
-        trials.append(score_trial(row, None, kin))
+        trials.append(score_trial(row, (verdicts or {}).get(str(ep)), kin))
     return trials
 
 
@@ -178,6 +179,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--from-episode", type=int, default=0, help="--dataset: only episodes from this index"
+    )
+    parser.add_argument(
+        "--verdicts", type=Path, help="--dataset: a JSON file of by-eye verdicts, keyed by episode"
     )
     parser.add_argument("--allow-different-targets", action="store_true")
     args = parser.parse_args()
@@ -198,7 +202,8 @@ def main() -> None:
             print(f"    not checked by eye yet (verdicts.json): {unchecked}")
     if args.dataset is not None:
         label = f"automatic collection (dataset, ep >= {args.from_episode})"
-        print(format_row(label, summarise(dataset_trials(args.dataset, args.from_episode, kin))))
+        verdicts = json.loads(args.verdicts.read_text(encoding="utf-8")) if args.verdicts else None
+        print(format_row(label, summarise(dataset_trials(args.dataset, args.from_episode, kin, verdicts))))
 
 
 if __name__ == "__main__":
