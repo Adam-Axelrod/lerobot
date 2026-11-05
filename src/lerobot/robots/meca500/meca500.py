@@ -15,6 +15,11 @@ from .config_meca500 import Meca500Config
 
 logger = logging.getLogger(__name__)
 
+# Relative actions re-sync their base to the controller's setpoint when the last sent goal is
+# further than this from it: the setpoint lags the goal by well under a degree in normal motion,
+# so a bigger gap means the arm was moved by something other than send_action.
+RESYNC_DEG = 5.0
+
 # How stale a buffered camera frame may be before get_observation() stops trusting it
 # and blocks for a fresh one. Loose enough never to trip in normal operation (the rig's
 # cameras run at 30fps, so ~33ms between frames) but tight enough that a stalled capture
@@ -37,6 +42,9 @@ class Meca500(Robot):
         self._precision_logged: bool | None = None
         # Whether the "this action is absolute, not a delta" note has been logged.
         self._absolute_action_logged: bool = False
+        # The last joint goal sent, which relative actions integrate onto (see send_action).
+        # None until the first send after connect.
+        self._goal: list[float] | None = None
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -142,6 +150,7 @@ class Meca500(Robot):
                 failed_cams.append(cam_name)
 
         self._connected = True
+        self._goal = None
 
         if failed_cams:
             logger.warning(f"Meca500 connected with {len(failed_cams)} unavailable camera(s): {failed_cams}")
@@ -281,17 +290,23 @@ class Meca500(Robot):
         # test is "does this action carry every action_features key", not a guess about
         # magnitudes - a delta and an absolute target are not distinguishable by size.
         #
-        # Integrate onto the current TARGET pose, not the measured one:
-        # GetRtTargetJointPos() is where the controller is driving to, GetJoints() is
-        # where the arm has got to. Integrating onto the measured pose would fold servo
-        # lag into every step, so a stream of small deltas would fall progressively
-        # behind the trajectory it is meant to trace.
+        # Integrate onto the last GOAL SENT, which is what the training deltas are differences
+        # of (successive commanded targets). Neither readback works: GetJoints() is where the
+        # arm has got to, and GetRtTargetJointPos() is the controller's live setpoint, which
+        # also lags the goal while a move is in flight. Integrating onto the setpoint dropped
+        # the unfinished part of every step - on 2026-11-05 a delta ACT policy got only 54% of
+        # the motion it asked for and crawled. The setpoint seeds the goal after connect, and
+        # takes over again if they disagree by more than RESYNC_DEG (something else moved the
+        # arm, e.g. a direct MoveJoints).
+        relative_base = None
         if self.config.relative_actions:
             is_policy_action = set(self.action_features).issubset(action)
             if is_policy_action:
-                present_pos_list = self.robot.GetRtTargetJointPos()
+                setpoint = list(self.robot.GetRtTargetJointPos())
+                stale = self._goal is None or max(abs(g - s) for g, s in zip(self._goal, setpoint, strict=True)) > RESYNC_DEG
+                relative_base = setpoint if stale else self._goal
                 goal_pos = {
-                    f"joint_{i + 1}": present_pos_list[i] + goal_pos.get(f"joint_{i + 1}", 0.0)
+                    f"joint_{i + 1}": relative_base[i] + goal_pos.get(f"joint_{i + 1}", 0.0)
                     for i in range(6)
                 }
             elif self._absolute_action_logged is not True:
@@ -306,7 +321,9 @@ class Meca500(Robot):
                 self._absolute_action_logged = True
 
         if relative_target is not None:
-            present_pos_list = self.robot.GetRtTargetJointPos()
+            # A delta is clamped against the goal it is added to (so the clamp bounds the step
+            # itself); an absolute target against the live setpoint, as before.
+            present_pos_list = relative_base if relative_base is not None else self.robot.GetRtTargetJointPos()
             present_pos = {f"joint_{i + 1}": p for i, p in enumerate(present_pos_list)}
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
             goal_pos = ensure_safe_goal_position(goal_present_pos, relative_target)
@@ -320,6 +337,7 @@ class Meca500(Robot):
             float(goal_pos["joint_5"]),
             float(goal_pos["joint_6"]),
         )
+        self._goal = [float(goal_pos[f"joint_{i + 1}"]) for i in range(6)]
         # Always the ABSOLUTE target that was sent, even in relative_actions mode -
         # this is what the dataset records, and it is what the arm was actually told
         # to do. Note the asymmetry: a rollout recorded with relative_actions=True

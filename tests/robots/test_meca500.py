@@ -79,6 +79,41 @@ def test_send_action_relative_mode_integrates_onto_target_pose():
     assert sent["joint_3.pos"] == 30.5
 
 
+def test_relative_mode_integrates_onto_the_last_goal_not_the_lagging_setpoint():
+    """The 2026-11-05 bug: the controller's setpoint lags the goal while a move is in flight, and
+    integrating onto it dropped the unfinished part of every step (the policy got 54% of its
+    motion). Successive deltas must accumulate on the goals actually sent."""
+    present = [10.0] * 6
+    robot = _mock_robot(Meca500Config(monitor_mode=False, relative_actions=True), present)
+    step = {f"joint_{i + 1}.pos": 0.5 for i in range(6)} | {"precision.state": 0.0}
+
+    for _ in range(3):  # the mock setpoint never moves: the worst case of lag
+        robot.send_action(step)
+
+    assert robot.robot.MoveJoints.call_args[0] == pytest.approx((11.5,) * 6)
+
+
+def test_relative_mode_resyncs_when_the_arm_was_moved_elsewhere():
+    """A goal far from the setpoint is stale (the arm was moved by something else): start from
+    the setpoint again rather than jumping back."""
+    robot = _mock_robot(Meca500Config(monitor_mode=False, relative_actions=True), [10.0] * 6)
+    step = {f"joint_{i + 1}.pos": 0.5 for i in range(6)} | {"precision.state": 0.0}
+    robot.send_action(step)
+    robot.robot.GetRtTargetJointPos.return_value = [40.0] * 6  # moved 30 deg by a direct MoveJoints
+
+    robot.send_action(step)
+
+    assert robot.robot.MoveJoints.call_args[0] == pytest.approx((40.5,) * 6)
+
+
+def test_relative_mode_continues_from_an_absolute_homing_target():
+    robot = _mock_robot(Meca500Config(monitor_mode=False, relative_actions=True), [12.0] * 6)
+    robot.send_action({f"joint_{i + 1}.pos": 12.0 + i for i in range(6)})  # homing: absolute
+    robot.send_action({f"joint_{i + 1}.pos": 0.25 for i in range(6)} | {"precision.state": 0.0})
+
+    assert robot.robot.MoveJoints.call_args[0] == pytest.approx(tuple(12.25 + i for i in range(6)))
+
+
 def test_send_action_relative_mode_zero_delta_holds_position():
     """Zero delta means hold -- this is what the last frame of every episode encodes."""
     present = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
