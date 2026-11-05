@@ -165,6 +165,10 @@ HF_USER = "AdamAxelrod"  # only used to build the model repo_id when pushing
 
 USE_WANDB = True
 WANDB_PROJECT = "meca500_microscope"
+# Upload every saved checkpoint (~200 MB for ACT) to wandb as an artifact. Off: the final
+# model goes to the Hub anyway, and on the lab PC's ~100 KB/s link the upload stalled one
+# run for an hour and crashed another when the network dropped (2026-11-05).
+WANDB_CHECKPOINT_ARTIFACTS = False
 # Which wandb run a RESUME should reattach to. None = auto-detect the most recent
 # run under this run's output dir (see find_wandb_run_id). Set explicitly to pin one.
 WANDB_RUN_ID: str | None = None
@@ -404,7 +408,12 @@ def main() -> None:
         steps=STEPS,
         save_freq=SAVE_FREQ,
         log_freq=LOG_FREQ,
-        wandb=WandBConfig(enable=USE_WANDB, project=WANDB_PROJECT, run_id=wandb_run_id),
+        wandb=WandBConfig(
+            enable=USE_WANDB,
+            project=WANDB_PROJECT,
+            run_id=wandb_run_id,
+            disable_artifact=not WANDB_CHECKPOINT_ARTIFACTS,
+        ),
     )
 
     # train() is @parser.wrap()-decorated: passing a TrainPipelineConfig instance
