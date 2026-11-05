@@ -1,10 +1,33 @@
 # Next at the bench
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
-**Last updated:** 2026-11-04 (late)
+**Last updated:** 2026-11-05
 
-**Collection is complete. Nothing is waiting at the bench.**
+## Now: test the ACT policy (about 45 min)
+The 200-demo ACT model is on this PC. `eval_auto.py` sets up each episode exactly as recording
+did (stage position, start pose, target) with targets the model has never seen, then the policy
+drives. Every command is checked before it is sent: step clamp, collision model, and the tip may
+not push more than 0.1 mm into the dish.
 
+**Start after about 13:30.** Training runs are using the GPU until then and would slow the policy.
+
+1. **E0 height check (about 3 min):** `HEIGHT_CHECK_ONLY = True` is already set. Close Kinesis, then run
+   `.venv\Scripts\python.exe scripts\meca500\auto_calibrate.py`. It should end with `HEIGHT CHECK COMPLETE`.
+2. **Policy test (20 episodes, about 30-40 min):**
+   `.venv\Scripts\python.exe scripts\meca500\eval_auto.py`
+   - **Watch the first few episodes with a hand on the e-stop.** The policy has never driven the arm.
+   - **Esc** stops the session (the arm backs out and goes home). **Right arrow** ends the current
+     episode early; it is still measured.
+   - An episode ending `stopped: ...` is a safety check doing its job: the next episode carries on.
+3. Send Claude the summary line at the end, and the folder name it prints (`outputs\eval_auto\...`).
+
+| Symptom | What to do |
+|---|---|
+| `Control loop ran at N Hz, below the 20 Hz ...` | Something else is using the GPU. Finish the session, tell Claude. |
+| The pipette slides or presses on the dish | Press **Esc** and tell Claude. |
+| The arm heads somewhere clearly wrong | Press **Esc** (or the e-stop if it is close to anything). |
+
+## Collection (complete)
 `basler_stage_touch_dataset_2026-11` holds 206 episodes, 200 of them usable.
 
 | Batch | Episodes | On target (checked by eye on the raw frames) |
@@ -18,8 +41,8 @@
   in the dataset's `autocollect/excluded_episodes.json`.
 - **Dish drift:** the height checks drifted +3, +28, -22, -7 and -43 um over the day (Blu-tack).
   Each was corrected before its batch.
-- **Next (Claude, no bench time):** convert to delta actions, then train ACT and Diffusion.
-  After that comes policy evaluation on the bench, which will get its own steps here.
+- **Training:** ACT (200 demos) is done. Diffusion finishes on CREATE about 22:00 on 2026-11-05.
+  ACT on 50 and 100 demos (the data-scaling curve) is training on this PC.
 
 ## If you record more later
 1. **E0 height check (about 3 min):** `HEIGHT_CHECK_ONLY = True` is already set. Run
