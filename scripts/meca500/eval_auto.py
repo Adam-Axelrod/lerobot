@@ -143,6 +143,14 @@ SETTLED_S = 1.0
 SETTLED_UM_PER_STEP = 1.0
 SUCCESS_UM = 50.0
 DEVICE = "cuda"
+# METHOD "policy": keep the camera frame the policy was given at each policy call (every
+# n_action_steps steps in chunk mode; LIVE_EVERY_ENSEMBLE when ensembling) - after any
+# IMAGE_SHIFT_PX, before the marker is drawn - in memory, and write them once the episode is over
+# as epNNN/live/stepNNNN.png + live/index.json, so the 20 Hz loop does no disk I/O. For offline
+# probes on the frames the policy really saw (raw vs AV1), and rollout figures. Added 2026-11-05,
+# after the no-decoy ACT test, which has no such frames; it does not change what the policy sees.
+SAVE_LIVE_FRAMES = True
+LIVE_EVERY_ENSEMBLE = 10
 
 # --- METHOD = "human" ---
 OPERATOR = "experienced"  # names the results folder: "experienced", "novice1", "embryology", ...
@@ -228,14 +236,22 @@ def load_policy(model: str):
     return policy, pre, post
 
 
-def rollout_episode(robot, policy, pre, post, obs_proc, obs_features, planner, events) -> dict:
-    """Run the policy until it settles, the time runs out, a check fails or the operator stops it."""
+def rollout_episode(
+    robot, policy, pre, post, obs_proc, obs_features, planner, events, live_key: str | None = None
+) -> dict:
+    """Run the policy until it settles, the time runs out, a check fails or the operator stops it.
+
+    With ``live_key``, the result's "live" holds (step, frame, joints) at each policy call: the
+    camera frame before the marker overlay, copied in memory (see SAVE_LIVE_FRAMES)."""
     kin, checker, calib = planner.kin, planner.checker, planner.calib
     fps = planner.lim.fps
     policy.reset()
     pre.reset()
     post.reset()
     log = {k: [] for k in ("t", "q_cmd", "q_meas", "delta", "precision", "clamped", "backstop_cut")}
+    n_steps = int(getattr(policy.config, "n_action_steps", 1))
+    live_every = n_steps if n_steps > 1 else LIVE_EVERY_ENSEMBLE
+    live = []
     reason, settled, ever_precise = "time limit", 0, False
     prev_tip = None
     # Integrate onto the last goal SENT, not the controller's live setpoint: the training deltas
@@ -252,7 +268,12 @@ def rollout_episode(robot, policy, pre, post, obs_proc, obs_features, planner, e
         if events["stop_recording"]:
             reason = "operator"
             break
-        obs = obs_proc(robot.get_observation())
+        raw = robot.get_observation()
+        step = len(log["t"])
+        if live_key is not None and step % live_every == 0:
+            # Copied before the overlay step can draw on it; the copy is never fed back.
+            live.append((step, raw[live_key].copy(), [float(raw[f"joint_{j + 1}.pos"]) for j in range(6)]))
+        obs = obs_proc(raw)
         frame = build_dataset_frame(obs_features, obs, prefix=OBS_STR)
         action = predict_action(frame, policy, torch.device(DEVICE), pre, post, False, TASK, robot.name)
         a = action.squeeze(0).float().cpu().numpy()
@@ -308,7 +329,39 @@ def rollout_episode(robot, policy, pre, post, obs_proc, obs_features, planner, e
         "duration_s": round(time.perf_counter() - t_start, 2),
         "loop_hz": round(hz, 1),
         "log": log,
+        "live": live,
     }
+
+
+def harness_commit() -> str:
+    """The commit this script ran from, "+dirty" if the working tree differs."""
+    import subprocess
+
+    def git(*a):
+        return subprocess.run(["git", *a], capture_output=True, text=True, cwd=Path(__file__).parent).stdout.strip()
+
+    sha = git("rev-parse", "--short", "HEAD") or "unknown"
+    return sha + ("+dirty" if git("status", "--porcelain", "--untracked-files=no") else "")
+
+
+def save_live(ep_dir: Path, live: list, target) -> None:
+    """Write the frames rollout_episode kept, after the episode (no I/O in the control loop)."""
+    if not live:
+        return
+    import cv2
+
+    d = ep_dir / "live"
+    d.mkdir(parents=True, exist_ok=True)
+    index = []
+    for step, img, q in live:
+        name = f"step{step:04d}.png"
+        cv2.imwrite(str(d / name), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+        index.append({"step": step, "file": name, "joints_deg": q})
+    (d / "index.json").write_text(
+        json.dumps({"target_px": [float(v) for v in target], "frames": index}, indent=1),
+        encoding="utf-8",
+        newline="\n",
+    )
 
 
 def measure_final(robot, arm, planner, bench, background, target_px, shift=(0, 0)) -> tuple[dict, np.ndarray]:
@@ -507,13 +560,15 @@ def main() -> None:
 
     out_dir = Path("outputs/eval_auto") / f"{session_name()}_{time.strftime('%Y%m%d-%H%M%S')}"
     out_dir.mkdir(parents=True)
+    commit = harness_commit()
     (out_dir / "config.json").write_text(
         json.dumps(
             {
                 k: v
                 for k, v in globals().items()
                 if k.isupper() and isinstance(v, (str, int, float, type(None)))
-            },
+            }
+            | {"harness_commit": commit},
             indent=2,
         ),
         encoding="utf-8",
@@ -612,7 +667,10 @@ def main() -> None:
             t_drive = time.perf_counter()
             tap.start()
             if METHOD == "policy":
-                run = rollout_episode(robot, policy, pre, post, obs_proc, obs_features, planner, events)
+                run = rollout_episode(
+                    robot, policy, pre, post, obs_proc, obs_features, planner, events,
+                    live_key=bench.camera_key if SAVE_LIVE_FRAMES else None,
+                )
             elif METHOD == "scripted":
                 run = run_scripted(robot, teleop, plan, planner, events, processors)
             elif METHOD == "expert":
@@ -630,6 +688,8 @@ def main() -> None:
             save_raw(ep_dir, "final_overlay", draw_target(final, target, bench.target_style()))
             log = run.pop("log", {})
             np.savez_compressed(ep_dir / "traj.npz", **traj, **{k: np.asarray(v) for k, v in log.items()})
+            live = run.pop("live", [])
+            save_live(ep_dir, live, target)
 
             row = {
                 "episode": i,
@@ -645,6 +705,8 @@ def main() -> None:
                 "steps": len(traj["obs_t"]),
                 "clamped_steps": int(np.sum(log["clamped"])) if log else None,
                 "backstop_cut_steps": int(np.sum(log["backstop_cut"])) if log and "backstop_cut" in log else None,
+                "live_frames": len(live),
+                "harness_commit": commit,
                 **{k: v for k, v in run.items() if k not in ("reason", "duration_s")},
                 **m,
             }
