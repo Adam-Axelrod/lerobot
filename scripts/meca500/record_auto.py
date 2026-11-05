@@ -241,8 +241,39 @@ def go_home(robot, teleop, planner, home, events, processors) -> np.ndarray:
         f"{', backing out along the pipette' if retreat else ''})",
         False,
     )
-    run_plan(robot, teleop, path, np.zeros(len(path)), planner.lim.fps, events, processors)
+    run_plan(robot, teleop, path, np.zeros(len(path)), planner.lim.fps, deaf(), processors)
     return wait_settled(robot, home, SETTLE_TIMEOUT_S)
+
+
+def deaf() -> dict:
+    """Keyboard events for unrecorded moves: the listener is global, so an arrow key pressed in any
+    window cut the transit short and the settle check stopped the session (2026-11-05, after 32
+    episodes). These moves always finish; Esc is checked once they have."""
+    return {"exit_early": False, "rerecord_episode": False, "stop_recording": False}
+
+
+class EscOnly(dict):
+    """The listener's events with the arrow keys ignored: only Esc (stop_recording, which also ends
+    the current segment) gets through. The listener sees keys typed into any window, so ordinary
+    editing on the bench PC was cutting episodes short. A scripted episode has no use for "next" or
+    "re-record" anyway."""
+
+    def __init__(self, raw: dict):
+        super().__init__(exit_early=False, rerecord_episode=False)
+        self.raw = raw
+
+    def __getitem__(self, key):
+        if key == "stop_recording":
+            return self.raw["stop_recording"]
+        if key == "exit_early":
+            return super().__getitem__(key) or self.raw["stop_recording"]
+        return super().__getitem__(key)
+
+    def __setitem__(self, key, value):
+        if key == "stop_recording":
+            self.raw[key] = value
+        else:
+            super().__setitem__(key, value)
 
 
 def run_plan(robot, teleop, joints, precision, fps, events, processors, dataset=None, display=False):
@@ -543,7 +574,8 @@ def main() -> None:
     robot.connect()
     robot.configure()
     teleop.connect()
-    listener, events = init_keyboard_listener()
+    listener, raw_events = init_keyboard_listener()
+    events = EscOnly(raw_events)
     try:
         make_ready(robot.robot)
         stage_xy = None
@@ -584,7 +616,7 @@ def main() -> None:
 
                 overlay.set_target(None)
                 log_say(f"Moving to start of episode {ep}", False)
-                run_plan(robot, teleop, transit, np.zeros(len(transit)), fps, events, processors)
+                run_plan(robot, teleop, transit, np.zeros(len(transit)), fps, deaf(), processors)
                 wait_settled(robot, plan.start_joints, SETTLE_TIMEOUT_S)
                 if events["stop_recording"]:
                     break
