@@ -189,6 +189,17 @@ def build_episode_subset(repo_id: str) -> tuple[list[int] | None, int]:
     # where the tip ended, so they would teach the wrong mapping.
     excluded: set[int] = set()
     excl_file = Path(meta.root) / "autocollect" / "excluded_episodes.json"
+    if not excl_file.exists():
+        # A Hub dataset's metadata download fetches meta/ only, so on a fresh machine (CREATE,
+        # 2026-11-05) the list is not local yet and all 206 episodes were used. Fetch it.
+        try:
+            from huggingface_hub import hf_hub_download
+
+            excl_file = Path(
+                hf_hub_download(repo_id, "autocollect/excluded_episodes.json", repo_type="dataset")
+            )
+        except Exception:  # not on the Hub (a human-recorded or local-only dataset)
+            pass
     if excl_file.exists():
         excluded = {int(e) for e in json.loads(excl_file.read_text())["excluded"]}
         print(f"[subset] Excluding {len(excluded)} episodes listed in {excl_file.name}: {sorted(excluded)}")
