@@ -550,16 +550,17 @@ def test_scoring_applies_success_stops_and_by_eye_verdicts(tmp_path):
             base_row(3, None),  # not detected, no verdict
             base_row(4, 40.0),
             base_row(5, 45.0),
+            base_row(6, 30.0, reason="stopped: commanded tip -120 um below the dish surface"),
         ],
         verdicts={"1": 35.0, "5": "miss"},
     )
     rows = score_eval.load_run(run)
     trials = [score_eval.score_trial(r, r["_verdict"], None) for r in rows]
-    assert [t["success"] for t in trials] == [True, True, False, False, True, False]
+    assert [t["success"] for t in trials] == [True, True, False, False, True, False, True]
     s = score_eval.summarise(trials)
-    assert (s["n"], s["successes"], s["stops"], s["no_distance"]) == (6, 3, 1, 1)
-    assert s["distance_median"] == pytest.approx(35.0)
-    assert "3/6" in score_eval.format_row("act", s)
+    assert (s["n"], s["successes"], s["collisions"], s["press_stops"], s["no_distance"]) == (7, 4, 1, 1, 1)
+    assert s["distance_median"] == pytest.approx(32.5)
+    assert "4/7" in score_eval.format_row("act", s)
 
 
 def test_scoring_reads_a_run_from_before_the_observation_tap(tmp_path):

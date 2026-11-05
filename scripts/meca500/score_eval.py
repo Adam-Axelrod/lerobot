@@ -19,7 +19,10 @@ for the motion. Episodes left out of training still count here. --from-episode r
 batches after a fix, which the paper must then say.
 
 Definitions:
-    success  final distance <= SUCCESS_UM, no safety stop (or the by-eye verdict)
+    success  final distance <= SUCCESS_UM, no collision stop (or the by-eye verdict)
+    collision  a stop on the collision model. Reaching the press limit under the dish is not one:
+             it is how most policy touches end, so it is counted separately and the trial is
+             judged on where the tip landed
     distance median [IQR] of the final distance, by the tip detector on the frame the method saw
     time     median arrival_s of the successful trials (metrics.path_metrics)
     SPARC, economy   median over all trials with a path
@@ -46,14 +49,23 @@ def score_trial(row: dict, verdict, kin) -> dict:
     distance = row.get("vision_error_um")
     if isinstance(verdict, int | float) and not isinstance(verdict, bool):
         distance = float(verdict)
-    stopped = str(row.get("reason", "")).startswith("stopped")
+    reason = str(row.get("reason", ""))
+    stopped = reason.startswith("stopped")
+    press = stopped and "below the dish" in reason
+    collision = stopped and not press
     if verdict == "hit":
         success = True
     elif verdict == "miss":
         success = False
     else:
-        success = distance is not None and distance <= SUCCESS_UM and not stopped
-    out = {"episode": row["episode"], "success": success, "distance_um": distance, "stopped": stopped}
+        success = distance is not None and distance <= SUCCESS_UM and not collision
+    out = {
+        "episode": row["episode"],
+        "success": success,
+        "distance_um": distance,
+        "collision": collision,
+        "press": press,
+    }
     path = row.get("_path")
     if path is not None and len(path[0]) >= 4:
         t, q = path
@@ -95,7 +107,8 @@ def summarise(trials: list[dict]) -> dict:
     return {
         "n": len(trials),
         "successes": len(hits),
-        "stops": sum(t["stopped"] for t in trials),
+        "collisions": sum(t["collision"] for t in trials),
+        "press_stops": sum(t["press"] for t in trials),
         "no_distance": sum(t["distance_um"] is None for t in trials),
         "distance_median": float(np.median(dist)) if len(dist) else float("nan"),
         "distance_q1": float(np.percentile(dist, 25)) if len(dist) else float("nan"),
@@ -111,7 +124,7 @@ def format_row(name: str, s: dict) -> str:
         f"{name:<44} {s['successes']:>3}/{s['n']:<3} {100 * s['successes'] / max(s['n'], 1):>4.0f}%  "
         f"{s['distance_median']:>6.0f} [{s['distance_q1']:.0f}, {s['distance_q3']:.0f}] um  "
         f"{s['time_median']:>6.1f} s  SPARC {s['sparc_median']:>6.2f}  economy {100 * s['economy_median']:>4.0f}%  "
-        f"stops {s['stops']}  no distance {s['no_distance']}"
+        f"collisions {s['collisions']}  press stops {s['press_stops']}  no distance {s['no_distance']}"
     )
 
 
