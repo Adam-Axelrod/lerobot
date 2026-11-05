@@ -1,54 +1,64 @@
 # Next at the bench
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
-**Last updated:** 2026-11-05
+**Last updated:** 2026-11-05 (paper order)
 
-## Now: record the decoy dataset (about 2 h for 100 episodes)
+## Now: record the decoy dataset (Claude is running it)
 **The first ACT test failed: 0 of 20 within 50 um, median 2.0 mm** (2026-11-05,
-`outputs\eval_auto\basler_stage_touch_2026-11_delta_act_20261105-121850`). Probes show why: the
-expert aimed every path at the target, so the joint state at the pre-touch point gave the target
-away and the policy never learnt to read the marker. `record_auto.py` now plans each path to a
-DECOY up to 1.6 mm from the target while the marker stays on the true target; the pre-touch
+`outputs\eval_auto\basler_stage_touch_2026-11_delta_act_20261105-121850`). That is the paper's
+"ACT, no decoys" row; it ran on the fixed rollout code, so it does not need rerunning. Probes show why
+it failed: the expert aimed every path at the target, so the joint state at the pre-touch point gave
+the target away and the policy never learnt to read the marker. `record_auto.py` now plans each path
+to a DECOY up to 1.6 mm from the target while the marker stays on the true target; the pre-touch
 correction then closes the gap in the recorded final approach, so only the image says where to go.
-It is already set up: `NAME = "basler_stage_touch_decoy_2026-11"`, `DECOY_MAX_MM = 1.6`.
 
-1. **E0 height check (about 3 min):** close Kinesis, then
-   `.venv\Scripts\python.exe scripts\meca500\auto_calibrate.py`. It should end with `HEIGHT CHECK COMPLETE`.
-2. **Batch 1 (50 episodes, about 45 min):** `.venv\Scripts\python.exe scripts\meca500\record_auto.py`
-   (`RESUME = False` for this first batch). **Watch the first few episodes:** after the pre-touch
-   pause the tip now moves sideways by up to 1.6 mm before descending. That is intended.
-3. **Batch 2:** set `RESUME = True`, run E0 again, then `record_auto.py` again.
-4. Tell Claude: it converts to deltas and trains ACT on this dataset (about 2.5 h), then you test it
-   with `eval_auto.py` exactly as before, on the same 20 targets.
+1. **Batch 1** (`basler_stage_touch_decoy_2026-11`, 50 episodes) is recording from 15:20 on 2026-11-05.
+   While watching: each episode pauses two or three times near the dish while the tip is detected;
+   after the first pause the tip moves sideways by up to 1.6 mm before descending. Both are intended.
+   A pause followed by the arm leaving without touching means an episode was discarded; the next
+   attempt uses a new target. **To stop early press Esc** - never close the window or kill the
+   process: the dataset is only finalised on a clean exit.
+2. **Batch 2:** E0 height check, then `RESUME = True` and `record_auto.py` again (about 45 min).
+3. Claude converts to deltas and trains **ACT model A**: the same settings as the first ACT, so the
+   comparison isolates the decoys. A separately labelled model B (precision-step loss weight and
+   joint-state dropout) is optional; Claude will ask first.
 
-## Next: the rest of the results table
-Work down this list and stop when time runs out. All of it uses `scripts\meca500\eval_auto.py`:
+## Next: the paper's results table (ISMR deadline 10 Nov; last bench day Sun 8 Nov)
+Work down this list in order and stop when time runs out. All of it uses `scripts\meca500\eval_auto.py`:
 set the values in its CONFIG block, run it, and send Claude the folder name it prints. Do the **E0
-height check** before each session. Every run uses the same seeds, so every method gets the same
-targets. **If a recalibration is needed, tell Claude:** it can change the test set.
+height check** before each session. Every run uses the same seeds (`SEED_BASE = 5_000_000`), so every
+method gets the same targets. **If a recalibration is needed, tell Claude:** it can change the test
+set, and `score_eval` refuses mismatched targets.
 
-If ACT misses most targets above, stop here and tell Claude: Diffusion comes first instead.
+**Do not use the older Diffusion, ACT-50 or ACT-100 models for the table:** they were trained on the
+non-decoy dataset and have the same shortcut.
 
 | # | Row | Set in CONFIG | Time |
 |---|---|---|---|
+| 1 | **Go/no-go: ACT on decoys (model A)** | `METHOD = "policy"`, `IMAGE_SHIFT_PX = 0`, `MODEL` and `EVAL_NAME` for model A | ~40 min |
 | 2 | Automatic collection, from its logs | Nothing to run on the bench: see below | - |
 | 3 | Scripted controller | `METHOD = "scripted"` | ~40 min |
-| 4a | ACT, small knock | `METHOD = "policy"`, `IMAGE_SHIFT_PX = 16` | ~40 min |
-| 4b | ACT, big knock | `METHOD = "policy"`, `IMAGE_SHIFT_PX = 58` | ~40 min |
+| 4a | ACT on decoys, small knock | `METHOD = "policy"`, `IMAGE_SHIFT_PX = 16` | ~40 min |
+| 4b | ACT on decoys, big knock | `METHOD = "policy"`, `IMAGE_SHIFT_PX = 58` | ~40 min |
 | 4c | Scripted, both knocks | `METHOD = "scripted"`, `NUM_EPISODES = 10`, `IMAGE_SHIFT_PX` 16, then 58 | ~40 min |
 | 4d | Automatic collection, both knocks | `METHOD = "expert"`, `NUM_EPISODES = 10`, `IMAGE_SHIFT_PX` 16, then 58 | ~40 min |
-| 5 | You on the SpaceMouse | `METHOD = "human"`, `OPERATOR = "experienced"` | ~1 h |
-| 6 | Diffusion | `METHOD = "policy"`, `MODEL` and `EVAL_NAME` for the Diffusion model | ~45 min |
-| 7 | ACT on 100, then 50 demos | `METHOD = "policy"`, `MODEL` and `EVAL_NAME` for each | ~45 min each |
-| 8 | ACT, precision off (ask Claude first: it may not be worth running) | `IGNORE_PRECISION = True` | ~40 min |
-| 9, 10 | Other operators | `METHOD = "human"`, `OPERATOR = "embryology"`, `"novice1"`, ... | ~1 h each |
+| 5 | You on the SpaceMouse | `METHOD = "human"`, `OPERATOR = "experienced"` (start with 2-3 trials) | ~1 h |
+| 6 | Diffusion, retrained on decoys | `METHOD = "policy"`, `MODEL` and `EVAL_NAME` for that model | ~45 min |
+| 7 | ACT on 50 decoy demos (data scaling; 200 only if 100 looks close) | `METHOD = "policy"`, `MODEL` and `EVAL_NAME` | ~45 min |
+| 8, 9 | Other operators, only if time allows | `METHOD = "human"`, `OPERATOR = "embryology"`, `"novice1"`, ... (at least 3 novices) | ~1 h each |
 
-Set `IMAGE_SHIFT_PX` back to 0 and `IGNORE_PRECISION` back to False after those rows. A session that
-stops early can carry on: set `FIRST_EPISODE` to the next trial number.
+**After row 1, stop if ACT misses most targets** and tell Claude before running anything else. Claude
+also reruns the ring-moving probe on model A to check it now reads the image.
+Skipped unless something changes: ACT with precision off (only if `clamped_steps` shows the flag
+matters), and Huanyu's visual servoing (only if he offers).
+
+Set `IMAGE_SHIFT_PX` back to 0 after the knock rows. A session that stops early can carry on: set
+`FIRST_EPISODE` to the next trial number.
 
 **Row 2.** On the PC that has the dataset:
-`.venv\Scripts\python.exe scripts\meca500\score_eval.py --dataset <path to basler_stage_touch_dataset_2026-11>`.
-Run it again with `--from-episode 50` for the batches after the E1 fix, and send Claude both lines.
+`.venv\Scripts\python.exe scripts\meca500\score_eval.py --dataset <path to basler_stage_touch_decoy_2026-11>`.
+Discarded attempts count as failures: batch 2 onwards logs them in the dataset's
+`autocollect_discards.jsonl`; batch 1's come from `outputs\record_decoy_batch1b.log`. Send Claude the line.
 
 **Human trials (first time: try 2-3 trials with `NUM_EPISODES = 3` and a hand on the e-stop).** This
 mode has only been tested without the arm.
@@ -84,8 +94,8 @@ mode has only been tested without the arm.
   in the dataset's `autocollect/excluded_episodes.json`.
 - **Dish drift:** the height checks drifted +3, +28, -22, -7 and -43 um over the day (Blu-tack).
   Each was corrected before its batch.
-- **Training:** ACT (200 demos) is done. Diffusion finishes on CREATE about 22:00 on 2026-11-05.
-  ACT on 50 and 100 demos (the data-scaling curve) is training on this PC.
+- **Training:** ACT (200 demos) is done and tested (0/20, the "no decoys" row). Diffusion and ACT on
+  50/100 demos were trained on this dataset too, but they share the shortcut: not for the table.
 
 ## If you record more later
 1. **E0 height check (about 3 min):** `HEIGHT_CHECK_ONLY = True` is already set. Run
