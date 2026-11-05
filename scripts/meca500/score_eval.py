@@ -71,7 +71,8 @@ def load_run(run: Path) -> list[dict]:
         traj = run / f"ep{row['episode']:03d}" / "traj.npz"
         if traj.exists():
             with np.load(traj) as z:
-                row["_path"] = (z["obs_t"], z["obs_q"])
+                # Runs from before ObservationTap logged only the policy's own t and q_meas.
+                row["_path"] = (z["obs_t"], z["obs_q"]) if "obs_t" in z else (z["t"], z["q_meas"])
     verdict_file = run / "verdicts.json"
     verdicts = json.loads(verdict_file.read_text(encoding="utf-8")) if verdict_file.exists() else {}
     for row in rows:

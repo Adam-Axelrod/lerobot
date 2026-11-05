@@ -562,6 +562,16 @@ def test_scoring_applies_success_stops_and_by_eye_verdicts(tmp_path):
     assert "3/6" in score_eval.format_row("act", s)
 
 
+def test_scoring_reads_a_run_from_before_the_observation_tap(tmp_path):
+    import score_eval
+
+    run = make_run(tmp_path, "act_20261105-140000", [base_row(0, 20.0)])
+    (run / "ep000").mkdir()
+    np.savez(run / "ep000" / "traj.npz", t=np.arange(5.0), q_meas=np.zeros((5, 6)))
+    t, q = score_eval.load_run(run)[0]["_path"]
+    assert len(t) == 5 and q.shape == (5, 6)
+
+
 def test_scoring_refuses_runs_with_different_targets_and_joins_a_continued_session(tmp_path):
     import score_eval
 
