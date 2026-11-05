@@ -117,9 +117,14 @@ EPISODE_TIME_S = 45.0
 # A float runs inference every step and averages the overlapping chunks with weights
 # exp(-coeff * i), i = 0 for the OLDEST prediction - so a NEGATIVE coeff favours the newest,
 # which keeps the final approach closed-loop on the image. At chunk 30, -0.05 gives the newest
-# prediction ~5% weight and a mean prediction age of ~0.4 s. Compare against None if the
-# approach looks sluggish or oscillates.
-TEMPORAL_ENSEMBLE_COEFF: float | None = -0.05
+# prediction ~5% weight and a mean prediction age of ~0.4 s.
+#
+# None, because ensembling STALLED the first bench test (2026-11-05): the tip stopped 2-3 mm
+# short, at the pre-touch point. The demos hold still there for the vision-correction
+# checkpoint (1309 mid-episode holds of up to 1 s), so from that pose the policy's FIRST
+# predicted step is "hold" - and ensembling only ever executes first steps. A whole chunk
+# carries the motion after the hold, so the arm moves through it.
+TEMPORAL_ENSEMBLE_COEFF: float | None = None
 
 # Per-step clamps (deg), just above the largest step in the 200 training episodes
 # (coarse max 0.956, precision max 0.0167; p99 0.61 and 0.014): they never touch
@@ -146,6 +151,13 @@ HUMAN_TIME_S = 120.0  # as in record_microscope.py
 GAIN_TR = 50.0
 GAIN_TR_FINE = 5.0
 # -----------------------------------------------------------------
+
+
+def deaf() -> dict:
+    """Events for the scripted moves between episodes, NOT wired to the keyboard. The listener is
+    global, so arrow keys pressed in any window cut transits short twice on 2026-11-05 (16.8 and
+    25.2 deg from the start pose). Esc still stops the session between episodes."""
+    return {"exit_early": False, "rerecord_episode": False, "stop_recording": False}
 
 
 def session_name() -> str:
@@ -223,13 +235,21 @@ def rollout_episode(robot, policy, pre, post, obs_proc, obs_features, planner, e
     policy.reset()
     pre.reset()
     post.reset()
-    log = {k: [] for k in ("t", "q_cmd", "q_meas", "delta", "precision", "clamped")}
+    log = {k: [] for k in ("t", "q_cmd", "q_meas", "delta", "precision", "clamped", "backstop_cut")}
     reason, settled, ever_precise = "time limit", 0, False
     prev_tip = None
+    # Integrate onto the last goal SENT, not the controller's live setpoint: the training deltas
+    # are differences between successive commanded goals, and GetRtTargetJointPos() lags the
+    # goal while a move is in flight. Integrating onto it dropped the unfinished part of every
+    # step - the first bench test (2026-11-05) commanded only 54% of what the policy asked for
+    # and never reached the dish. The arm is at rest after the transit, so the setpoint is the goal.
+    q_goal = np.asarray(robot.robot.GetRtTargetJointPos(), dtype=float)
     t_start = time.perf_counter()
     while time.perf_counter() - t_start < EPISODE_TIME_S:
         t0 = time.perf_counter()
-        if events["exit_early"] or events["stop_recording"]:
+        # Esc only: the keyboard listener is global, and stray arrow keys from other windows cut
+        # three episodes and transits short on 2026-11-05.
+        if events["stop_recording"]:
             reason = "operator"
             break
         obs = obs_proc(robot.get_observation())
@@ -241,7 +261,7 @@ def rollout_episode(robot, policy, pre, post, obs_proc, obs_features, planner, e
         normal_clamp = PRECISION_MAX_REL_TARGET if precise else MAX_REL_TARGET
         clamp = MAX_REL_TARGET if IGNORE_PRECISION else normal_clamp
         delta = np.clip(a[:6], -clamp, clamp)
-        q_cmd = np.asarray(robot.robot.GetRtTargetJointPos(), dtype=float) + delta
+        q_cmd = q_goal + delta
 
         tip = kin.tip(q_cmd)[:3, 3]
         height = float(tip[2] - calib.surface_z_mm)
@@ -253,12 +273,16 @@ def rollout_episode(robot, policy, pre, post, obs_proc, obs_features, planner, e
             reason = f"stopped: {clear.where} within margin of {clear.obstacle} ({clear.min_mm:.1f} mm)"
             break
 
-        robot.send_action(
+        sent = robot.send_action(
             {
                 **{f"joint_{i + 1}.pos": float(q_cmd[i]) for i in range(6)},
                 "precision.state": float(precise and not IGNORE_PRECISION),
             }
         )
+        # What was actually sent: the robot's backstop clamp (measured from the lagging setpoint)
+        # may have cut the step, and the next delta must start from where the goal really is.
+        q_goal = np.array([sent[f"joint_{i + 1}.pos"] for i in range(6)], dtype=float)
+        log["backstop_cut"].append(bool(np.abs(q_goal - q_cmd).max() > 1e-6))
         log["t"].append(t0 - t_start)
         log["q_cmd"].append(q_cmd)
         log["q_meas"].append(np.asarray(robot.robot.GetRtJointPos(), dtype=float))
@@ -445,10 +469,12 @@ def main() -> None:
             RIG,
             monitor_mode=human,  # the SpaceMouse teleop owns the control connection
             relative_actions=False,
-            max_relative_target=record_auto.MAX_REL_TARGET if scripted else MAX_REL_TARGET,
+            # The policy's clamp is applied in rollout_episode; here it is a 2x runaway backstop,
+            # because the robot measures it from the live setpoint, which lags the goal.
+            max_relative_target=record_auto.MAX_REL_TARGET if scripted else 2 * MAX_REL_TARGET,
             precision_max_relative_target=record_auto.PRECISION_MAX_REL_TARGET
             if scripted
-            else PRECISION_MAX_REL_TARGET,
+            else 2 * PRECISION_MAX_REL_TARGET,
         )
     )
     guard, view = None, None
@@ -526,7 +552,7 @@ def main() -> None:
             human_go_home(teleop, planner, home, fps)
             q_now = np.asarray(arm.GetRtJointPos(), dtype=float)
         else:
-            q_now = go_home(robot, teleop, planner, home, events, processors)
+            q_now = go_home(robot, teleop, planner, home, deaf(), processors)
         retreat = False
         for i in range(FIRST_EPISODE, NUM_EPISODES):
             if events["stop_recording"]:
@@ -552,7 +578,7 @@ def main() -> None:
             if human:
                 follow_path(teleop, transit, fps)
             else:
-                run_plan(robot, teleop, transit, np.zeros(len(transit)), fps, events, processors)
+                run_plan(robot, teleop, transit, np.zeros(len(transit)), fps, deaf(), processors)
             wait_settled(controller, start_q, SETTLE_TIMEOUT_S)
             stage_xy = stage.move_to(new_xy)
             surface_z = stager.place(stage_xy)
@@ -618,6 +644,7 @@ def main() -> None:
                 "duration_s": duration_s,
                 "steps": len(traj["obs_t"]),
                 "clamped_steps": int(np.sum(log["clamped"])) if log else None,
+                "backstop_cut_steps": int(np.sum(log["backstop_cut"])) if log and "backstop_cut" in log else None,
                 **{k: v for k, v in run.items() if k not in ("reason", "duration_s")},
                 **m,
             }
@@ -638,7 +665,7 @@ def main() -> None:
             if human:
                 human_go_home(teleop, planner, home, fps)
             else:
-                go_home(robot, teleop, planner, home, events, processors)
+                go_home(robot, teleop, planner, home, deaf(), processors)
         except (RuntimeError, PlanningError) as e:
             logging.error(f"Could not return home ({e}); the arm holds its current pose.")
     finally:
