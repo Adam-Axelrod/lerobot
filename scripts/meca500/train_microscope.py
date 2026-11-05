@@ -134,6 +134,11 @@ POLICY_KWARGS: dict = {"chunk_size": 30, "n_action_steps": 30}
 # Weight 0 drops a transform entirely (ImageTransforms skips weight <= 0).
 USE_IMAGE_TRANSFORMS = True
 GEOMETRIC_TRANSFORMS = ("affine",)  # zeroed: they move the image without moving the action
+# EXCEPT for tip actions in the camera's axes (convert_to_tip_actions.py): there a shifted image
+# needs the same action, so a pure shift is label-preserving. > 0 brings the affine back with no
+# rotation (rotation would turn the camera axes) and up to this fraction of the frame of shift.
+# Refused on any other action space.
+SHIFT_AUGMENT_FRACTION = 0.0
 
 # --- Random subset of the dataset ---
 # 1.0 = train on every episode. e.g. 0.5 = a random half of the episodes.
@@ -280,11 +285,18 @@ def build_image_transforms() -> ImageTransformsConfig:
                 f"because silently failing to zero it trains in a positional invariance."
             )
         cfg.tfs[name].weight = 0.0
+    if SHIFT_AUGMENT_FRACTION > 0:
+        if not NAME.endswith("_tip_delta"):
+            raise SystemExit(f"SHIFT_AUGMENT_FRACTION needs camera-axis tip actions; {NAME} is not a _tip_delta dataset.")
+        f = SHIFT_AUGMENT_FRACTION
+        cfg.tfs["affine"].weight = 1.0
+        cfg.tfs["affine"].kwargs = {"degrees": (0.0, 0.0), "translate": (f, f)}
+        print(f"[augment] shift only: up to {f:.0%} of the frame (camera-axis actions)")
 
     if USE_IMAGE_TRANSFORMS:
         kept = sorted(n for n, t in cfg.tfs.items() if t.weight > 0)
         print(f"[augment] enabled, up to {cfg.max_num_transforms} of {kept}")
-        print(f"[augment] zeroed (geometric): {sorted(GEOMETRIC_TRANSFORMS)}")
+        print(f"[augment] zeroed (geometric): {sorted(n for n in GEOMETRIC_TRANSFORMS if cfg.tfs[n].weight <= 0)}")
     else:
         print("[augment] disabled")
     return cfg

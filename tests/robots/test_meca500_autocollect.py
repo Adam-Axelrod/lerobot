@@ -28,6 +28,11 @@ from lerobot.robots.meca500.autocollect.planner import (
     sample_decoy_px,
     target_px_allowed,
 )
+from lerobot.robots.meca500.autocollect.tip_actions import (
+    camera_axes,
+    joints_to_tip_actions,
+    tip_action_to_joints,
+)
 from lerobot.robots.meca500.autocollect.tip_detect import image_shift
 from lerobot.robots.meca500.config_meca500 import Meca500Config
 from lerobot.robots.meca500.meca500 import Meca500
@@ -200,6 +205,29 @@ def test_image_shift_finds_a_dish_texture_translation_despite_a_pipette():
     rgb = lambda g: np.repeat(g[..., None], 3, axis=2)  # noqa: E731
     dx, dy = image_shift(rgb(dish), rgb(moved))
     assert dx == pytest.approx(6.4, abs=0.15) and dy == pytest.approx(-0.3, abs=0.15)
+
+
+def test_tip_actions_follow_the_image_axes_and_round_trip_through_ik(kin):
+    # A mirrored camera: image u is base X, image v is base -Y.
+    lin = 0.0133 * np.diag([1.0, -1.0])
+    px = np.array([[0, 0], [427, 0], [0, 640], [200, 300]], dtype=float)
+    cal = ScopeCalibration.fit(px, px @ lin.T + [200.0, -90.0], surface_z_mm=30.0, image_size=(427, 640))
+    axes = camera_axes(cal)
+    np.testing.assert_allclose(axes, np.diag([1.0, -1.0]), atol=1e-9)
+
+    q0 = np.array([-60.0, 50.0, 15.0, 120.0, 75.0, -110.0])
+    path = q0 + np.linspace(0, 1, 40)[:, None] * np.array([2.0, -1.5, 1.0, 0.5, -0.8, 1.2])
+    acts = joints_to_tip_actions(kin, path, axes)
+    assert np.all(acts[-1] == 0)
+    # Base +Y motion shows up as image -v.
+    dy = kin.tip(path[1])[1, 3] - kin.tip(path[0])[1, 3]
+    assert acts[0, 1] == pytest.approx(-dy)
+
+    t, q = kin.tip(path[0]), path[0].copy()
+    for k in range(len(path) - 1):
+        t, q = tip_action_to_joints(kin, t, q, acts[k], axes)
+        assert q is not None
+    np.testing.assert_allclose(kin.tip(q), kin.tip(path[-1]), atol=1e-4)
 
 
 def test_calibration_save_load(tmp_path):

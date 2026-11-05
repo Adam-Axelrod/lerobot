@@ -79,6 +79,7 @@ from lerobot.robots.meca500.autocollect.focus_check import FocusMismatchError, c
 from lerobot.robots.meca500.autocollect.operator_guard import OperatorGuard
 from lerobot.robots.meca500.autocollect.overlay import TargetOverlayStep, draw_target
 from lerobot.robots.meca500.autocollect.planner import PlanningError
+from lerobot.robots.meca500.autocollect.tip_actions import camera_axes, tip_action_to_joints
 from lerobot.robots.meca500.autocollect.tip_detect import detect_tip
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.teleoperators.meca500_scripted.config_meca500_scripted import Meca500ScriptedConfig
@@ -229,10 +230,13 @@ def load_policy(model: str):
         sys.exit(f"{model} was trained on {dataset}, not a delta dataset: this script sends deltas.")
     policy = get_policy_class(cfg.type).from_pretrained(path, config=cfg)
     policy.eval()
+    # Image-only policies trained on camera-axis tip motion (convert_to_tip_actions.py); IK turns
+    # each action into a joint target in rollout_episode.
+    policy.tip_actions = dataset.endswith("_tip_delta")
     pre, post = make_pre_post_processors(
         cfg, pretrained_path=str(path), preprocessor_overrides={"device_processor": {"device": DEVICE}}
     )
-    logging.info(f"Policy {cfg.type} from {path} (trained on {dataset})")
+    logging.info(f"Policy {cfg.type} from {path} (trained on {dataset}, {'tip' if policy.tip_actions else 'joint'} actions)")
     return policy, pre, post
 
 
@@ -260,6 +264,9 @@ def rollout_episode(
     # step - the first bench test (2026-11-05) commanded only 54% of what the policy asked for
     # and never reached the dish. The arm is at rest after the transit, so the setpoint is the goal.
     q_goal = np.asarray(robot.robot.GetRtTargetJointPos(), dtype=float)
+    tip_mode = getattr(policy, "tip_actions", False)
+    axes = camera_axes(calib) if tip_mode else None
+    t_goal = kin.tip(q_goal) if tip_mode else None
     t_start = time.perf_counter()
     while time.perf_counter() - t_start < EPISODE_TIME_S:
         t0 = time.perf_counter()
@@ -281,7 +288,16 @@ def rollout_episode(
         ever_precise |= precise
         normal_clamp = PRECISION_MAX_REL_TARGET if precise else MAX_REL_TARGET
         clamp = MAX_REL_TARGET if IGNORE_PRECISION else normal_clamp
-        delta = np.clip(a[:6], -clamp, clamp)
+        if tip_mode:
+            # Integrate onto the goal tip pose; the joint clamp below still bounds each step.
+            t_next, q_ik = tip_action_to_joints(kin, t_goal, q_goal, a[:6], axes)
+            if q_ik is None:
+                reason = "stopped: no IK solution for the commanded tip pose"
+                break
+            joint_step = q_ik - q_goal
+        else:
+            joint_step = a[:6]
+        delta = np.clip(joint_step, -clamp, clamp)
         q_cmd = q_goal + delta
 
         tip = kin.tip(q_cmd)[:3, 3]
@@ -303,6 +319,9 @@ def rollout_episode(
         # What was actually sent: the robot's backstop clamp (measured from the lagging setpoint)
         # may have cut the step, and the next delta must start from where the goal really is.
         q_goal = np.array([sent[f"joint_{i + 1}.pos"] for i in range(6)], dtype=float)
+        if tip_mode:
+            # A clamped step did not reach t_next: carry on from where the goal really is.
+            t_goal = t_next if np.abs(q_goal - q_ik).max() < 1e-6 else kin.tip(q_goal)
         log["backstop_cut"].append(bool(np.abs(q_goal - q_cmd).max() > 1e-6))
         log["t"].append(t0 - t_start)
         log["q_cmd"].append(q_cmd)
@@ -310,7 +329,7 @@ def rollout_episode(
         log["delta"].append(a[:6])
         log["precision"].append(precise)
         # Against the normal clamp in every run, so "precision off" shows what the flag would have done.
-        log["clamped"].append(bool(np.any(np.abs(a[:6]) > normal_clamp)))
+        log["clamped"].append(bool(np.any(np.abs(joint_step) > normal_clamp)))
 
         step_um = 0.0 if prev_tip is None else float(np.linalg.norm(tip - prev_tip)) * 1000
         prev_tip = tip
