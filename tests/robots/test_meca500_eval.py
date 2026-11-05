@@ -563,6 +563,34 @@ def test_scoring_applies_success_stops_and_by_eye_verdicts(tmp_path):
     assert "4/7" in score_eval.format_row("act", s)
 
 
+def test_check_frames_draws_the_scale_round_the_target(tmp_path):
+    import check_frames
+    import cv2
+
+    frame = np.full((440, 700, 3), 180, np.uint8)
+    out = check_frames.annotate(frame, (350, 220), 12.85, tip=(380, 220), label="ep 0")
+    size = check_frames.OUT_SIZE
+    assert out.shape == (size, size, 3)
+    centre = size // 2
+    radius = round(600 / 12.85 * size / (2 * check_frames.MIN_HALF_WINDOW_PX))
+    band = out[centre - 2 : centre + 3, centre + radius - 2 : centre + radius + 3]
+    assert band[..., 0].min() < 120 and band[..., 1].max() > 200  # yellow in BGR, on a grey frame
+    # A target near the edge pads with black rather than shifting the circles off the target.
+    assert check_frames.half_window((350, 220), (650, 220)) == 340  # a far tip stays in view
+    assert check_frames.half_window((350, 220), None) == check_frames.WIDE_HALF_WINDOW_PX
+    edge = check_frames.annotate(frame, (5, 5), 12.85)
+    assert edge.shape == out.shape and edge[40, 40].max() == 0
+
+    run = tmp_path / "run"
+    (run / "ep000").mkdir(parents=True)
+    cv2.imwrite(str(run / "ep000" / "final.png"), frame)
+    row = {"episode": 0, "target_px": [350.0, 220.0], "reason": "time limit"}
+    (run / "results.jsonl").write_text(json.dumps(row) + "\n")
+    assert "not detected" in check_frames.trial_label(row)
+    sheet = check_frames.contact_sheet([out, out, out], columns=2)
+    assert sheet.shape == (2 * size, 2 * size, 3)
+
+
 def test_scoring_reads_a_run_from_before_the_observation_tap(tmp_path):
     import score_eval
 
