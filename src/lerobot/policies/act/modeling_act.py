@@ -141,6 +141,16 @@ class ACTPolicy(PreTrainedPolicy):
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
+        cfg = self.config
+        if self.training and OBS_STATE in batch and (cfg.state_noise_std > 0 or cfg.state_dropout > 0):
+            batch = dict(batch)
+            state = batch[OBS_STATE]
+            if cfg.state_noise_std > 0:
+                state = state + torch.randn_like(state) * cfg.state_noise_std
+            if cfg.state_dropout > 0:
+                keep = torch.rand(state.shape[0], *([1] * (state.dim() - 1)), device=state.device) >= cfg.state_dropout
+                state = state * keep.to(state.dtype)
+            batch[OBS_STATE] = state
 
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
 
@@ -148,8 +158,12 @@ class ACTPolicy(PreTrainedPolicy):
         valid_mask = ~batch["action_is_pad"].unsqueeze(-1)
         num_valid = valid_mask.sum() * abs_err.shape[-1]
         l1_loss = (abs_err * valid_mask).sum() / num_valid.clamp_min(1)
-
         loss_dict = {"l1_loss": l1_loss.item()}
+        if cfg.precision_loss_weight != 1.0:
+            precise = batch[ACTION][..., cfg.precision_action_index] > 0
+            weight = valid_mask * torch.where(precise, cfg.precision_loss_weight, 1.0).unsqueeze(-1)
+            l1_loss = (abs_err * weight).sum() / (weight.sum() * abs_err.shape[-1]).clamp_min(1e-9)
+            loss_dict["weighted_l1_loss"] = l1_loss.item()
         if self.config.use_vae and log_sigma_x2_hat is not None:
             # Calculate Dₖₗ(latent_pdf || standard_normal). Note: After computing the KL-divergence for
             # each dimension independently, we sum over the latent dimension to get the total

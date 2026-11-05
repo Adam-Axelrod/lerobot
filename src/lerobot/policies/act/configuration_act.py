@@ -121,6 +121,20 @@ class ACTConfig(PreTrainedConfig):
     # Training and loss computation.
     dropout: float = 0.1
     kl_weight: float = 10.0
+    # Meca500 microscope additions; the defaults leave ACT unchanged.
+    # precision_loss_weight multiplies the L1 loss of action steps whose precision channel
+    # (action[..., precision_action_index]) is on. The loss normalises each action dimension by
+    # its whole-dataset std, and fine-motion steps are ~20x smaller than coarse ones, so without it
+    # a fine step that is completely wrong costs ~20x less than an ordinary coarse error. The flag
+    # is 0/1 normalised around its mean (MEAN_STD) or midpoint (MIN_MAX), so "on" is > 0.
+    precision_loss_weight: float = 1.0
+    precision_action_index: int = -1
+    # Training-time corruption of the (normalised) observation.state: Gaussian noise of this std,
+    # and the whole state set to 0 (the dataset mean) with probability state_dropout per sample.
+    # Makes the joint state an unreliable shortcut so the policy has to use the image (cf. "causal
+    # confusion" in imitation learning, de Haan et al. 2019). Inference never corrupts the state.
+    state_noise_std: float = 0.0
+    state_dropout: float = 0.0
 
     # Training preset
     optimizer_lr: float = 1e-5
