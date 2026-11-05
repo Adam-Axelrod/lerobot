@@ -9,7 +9,7 @@ did (stage position, start pose, target) with targets the model has never seen, 
 drives. Every command is checked before it is sent: step clamp, collision model, and the tip may
 not push more than 0.1 mm into the dish.
 
-**Start after about 13:30.** Training runs are using the GPU until then and would slow the policy.
+**Nothing else may use the GPU during the test** (training slows the policy below 20 Hz).
 
 1. **E0 height check (about 3 min):** `HEIGHT_CHECK_ONLY = True` is already set. Close Kinesis, then run
    `.venv\Scripts\python.exe scripts\meca500\auto_calibrate.py`. It should end with `HEIGHT CHECK COMPLETE`.
