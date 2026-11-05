@@ -21,7 +21,13 @@ from lerobot.robots.meca500.autocollect.kinematics import (
     pose_to_matrix,
 )
 from lerobot.robots.meca500.autocollect.overlay import TargetOverlayStep, TargetStyle, draw_target
-from lerobot.robots.meca500.autocollect.planner import Planner, PlanningError
+from lerobot.robots.meca500.autocollect.planner import (
+    Planner,
+    PlanningError,
+    plan_with_decoy,
+    sample_decoy_px,
+    target_px_allowed,
+)
 from lerobot.robots.meca500.autocollect.tip_detect import image_shift
 from lerobot.robots.meca500.config_meca500 import Meca500Config
 from lerobot.robots.meca500.meca500 import Meca500
@@ -295,6 +301,43 @@ def test_planner_is_reproducible_per_seed_and_varies_across_seeds(kin):
     a, b, c = planner.sample_episode(7), planner.sample_episode(7), planner.sample_episode(8)
     np.testing.assert_array_equal(a.joints, b.joints)
     assert a.target_px != c.target_px
+
+
+def test_decoy_plan_aims_off_target_but_reports_and_marks_the_true_target(kin):
+    """The path aims at a decoy (so the pre-touch joint state does not give the target away); the
+    plan's target is the true one, for the marker, the correction and the metadata."""
+    planner, cal = _planner(kin, [BoxField([-150, 0, 300], [60, 60, 60], name="lamp")])
+    plan = plan_with_decoy(planner, 3, 0.5)
+
+    assert plan.decoy_px is not None
+    gap_mm = np.linalg.norm(cal.pixel_to_xy(plan.decoy_px)[0] - cal.pixel_to_xy(plan.target_px)[0])
+    assert 0 < gap_mm <= 0.5 + 1e-9
+    # the recorded path heads for the decoy ...
+    final_tip = kin.tip(plan.joints[-1])[:3, 3]
+    np.testing.assert_allclose(cal.xy_to_pixel(final_tip[:2])[0], plan.decoy_px, atol=0.5)
+    # ... while the target is the true one, from its own seed stream
+    np.testing.assert_allclose(plan.target_xyz, planner.touch_point(plan.target_px))
+    assert plan_with_decoy(planner, 3, 0.5).target_px == plan.target_px
+    assert plan_with_decoy(planner, 4, 0.5).target_px != plan.target_px
+    meta = plan.meta()
+    assert meta["target_px"] == [round(v, 2) for v in plan.target_px] and "decoy_px" in meta
+
+    # 0 mm is exactly the old planner
+    np.testing.assert_array_equal(plan_with_decoy(planner, 3, 0.0).joints, planner.sample_episode(3).joints)
+    assert planner.sample_episode(3).decoy_px is None
+
+
+def test_decoys_stay_within_reach_and_inside_the_target_region(kin):
+    planner, cal = _planner(kin, [])
+    rng = np.random.default_rng(0)
+    true_px = np.array([213.0, 320.0])
+    gaps = []
+    for _ in range(300):
+        px = sample_decoy_px(rng, true_px, 0.5, planner.lim, cal)
+        assert target_px_allowed(px, planner.lim, cal.image_size)
+        gaps.append(np.linalg.norm(cal.pixel_to_xy(px)[0] - cal.pixel_to_xy(true_px)[0]))
+    assert max(gaps) <= 0.5 + 1e-9 and min(gaps) < 0.05 and max(gaps) > 0.45  # the whole range
+    np.testing.assert_array_equal(sample_decoy_px(rng, true_px, 0.0, planner.lim, cal), true_px)
 
 
 def test_planner_keeps_the_target_while_resampling_start_and_path(kin):

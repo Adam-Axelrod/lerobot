@@ -58,7 +58,7 @@ from lerobot.robots.meca500.autocollect.correction import measure
 from lerobot.robots.meca500.autocollect.dish_map import DishHeightMap
 from lerobot.robots.meca500.autocollect.focus_check import FocusMismatchError, check_focus
 from lerobot.robots.meca500.autocollect.overlay import TargetOverlayStep
-from lerobot.robots.meca500.autocollect.planner import Planner, PlanningError
+from lerobot.robots.meca500.autocollect.planner import Planner, PlanningError, plan_with_decoy
 from lerobot.robots.meca500.autocollect.stage import MLS203Stage, StageError, StageModel
 from lerobot.robots.meca500.autocollect.tip_detect import image_shift
 from lerobot.robots.utils import make_robot_from_config
@@ -75,10 +75,10 @@ from lerobot.utils.visualization_utils import init_rerun
 # ----------------------------- CONFIG -----------------------------
 RIG = "meca500_basler"
 USER = "AdamAxelrod"
-NAME = "basler_stage_touch_dataset_2026-11"  # one dataset per rig and target style - never mix
+NAME = "basler_stage_touch_decoy_2026-11"  # one dataset per rig and target style - never mix
 TASK = "move_pipette_to_target"
-NUM_EPISODES = 56
-RESUME = True  # append to an existing local dataset of the same NAME
+NUM_EPISODES = 50
+RESUME = False  # append to an existing local dataset of the same NAME
 PUSH_TO_HUB = False
 DISPLAY_DATA = True
 
@@ -102,7 +102,17 @@ RETREAT_BELOW_MM = 40.0
 MAX_REL_TARGET = 1.5
 PRECISION_MAX_REL_TARGET = 0.15
 # Seeds are SEED_BASE + episode index, so a resumed dataset never repeats an episode.
-SEED_BASE = 1_000_000
+# basler_stage_touch_dataset_2026-11 used 1_000_000, eval_auto uses 5_000_000.
+SEED_BASE = 2_000_000
+
+# Plan each path to a DECOY up to this far (mm, dish plane) from the true target; the marker shows
+# the true target and the vision correction at the pre-touch checkpoint closes the gap, in the
+# recorded final approach. 0 = plan straight to the target (basler_stage_touch_dataset_2026-11).
+# Why: with the path aimed at the target, the joint state at the pre-touch point gave the target
+# away, and the first ACT model never learnt to read the marker (2026-11-05 bench test: 0/20,
+# median 2 mm; probes: <=7% response to a moved marker near the dish, the expert's own image
+# corrections were only ~0.1 mm). 1.6 mm keeps the tip inside the lit field (radius ~2.4 mm).
+DECOY_MAX_MM = 1.6
 
 # Vision correction of the final approach (see autocollect/correction.py). Open loop the tip
 # landed 60-120 um off the target on 2026-11-03, against a 50 um success threshold.
@@ -390,7 +400,7 @@ class StagePlanner:
             xy = self.model.sample(rng)
             self.place(xy)
             try:
-                return xy, self.planner.sample_episode(seed)
+                return xy, plan_with_decoy(self.planner, seed, DECOY_MAX_MM)
             except PlanningError as e:
                 last = e
         raise PlanningError(f"No stage position in {STAGE_ATTEMPTS} tries gave a plan ({last}).")
@@ -447,6 +457,8 @@ def main() -> None:
     except FocusMismatchError as e:
         sys.exit(f"\nREFUSING TO START: {e}\n")
     print(f"Focus check passed: K-Cube at {pos:.4f} mm, as calibrated.")
+    if DECOY_MAX_MM > 0 and not VISION_CORRECTION:
+        sys.exit("DECOY_MAX_MM needs VISION_CORRECTION: without it the arm would touch down on the decoy.")
     planner = build_planner(bench)
     base_calib = planner.calib
     stage = stager = None
@@ -538,7 +550,7 @@ def main() -> None:
                 ep = dataset.num_episodes
                 try:
                     if stager is None:
-                        plan = planner.sample_episode(SEED_BASE + ep)
+                        plan = plan_with_decoy(planner, SEED_BASE + ep, DECOY_MAX_MM)
                         new_xy = None
                     else:
                         new_xy, plan = stager.plan_episode(SEED_BASE + ep)

@@ -3,29 +3,23 @@
 **Bench:** Huanyu's setup (rig `meca500_basler`)
 **Last updated:** 2026-11-05
 
-## Now: test the ACT policy (about 45 min)
-The 200-demo ACT model is on this PC. `eval_auto.py` sets up each episode exactly as recording
-did (stage position, start pose, target) with targets the model has never seen, then the policy
-drives. Every command is checked before it is sent: step clamp, collision model, and the tip may
-not push more than 0.1 mm into the dish.
+## Now: record the decoy dataset (about 2 h for 100 episodes)
+**The first ACT test failed: 0 of 20 within 50 um, median 2.0 mm** (2026-11-05,
+`outputs\eval_auto\basler_stage_touch_2026-11_delta_act_20261105-121850`). Probes show why: the
+expert aimed every path at the target, so the joint state at the pre-touch point gave the target
+away and the policy never learnt to read the marker. `record_auto.py` now plans each path to a
+DECOY up to 1.6 mm from the target while the marker stays on the true target; the pre-touch
+correction then closes the gap in the recorded final approach, so only the image says where to go.
+It is already set up: `NAME = "basler_stage_touch_decoy_2026-11"`, `DECOY_MAX_MM = 1.6`.
 
-**Nothing else may use the GPU during the test** (training slows the policy below 20 Hz).
-
-1. **E0 height check (about 3 min):** `HEIGHT_CHECK_ONLY = True` is already set. Close Kinesis, then run
+1. **E0 height check (about 3 min):** close Kinesis, then
    `.venv\Scripts\python.exe scripts\meca500\auto_calibrate.py`. It should end with `HEIGHT CHECK COMPLETE`.
-2. **Policy test (20 episodes, about 30-40 min):**
-   `.venv\Scripts\python.exe scripts\meca500\eval_auto.py`
-   - **Watch the first few episodes with a hand on the e-stop.** The policy has never driven the arm.
-   - **Esc** stops the session (the arm backs out and goes home). **Right arrow** ends the current
-     episode early; it is still measured.
-   - An episode ending `stopped: ...` is a safety check doing its job: the next episode carries on.
-3. Send Claude the summary line at the end, and the folder name it prints (`outputs\eval_auto\...`).
-
-| Symptom | What to do |
-|---|---|
-| `Control loop ran at N Hz, below the 20 Hz ...` | Something else is using the GPU. Finish the session, tell Claude. |
-| The pipette slides or presses on the dish | Press **Esc** and tell Claude. |
-| The arm heads somewhere clearly wrong | Press **Esc** (or the e-stop if it is close to anything). |
+2. **Batch 1 (50 episodes, about 45 min):** `.venv\Scripts\python.exe scripts\meca500\record_auto.py`
+   (`RESUME = False` for this first batch). **Watch the first few episodes:** after the pre-touch
+   pause the tip now moves sideways by up to 1.6 mm before descending. That is intended.
+3. **Batch 2:** set `RESUME = True`, run E0 again, then `record_auto.py` again.
+4. Tell Claude: it converts to deltas and trains ACT on this dataset (about 2.5 h), then you test it
+   with `eval_auto.py` exactly as before, on the same 20 targets.
 
 ## Next: the rest of the results table
 Work down this list and stop when time runs out. All of it uses `scripts\meca500\eval_auto.py`:

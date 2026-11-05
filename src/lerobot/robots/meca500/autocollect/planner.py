@@ -106,11 +106,42 @@ def sample_target_px(rng: np.random.Generator, lim: PlannerLimits, image_size) -
     m = lim.target_edge_margin_px
     for _ in range(1000):
         px = np.array([rng.uniform(m, w - 1 - m), rng.uniform(m, h - 1 - m)])
-        if lim.target_field_centre_px is None or lim.target_field_radius_px is None:
-            return px
-        if np.linalg.norm(px - lim.target_field_centre_px) <= lim.target_field_radius_frac * lim.target_field_radius_px:
+        if target_px_allowed(px, lim, image_size):
             return px
     raise ValueError("No target pixel inside both the edge margin and the lit field: check bench.yaml target.")
+
+
+def target_px_allowed(px, lim: PlannerLimits, image_size) -> bool:
+    """Inside the edge margin and, if the lit field is set, within its allowed fraction."""
+    w, h = image_size
+    m = lim.target_edge_margin_px
+    if not (m <= px[0] <= w - 1 - m and m <= px[1] <= h - 1 - m):
+        return False
+    if lim.target_field_centre_px is None or lim.target_field_radius_px is None:
+        return True
+    return np.linalg.norm(np.asarray(px) - lim.target_field_centre_px) <= lim.target_field_radius_frac * lim.target_field_radius_px
+
+
+def sample_decoy_px(rng: np.random.Generator, true_px, max_mm: float, lim: PlannerLimits, calib) -> np.ndarray:
+    """A pixel up to ``max_mm`` (uniform in distance, uniform direction, in the dish plane) from
+    ``true_px``, inside the allowed target region.
+
+    The recorder plans the whole path to this DECOY while the marker sits on the true target, and
+    the vision correction then closes the gap. Without it the pre-touch pose was the target plus a
+    planned offset, so the joint state told the policy where to go and the first ACT model learnt
+    to ignore the marker (2026-11-05 probes: <=7% response to a moved marker near the dish).
+    """
+    true_px = np.asarray(true_px, float)
+    if max_mm <= 0:
+        return true_px
+    xy0 = calib.pixel_to_xy(true_px)[0]
+    for _ in range(1000):
+        ang = rng.uniform(0, 2 * np.pi)
+        d = rng.uniform(0, max_mm) * np.array([np.cos(ang), np.sin(ang)])
+        px = calib.xy_to_pixel(xy0 + d)[0]
+        if target_px_allowed(px, lim, calib.image_size):
+            return px
+    return true_px
 
 
 # ----------------------------------------------------------------------------- plans
@@ -131,6 +162,9 @@ class EpisodePlan:
     pretouch_back_mm: float = 0.0  # where the precision phase starts, back along the axis
     precision_speed_mm_s: float = 0.0
     dwell_frames: int = 0
+    # Set when the path was planned to a decoy (see sample_decoy_px): target_px/target_xyz are then
+    # the TRUE target the marker shows and the correction lands on; this is where the path aimed.
+    decoy_px: tuple[float, float] | None = None
 
     @property
     def start_joints(self) -> np.ndarray:
@@ -147,9 +181,11 @@ class EpisodePlan:
 
     def meta(self) -> dict:
         """JSON-safe record for episodes_meta.jsonl (deliberately NOT dataset features)."""
+        decoy = {} if self.decoy_px is None else {"decoy_px": [round(float(v), 2) for v in self.decoy_px]}
         return {
             "seed": int(self.seed),
             "target_px": [round(float(v), 2) for v in self.target_px],
+            **decoy,
             "target_xyz_mm": [round(float(v), 4) for v in self.target_xyz],
             "start_joints_deg": [round(float(v), 4) for v in self.start_joints],
             "n_frames": len(self.joints),
@@ -183,21 +219,24 @@ class Planner:
 
     # ------------------------------------------------------------------ episode
 
-    def sample_episode(self, seed: int) -> EpisodePlan:
+    def sample_episode(self, seed: int, target_sampler=None) -> EpisodePlan:
+        """``target_sampler(rng) -> px`` replaces the uniform target draw (initial and on
+        replacement), e.g. to keep redrawn decoys around one true target."""
         rng = np.random.default_rng(seed)
+        draw = target_sampler or self.sample_target_px
         self.rejections = {}
         # The target is drawn ONCE and kept while start/path are resampled. Redrawing it on
         # every rejection would make hard-to-reach parts of the image proportionally rarer in
         # the dataset (on Huanyu's setup acceptance ranges 22-59% across the image), so the
         # policy would see a skewed target distribution. Only a target that fails
         # `target_attempts` times in a row is replaced - i.e. one that is genuinely unreachable.
-        target_px = self.sample_target_px(rng)
+        target_px = draw(rng)
         for attempt in range(self.lim.max_attempts):
             if attempt and attempt % self.lim.target_attempts == 0:
                 self.rejections["target replaced (unreachable)"] = (
                     self.rejections.get("target replaced (unreachable)", 0) + 1
                 )
-                target_px = self.sample_target_px(rng)
+                target_px = draw(rng)
             try:
                 plan = self._try_episode(rng, target_px)
                 plan.seed = seed
@@ -212,6 +251,15 @@ class Planner:
     def sample_target_px(self, rng: np.random.Generator) -> np.ndarray:
         return sample_target_px(rng, self.lim, self.calib.image_size)
 
+    def touch_point(self, target_px) -> np.ndarray:
+        """Where the tip touches for a target pixel: the calibration's dish-plane point plus the
+        bench's touch bias, at the surface plus the touch offset."""
+        lim = self.lim
+        xy = self.calib.pixel_to_xy(np.asarray(target_px, dtype=float))[0]
+        return np.array(
+            [xy[0] + lim.touch_bias_xy_mm[0], xy[1] + lim.touch_bias_xy_mm[1], self.calib.surface_z_mm + lim.touch_offset_mm]
+        )
+
     def _try_episode(self, rng: np.random.Generator, target_px=None) -> EpisodePlan:
         lim = self.lim
         surface = self.calib.surface_z_mm
@@ -220,8 +268,7 @@ class Planner:
         if target_px is None:
             target_px = self.sample_target_px(rng)
         target_px = np.asarray(target_px, dtype=float)
-        xy = self.calib.pixel_to_xy(target_px)[0]
-        p_touch = np.array([xy[0] + lim.touch_bias_xy_mm[0], xy[1] + lim.touch_bias_xy_mm[1], surface + lim.touch_offset_mm])
+        p_touch = self.touch_point(target_px)
         r_touch = random_rotation(rng, lim.touch_rot_jitter_deg) @ self.touch_nominal[:3, :3]
         axis = r_touch[:, 2]  # pipette axis, pointing out of the tip
         lateral = rng.normal(size=3)
@@ -401,3 +448,23 @@ class Planner:
         n = max(int(np.ceil(span / self.lim.transit_speed_deg_s * self.lim.fps * 1.875)), 1)
         # 1.875 = peak/mean speed ratio of min-jerk, so the PEAK stays at transit_speed.
         return a + np.outer(min_jerk(n), b - a)
+
+
+def plan_with_decoy(planner: Planner, seed: int, decoy_max_mm: float) -> EpisodePlan:
+    """``planner.sample_episode(seed)``, but with the path aimed at a decoy up to ``decoy_max_mm``
+    from the target (see sample_decoy_px). The returned plan's target_px / target_xyz are the TRUE
+    target - what the marker shows and the vision correction lands on - and decoy_px is where the
+    path aimed. The true target is drawn from its own stream (seed + 9_000_000), so it stays put
+    while the planner redraws unreachable decoys or the recorder tries another stage position.
+    ``decoy_max_mm <= 0`` is exactly ``sample_episode(seed)``.
+    """
+    if decoy_max_mm <= 0:
+        return planner.sample_episode(seed)
+    true_px = planner.sample_target_px(np.random.default_rng(seed + 9_000_000))
+    plan = planner.sample_episode(
+        seed, target_sampler=lambda rng: sample_decoy_px(rng, true_px, decoy_max_mm, planner.lim, planner.calib)
+    )
+    plan.decoy_px = plan.target_px
+    plan.target_px = (float(true_px[0]), float(true_px[1]))
+    plan.target_xyz = tuple(float(v) for v in planner.touch_point(true_px))
+    return plan
