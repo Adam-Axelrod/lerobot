@@ -531,6 +531,14 @@ def main() -> None:
     shutil.copy(bench.root / "bench.yaml", prov / f"bench_{STAGE}.yaml")
     shutil.copy(bench.calibration_path(), prov / "scope_calibration.json")
     meta_path = root / "autocollect_episodes.jsonl"
+    # Every failed attempt, so the success rate of the scripted expert counts what was thrown
+    # away, not just the saved episodes (score_eval --dataset reads only those).
+    discards_path = root / "autocollect_discards.jsonl"
+
+    def log_discard(ep, seed, stage, reason):
+        row = {"episode_index": ep, "seed": seed, "stage": stage, "reason": reason, "time": time.strftime("%Y-%m-%d %H:%M:%S")}
+        with discards_path.open("a") as f:
+            f.write(json.dumps(row) + "\n")
 
     robot.connect()
     robot.configure()
@@ -571,6 +579,7 @@ def main() -> None:
                     transit = planner.plan_transit(q_now, plan.start_joints, retreat=retreat)
                 except PlanningError as e:
                     logging.warning(f"Episode {ep} (seed {seed}) could not be planned: {e}")
+                    log_discard(ep, seed, "planning", str(e))
                     continue
 
                 overlay.set_target(None)
@@ -616,6 +625,7 @@ def main() -> None:
                     dataset.clear_episode_buffer()
                     events["rerecord_episode"] = events["exit_early"] = False
                     logging.warning(f"Episode {ep} discarded: {aborted}")
+                    log_discard(ep, seed, "correction", aborted)
                     continue
 
                 if robot.robot.GetStatusRobot().error_status:
@@ -626,6 +636,7 @@ def main() -> None:
                     events["rerecord_episode"] = events["exit_early"] = False
                     dataset.clear_episode_buffer()
                     logging.info(f"Episode {ep} discarded.")
+                    log_discard(ep, seed, "keyboard", "cut short from the keyboard")
                     continue
 
                 n_frames = int(dataset.writer.episode_buffer.get("size", 0))
