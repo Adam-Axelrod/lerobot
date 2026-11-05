@@ -2,6 +2,7 @@ import contextlib
 import logging
 import threading
 import time
+from collections.abc import Callable
 
 import mecademicpy.robot as mdr
 import numpy as np
@@ -33,6 +34,9 @@ class Meca500Spacemouse(Teleoperator):
         self._twist_filter = np.zeros(6)
         self._signs = np.array(self.config.axis_signs, dtype=float)
         self._sm_device = None  # SpaceMouseDevice handle, opened in connect()
+        # Optional (joints, requested tip velocity mm/s) -> allowed tip velocity, applied before
+        # every command. See autocollect/operator_guard.py.
+        self.velocity_filter: Callable[[np.ndarray, np.ndarray], np.ndarray] | None = None
 
         # Precision toggle: Enter flips it (guidance loop then uses the fine gains);
         # go_home() also drops it back to coarse between episodes.
@@ -104,6 +108,8 @@ class Meca500Spacemouse(Teleoperator):
 
         self._connected = True
         self._running = True
+        if self.config.start_paused:
+            self._homing.set()
         self._thread = threading.Thread(target=self._guidance_loop, daemon=True)
         self._thread.start()
 
@@ -141,7 +147,7 @@ class Meca500Spacemouse(Teleoperator):
                         "Precision mode %s.",
                         "ON (fine gains)" if self._precision_active else "OFF (coarse gains)",
                     )
-            elif getattr(key, "char", None) == "h" and not self._homing.is_set():
+            elif self.config.home_hotkey and getattr(key, "char", None) == "h" and not self._homing.is_set():
                 # Manual reset: send the arm back to config.home_joints (and drop the
                 # precision toggle), the same MoveJoints reset record runs between
                 # episodes. Run it on a throwaway thread so go_home()'s WaitIdle
@@ -197,10 +203,40 @@ class Meca500Spacemouse(Teleoperator):
 
             vx, vy, vz = gain_tr * twist[:3]
             wx, wy, wz = gain_rot * twist[3:]
+            if self.config.translation_only:
+                wx, wy, wz = 0.0, 0.0, 0.0
+            if self.velocity_filter is not None:
+                vx, vy, vz = self._filtered_velocity(np.array([vx, vy, vz]))
 
             self.robot.MoveLinVelWrf(vx, vy, vz, wx, wy, wz)
 
             time.sleep(self.config.loop_dt)
+
+    def _filtered_velocity(self, v: np.ndarray) -> np.ndarray:
+        # A filter that cannot run must stop the arm rather than end this loop: a dead loop would
+        # also stop it (the velocity timeout), but nothing would say why.
+        try:
+            return self.velocity_filter(np.asarray(self.robot.GetRtJointPos(), dtype=float), v)
+        except Exception as e:
+            logger.error(f"Velocity filter failed, holding the arm: {e}")
+            return np.zeros(3)
+
+    def pause(self) -> None:
+        """Stop obeying the SpaceMouse, stop the arm and clear the precision toggle."""
+        self._homing.set()
+        time.sleep(0.02)  # let a velocity command already in the loop go out first
+        self.robot.MoveLinVelWrf(0, 0, 0, 0, 0, 0)
+        self._twist_filter = np.zeros(6)
+        self._precision_active = False
+
+    def resume(self) -> None:
+        """Start obeying the SpaceMouse again, dropping any input pent up while paused."""
+        self._twist_filter = np.zeros(6)
+        self._homing.clear()
+
+    @property
+    def precision_active(self) -> bool:
+        return self._precision_active
 
     @property
     def is_calibrated(self) -> bool:

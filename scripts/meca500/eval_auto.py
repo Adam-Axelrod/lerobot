@@ -1,15 +1,23 @@
-"""Evaluate a policy trained on record_auto data, on the bench, under the same conditions.
+"""Run one row of the paper's results table on the bench, under record_auto's conditions.
 
 Each episode is set up exactly as record_auto set up a demonstration - same start-pose box,
-stage positions and target region, from SEED_BASE seeds the training set never used - and then
-the POLICY drives the arm instead of the scripted expert:
+stage positions and target region, from SEED_BASE seeds the training set never used. The seeds
+fix the test set: every METHOD faces the same targets, starts and stage positions.
 
-    1. plan  - stage position, start pose and target pixel (the scripted path is discarded);
+    1. plan  - stage position, start pose and target pixel;
     2. transit (collision-checked, scripted) to the start pose, then the stage moves;
-    3. rollout - the marker appears and the policy runs at the recording rate. Every command is
-               checked BEFORE it is sent: per-step clamp, collision clearance of the commanded
-               pose against the bench model, and the tip height above the dish height map
-               (no pressing into the dish). A failed check ends the episode where it stands;
+    3. drive - the marker appears and METHOD drives the arm:
+               policy   - MODEL at the recording rate. Every command is checked BEFORE it is
+                          sent: per-step clamp, collision clearance of the commanded pose against
+                          the bench model, and the tip height above the dish height map (no
+                          pressing into the dish). A failed check ends the episode where it stands;
+               scripted - the planned path through the calibration, with no image feedback;
+               expert   - that path with record_auto's image corrections, which is what collected
+                          the training data. An aborted episode counts as a failure here;
+               human    - a person on the SpaceMouse, translation only (OperatorGuard: a dish floor
+                          and the same collision check). They lower the tip until the floor stops
+                          it, then press the right arrow. Starts at the planned approach
+                          orientation, since they cannot rotate.
     4. measure - final tip position from forward kinematics AND from the tip detector on the
                raw frame, both against the target, in px and um; raw frames are saved for the
                by-eye check, plus the joint trajectory for the smoothness metric.
@@ -18,9 +26,15 @@ The robot runs with relative_actions=False throughout: this script integrates th
 delta onto the controller's current target itself, so that it can check the resulting pose
 before sending it. Transits are absolute scripted moves, as in record_auto.
 
-Results go to outputs/eval_auto/<EVAL_NAME>_<timestamp>/ - results.jsonl (one line per
-episode), epNNN/{background,start,final,final_overlay}.png and epNNN/traj.npz.
-Keys: right arrow ends an episode early (it is still measured), Esc stops the session.
+IMAGE_SHIFT_PX > 0 simulates a knocked camera (autocollect/disturbance.py): every frame every
+reader sees is shifted, in a seeded direction per episode. The final position by forward
+kinematics has the shift added, so it stays a valid cross-check of the detector.
+
+Results go to outputs/eval_auto/<session name>_<timestamp>/ - results.jsonl (one line per
+episode), epNNN/{background,final,final_overlay}.png and epNNN/traj.npz. score_eval.py turns
+them into a table row.
+Keys: right arrow ends an episode early (it is still measured; for "human" it also starts each
+trial), Esc stops the session. Enter toggles precision mode for "human".
 """
 
 import contextlib
@@ -31,21 +45,24 @@ import time
 from pathlib import Path
 
 import numpy as np
+import record_auto
 import torch
 from record_auto import (
     SETTLE_TIMEOUT_S,
+    EpisodeAbortedError,
     StagePlanner,
     build_planner,
     connect_stage,
     go_home,
     grab,
     make_ready,
+    run_corrected_episode,
     run_plan,
     save_raw,
     settled_background,
     wait_settled,
 )
-from rigs import require_home_joints, rig_config
+from rigs import axis_signs, require_home_joints, rig_config
 
 from lerobot.common.control_utils import predict_action
 from lerobot.configs.policies import PreTrainedConfig
@@ -57,13 +74,17 @@ from lerobot.processor import (
     transition_to_observation,
 )
 from lerobot.robots.meca500.autocollect.bench import BenchConfig
+from lerobot.robots.meca500.autocollect.disturbance import sample_shift, shift_frame
 from lerobot.robots.meca500.autocollect.focus_check import FocusMismatchError, check_focus
+from lerobot.robots.meca500.autocollect.operator_guard import OperatorGuard
 from lerobot.robots.meca500.autocollect.overlay import TargetOverlayStep, draw_target
 from lerobot.robots.meca500.autocollect.planner import PlanningError
 from lerobot.robots.meca500.autocollect.tip_detect import detect_tip
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.teleoperators.meca500_scripted.config_meca500_scripted import Meca500ScriptedConfig
 from lerobot.teleoperators.meca500_scripted.meca500_scripted import Meca500Scripted
+from lerobot.teleoperators.meca500_spacemouse.config_meca500_spacemouse import Meca500SpacemouseConfig
+from lerobot.teleoperators.meca500_spacemouse.meca500_spacemouse import Meca500Spacemouse
 from lerobot.utils.constants import OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame, hw_to_dataset_features
 from lerobot.utils.import_utils import register_third_party_plugins
@@ -73,11 +94,18 @@ from lerobot.utils.utils import init_logging, log_say
 
 # ----------------------------- CONFIG -----------------------------
 RIG = "meca500_basler"
+# Which row this session fills: "policy", "scripted", "expert" or "human" (see the docstring).
+METHOD = "policy"
+# Pixels to shift every frame by (12.85 um/px), simulating a knocked camera. 0 is a normal run.
+# 16 px (~0.2 mm) is inside the expert's 0.5 mm correction cap; 58 px (~0.75 mm) is beyond it.
+IMAGE_SHIFT_PX = 0
+# A later session carrying on after a stop: runs seeds SEED_BASE + FIRST_EPISODE onwards.
+FIRST_EPISODE = 0
 # A local pretrained_model folder or a Hub model repo (downloaded once into the HF cache).
 # Must be trained on a DELTA dataset recorded on this rig with the digital target.
 # Local copies come from CREATE by scp: the lab PC downloads from the Hub at ~100 KB/s.
 MODEL = "outputs/train/basler_stage_touch_2026-11_delta/checkpoints/100000/pretrained_model"
-EVAL_NAME = "basler_stage_touch_2026-11_delta_act"  # results go to outputs/eval_auto/<EVAL_NAME>_<time>/
+EVAL_NAME = "basler_stage_touch_2026-11_delta_act"  # names the "policy" results folder; see session_name()
 TASK = "move_pipette_to_target"
 NUM_EPISODES = 20
 # Training episodes used seeds 1_000_000 + episode index: this range shares none of them.
@@ -98,6 +126,9 @@ TEMPORAL_ENSEMBLE_COEFF: float | None = -0.05
 # demonstrated motion and stop a runaway.
 MAX_REL_TARGET = 1.0
 PRECISION_MAX_REL_TARGET = 0.02
+# Row "precision off": the flag no longer tightens the clamp or reaches the robot. It is still
+# logged and still ends the episode, so runs with and without this stop in the same way.
+IGNORE_PRECISION = False
 # The commanded tip may go this far below the dish height map before the episode is stopped.
 # The demos touched AT the surface (touch_offset_mm 0); the map drifts by up to ~40 um a day.
 PRESS_LIMIT_MM = 0.1
@@ -107,7 +138,57 @@ SETTLED_S = 1.0
 SETTLED_UM_PER_STEP = 1.0
 SUCCESS_UM = 50.0
 DEVICE = "cuda"
+
+# --- METHOD = "human" ---
+OPERATOR = "experienced"  # names the results folder: "experienced", "novice1", "embryology", ...
+HUMAN_TIME_S = 120.0  # as in record_microscope.py
+# The SpaceMouse gains of teleoperate_microscope.py and record_microscope.py.
+GAIN_TR = 50.0
+GAIN_TR_FINE = 5.0
 # -----------------------------------------------------------------
+
+
+def session_name() -> str:
+    name = {"policy": EVAL_NAME, "human": f"human_{OPERATOR}"}.get(METHOD, METHOD)
+    if METHOD == "policy" and IGNORE_PRECISION:
+        name += "_precision_off"
+    return f"{name}_shift{IMAGE_SHIFT_PX}" if IMAGE_SHIFT_PX else name
+
+
+class ObservationTap:
+    """Sits on ``robot.get_observation``, so every reader gets the same view of an episode.
+
+    The policy, the record_loop, the detector's ``grab`` and the human's display all read through
+    it, so they cannot disagree about the shift. It also logs a timestamp and the joints on each
+    read, which gives every METHOD the same trajectory record.
+    """
+
+    def __init__(self, robot, camera_key: str):
+        self._read = robot.get_observation
+        self._key = camera_key
+        self.shift = (0, 0)
+        self._t0 = 0.0
+        self._t: list[float] | None = None
+        self._q: list[list[float]] = []
+        robot.get_observation = self.read
+
+    def read(self) -> dict:
+        obs = self._read()
+        if self.shift != (0, 0):
+            obs[self._key] = shift_frame(obs[self._key], *self.shift)
+        if self._t is not None:
+            self._t.append(time.perf_counter() - self._t0)
+            self._q.append([float(obs[f"joint_{i + 1}.pos"]) for i in range(6)])
+        return obs
+
+    def start(self) -> None:
+        self._t0 = time.perf_counter()
+        self._t, self._q = [], []
+
+    def stop(self) -> dict:
+        out = {"obs_t": np.asarray(self._t or []), "obs_q": np.asarray(self._q)}
+        self._t = None
+        return out
 
 
 def load_policy(model: str):
@@ -157,7 +238,8 @@ def rollout_episode(robot, policy, pre, post, obs_proc, obs_features, planner, e
         a = action.squeeze(0).float().cpu().numpy()
         precise = bool(a[6] > 0.5)
         ever_precise |= precise
-        clamp = PRECISION_MAX_REL_TARGET if precise else MAX_REL_TARGET
+        normal_clamp = PRECISION_MAX_REL_TARGET if precise else MAX_REL_TARGET
+        clamp = MAX_REL_TARGET if IGNORE_PRECISION else normal_clamp
         delta = np.clip(a[:6], -clamp, clamp)
         q_cmd = np.asarray(robot.robot.GetRtTargetJointPos(), dtype=float) + delta
 
@@ -171,13 +253,19 @@ def rollout_episode(robot, policy, pre, post, obs_proc, obs_features, planner, e
             reason = f"stopped: {clear.where} within margin of {clear.obstacle} ({clear.min_mm:.1f} mm)"
             break
 
-        robot.send_action({**{f"joint_{i + 1}.pos": float(q_cmd[i]) for i in range(6)}, "precision.state": float(precise)})
+        robot.send_action(
+            {
+                **{f"joint_{i + 1}.pos": float(q_cmd[i]) for i in range(6)},
+                "precision.state": float(precise and not IGNORE_PRECISION),
+            }
+        )
         log["t"].append(t0 - t_start)
         log["q_cmd"].append(q_cmd)
         log["q_meas"].append(np.asarray(robot.robot.GetRtJointPos(), dtype=float))
         log["delta"].append(a[:6])
         log["precision"].append(precise)
-        log["clamped"].append(bool(np.any(np.abs(a[:6]) > clamp)))
+        # Against the normal clamp in every run, so "precision off" shows what the flag would have done.
+        log["clamped"].append(bool(np.any(np.abs(a[:6]) > normal_clamp)))
 
         step_um = 0.0 if prev_tip is None else float(np.linalg.norm(tip - prev_tip)) * 1000
         prev_tip = tip
@@ -191,17 +279,25 @@ def rollout_episode(robot, policy, pre, post, obs_proc, obs_features, planner, e
     hz = 1 / float(np.median(np.diff(log["t"]))) if len(log["t"]) > 2 else float("nan")
     if hz < 0.9 * fps:
         logging.warning(f"Control loop ran at {hz:.1f} Hz, below the {fps} Hz the policy was trained at.")
-    return {"reason": reason, "duration_s": round(time.perf_counter() - t_start, 2), "loop_hz": round(hz, 1), "log": log}
+    return {
+        "reason": reason,
+        "duration_s": round(time.perf_counter() - t_start, 2),
+        "loop_hz": round(hz, 1),
+        "log": log,
+    }
 
 
-def measure_final(robot, planner, bench, background, target_px) -> tuple[dict, np.ndarray]:
-    """Tip vs target by forward kinematics and by the tip detector, after the arm stops."""
+def measure_final(robot, arm, planner, bench, background, target_px, shift=(0, 0)) -> tuple[dict, np.ndarray]:
+    """Tip vs target by forward kinematics and by the tip detector, after the arm stops.
+
+    ``robot`` supplies the frames and ``arm`` the controller connection (they differ for "human").
+    """
     kin, calib = planner.kin, planner.calib
-    robot.robot.WaitIdle(timeout=10)
-    q = np.asarray(robot.robot.GetRtJointPos(), dtype=float)
+    arm.WaitIdle(timeout=10)
+    q = np.asarray(arm.GetRtJointPos(), dtype=float)
     tip = kin.tip(q)[:3, 3]
     um_per_px = calib.mm_per_px * 1000
-    fk_px = calib.xy_to_pixel(tip[:2])[0]
+    fk_px = calib.xy_to_pixel(tip[:2])[0] + np.asarray(shift, dtype=float)
     final = grab(robot, bench.camera_key)
     det = detect_tip(final, background)
     out = {
@@ -217,7 +313,115 @@ def measure_final(robot, planner, bench, background, target_px) -> tuple[dict, n
     return out, final
 
 
+def run_scripted(robot, teleop, plan, planner, events, processors) -> dict:
+    """The plan as it stands: no image feedback, so it is only as good as the calibration."""
+    run_plan(robot, teleop, plan.joints, plan.precision, planner.lim.fps, events, processors)
+    reason = "operator" if events["exit_early"] or events["stop_recording"] else "finished"
+    events["exit_early"] = False
+    return {"reason": reason}
+
+
+def run_expert(robot, teleop, plan, planner, key, background, events, processors, ep_dir) -> dict:
+    """The collection controller. A recorder discards an aborted episode; a test counts it."""
+    try:
+        extra = run_corrected_episode(
+            robot, teleop, plan, planner, key, background, events, processors, None, ep_dir
+        )
+    except EpisodeAbortedError as e:
+        events["exit_early"] = events["rerecord_episode"] = False
+        return {"reason": f"stopped: {e}"}
+    events["exit_early"] = False
+    return {"reason": "finished", "corrections": extra["corrections"]}
+
+
+def human_start_joints(planner, plan) -> np.ndarray:
+    """The episode's start position, at the planned touch orientation.
+
+    A person cannot rotate in these trials, so they keep the orientation they start with. The
+    start's own random tilt can put the final approach too close to the illuminator.
+    """
+    start = np.asarray(plan.start_joints, dtype=float)
+    pose = planner.kin.tip(np.asarray(plan.joints[-1], dtype=float)).copy()
+    pose[:3, 3] = planner.kin.tip(start)[:3, 3]
+    q = planner.kin.ik(pose, start)
+    if q is None or not planner.checker.is_clear(q):
+        logging.warning("No clear start at the touch orientation: using the planned start.")
+        return start
+    return q
+
+
+def follow_path(teleop, path, fps: int) -> None:
+    """A collision-checked joint path over the SpaceMouse's control connection, paced as run_plan does."""
+    for q in path:
+        t0 = time.perf_counter()
+        teleop.robot.MoveJoints(*(float(v) for v in q))
+        precise_sleep(max(1 / fps - (time.perf_counter() - t0), 0.0))
+
+
+def human_go_home(teleop, planner, home, fps: int) -> None:
+    q_now = np.asarray(teleop.robot.GetRtJointPos(), dtype=float)
+    if np.abs(q_now - home).max() < record_auto.START_TOLERANCE_DEG:
+        return
+    follow_path(teleop, planner.plan_transit(q_now, home, retreat=True), fps)
+    wait_settled(teleop, home, SETTLE_TIMEOUT_S)
+
+
+def show_frame(view, robot, obs_proc, key: str, title: str) -> None:
+    view.show(obs_proc(robot.get_observation())[key], title=title)
+
+
+def wait_for_operator(view, robot, obs_proc, key: str, title: str, events) -> None:
+    """Keep the live view going until the right arrow (or Esc)."""
+    events["exit_early"] = False
+    while not (events["exit_early"] or events["stop_recording"] or view.closed):
+        show_frame(view, robot, obs_proc, key, title)
+    events["exit_early"] = False
+
+
+def run_human(teleop, guard, view, robot, obs_proc, key, trial: str, events) -> dict:
+    """One trial: the person drives until they press the right arrow, the guard trips or time runs out."""
+    guard.reset()
+    teleop.resume()
+    t_start = time.perf_counter()
+    reason = "time limit"
+    while (elapsed := time.perf_counter() - t_start) < HUMAN_TIME_S:
+        if guard.tripped:
+            reason = guard.tripped
+            break
+        if events["exit_early"] or events["stop_recording"] or view.closed:
+            reason = "operator"
+            break
+        mode = "FINE" if teleop.precision_active else "COARSE"
+        floor = " | ON THE DISH" if guard.floor_hit else ""
+        show_frame(
+            view,
+            robot,
+            obs_proc,
+            key,
+            f"{trial} | {elapsed:.0f} s | {mode} (Enter){floor} | right arrow when the tip is on the dish in the ring",
+        )
+    teleop.pause()
+    events["exit_early"] = False
+    return {"reason": reason, "floor_hit": guard.floor_hit}
+
+
+def operator_backs_out(teleop, guard, view, robot, obs_proc, key, events) -> None:
+    """After a trip the arm can be too close to plan away, so the person clears it (the floor still holds)."""
+    guard.reset()
+    guard.check_clearance = False
+    teleop.resume()
+    wait_for_operator(
+        view, robot, obs_proc, key, "Back the pipette out, away from what it hit, then right arrow", events
+    )
+    teleop.pause()
+    guard.check_clearance = True
+
+
 def main() -> None:
+    if METHOD not in ("policy", "scripted", "expert", "human"):
+        sys.exit(f"METHOD must be policy, scripted, expert or human, not {METHOD!r}")
+    human = METHOD == "human"
+    record_auto.DISPLAY_DATA = False  # no Rerun stream from run_corrected_episode
     init_logging()
     register_third_party_plugins()
     bench = BenchConfig.load(RIG)
@@ -226,7 +430,7 @@ def main() -> None:
     except FocusMismatchError as e:
         sys.exit(f"\nREFUSING TO START: {e}\n")
     print(f"Focus check passed: K-Cube at {pos:.4f} mm, as calibrated.")
-    policy, pre, post = load_policy(MODEL)
+    policy, pre, post = load_policy(MODEL) if METHOD == "policy" else (None, None, None)
 
     planner = build_planner(bench)
     stage, model, hmap = connect_stage(bench, planner.calib)
@@ -234,16 +438,39 @@ def main() -> None:
     home = np.asarray(require_home_joints(RIG), dtype=float)
     fps = planner.lim.fps
 
+    # The planned paths keep to the clamps they were recorded under; the policy's are tighter.
+    scripted = METHOD in ("scripted", "expert")
     robot = make_robot_from_config(
         rig_config(
             RIG,
-            monitor_mode=False,
+            monitor_mode=human,  # the SpaceMouse teleop owns the control connection
             relative_actions=False,
-            max_relative_target=MAX_REL_TARGET,
-            precision_max_relative_target=PRECISION_MAX_REL_TARGET,
+            max_relative_target=record_auto.MAX_REL_TARGET if scripted else MAX_REL_TARGET,
+            precision_max_relative_target=record_auto.PRECISION_MAX_REL_TARGET
+            if scripted
+            else PRECISION_MAX_REL_TARGET,
         )
     )
-    teleop = Meca500Scripted(Meca500ScriptedConfig(id="meca500_scripted"))
+    guard, view = None, None
+    if human:
+        teleop = Meca500Spacemouse(
+            Meca500SpacemouseConfig(
+                id="meca500_spacemouse",
+                gain_tr=GAIN_TR,
+                gain_tr_fine=GAIN_TR_FINE,
+                axis_signs=axis_signs(RIG),
+                home_joints=[float(v) for v in home],
+                translation_only=True,
+                start_paused=True,
+                home_hotkey=False,
+            )
+        )
+        guard = OperatorGuard(planner)
+        teleop.velocity_filter = guard.filter
+    else:
+        teleop = Meca500Scripted(Meca500ScriptedConfig(id="meca500_scripted"))
+    tap = ObservationTap(robot, bench.camera_key)
+    target_cfg = bench.section("target")
     overlay = TargetOverlayStep(camera_key=bench.camera_key, style=bench.target_style())
     teleop_proc, robot_proc, _ = make_default_processors()
     obs_proc = RobotProcessorPipeline(
@@ -252,11 +479,15 @@ def main() -> None:
     processors = (teleop_proc, robot_proc, obs_proc)
     obs_features = hw_to_dataset_features(robot.observation_features, OBS_STR, use_video=True)
 
-    out_dir = Path("outputs/eval_auto") / f"{EVAL_NAME}_{time.strftime('%Y%m%d-%H%M%S')}"
+    out_dir = Path("outputs/eval_auto") / f"{session_name()}_{time.strftime('%Y%m%d-%H%M%S')}"
     out_dir.mkdir(parents=True)
     (out_dir / "config.json").write_text(
         json.dumps(
-            {k: v for k, v in globals().items() if k.isupper() and isinstance(v, (str, int, float, type(None)))},
+            {
+                k: v
+                for k, v in globals().items()
+                if k.isupper() and isinstance(v, (str, int, float, type(None)))
+            },
             indent=2,
         ),
         encoding="utf-8",
@@ -265,82 +496,156 @@ def main() -> None:
     results = []
 
     robot.connect()
-    robot.configure()
+    if not human:
+        robot.configure()
     teleop.connect()
+    # Whichever connection is in control. Both have .robot, so wait_settled takes either.
+    controller = teleop if human else robot
+    arm = controller.robot
     listener, events = init_keyboard_listener()
     try:
-        make_ready(robot.robot)
+        make_ready(arm)
+        if human:
+            arm.SetBlending(100)
+            if robot.config.default_joint_vel:
+                arm.SetJointVel(robot.config.default_joint_vel)
+            arm.SetRealTimeMonitoring("all")
+            # Imported here: matplotlib is only needed for this mode, and a window for no other.
+            from live_view import LiveView
+
+            view = LiveView("eval_auto")
         if not stage.is_homed:
-            if np.abs(np.array(robot.robot.GetRtJointPos()) - home).max() > 0.2:
-                sys.exit("The stage is not homed. Home it in Kinesis with the arm at home (or rerun with the arm at home).")
+            if np.abs(np.array(arm.GetRtJointPos()) - home).max() > 0.2:
+                sys.exit(
+                    "The stage is not homed. Home it in Kinesis with the arm at home (or rerun with the arm at home)."
+                )
             stage.home()
         stage_xy = stage.position()
         stager.place(stage_xy)
-        q_now = go_home(robot, teleop, planner, home, events, processors)
+        if human:
+            human_go_home(teleop, planner, home, fps)
+            q_now = np.asarray(arm.GetRtJointPos(), dtype=float)
+        else:
+            q_now = go_home(robot, teleop, planner, home, events, processors)
         retreat = False
-        for i in range(NUM_EPISODES):
+        for i in range(FIRST_EPISODE, NUM_EPISODES):
             if events["stop_recording"]:
                 break
             try:
                 new_xy, plan = stager.plan_episode(SEED_BASE + i)
+                start_q = human_start_joints(planner, plan) if human else plan.start_joints
                 stager.place(stage_xy)
-                stager.check_parked_arm(plan.start_joints, stage_xy, new_xy)
-                transit = planner.plan_transit(q_now, plan.start_joints, retreat=retreat)
+                stager.check_parked_arm(start_q, stage_xy, new_xy)
+                try:
+                    transit = planner.plan_transit(q_now, start_q, retreat=retreat)
+                except PlanningError:
+                    if not human:
+                        raise
+                    operator_backs_out(teleop, guard, view, robot, obs_proc, bench.camera_key, events)
+                    q_now = np.asarray(arm.GetRtJointPos(), dtype=float)
+                    transit = planner.plan_transit(q_now, start_q, retreat=retreat)
             except PlanningError as e:
                 logging.error(str(e))
                 break
             overlay.set_target(None)
             log_say(f"Moving to start of episode {i}", False)
-            run_plan(robot, teleop, transit, np.zeros(len(transit)), fps, events, processors)
-            wait_settled(robot, plan.start_joints, SETTLE_TIMEOUT_S)
+            if human:
+                follow_path(teleop, transit, fps)
+            else:
+                run_plan(robot, teleop, transit, np.zeros(len(transit)), fps, events, processors)
+            wait_settled(controller, start_q, SETTLE_TIMEOUT_S)
             stage_xy = stage.move_to(new_xy)
             surface_z = stager.place(stage_xy)
+            target = np.asarray(plan.target_px, dtype=float)
+            shift = sample_shift(
+                SEED_BASE + i,
+                IMAGE_SHIFT_PX,
+                target,
+                target_cfg["field_centre_px"],
+                target_cfg["field_radius_px"] * target_cfg["field_radius_frac"],
+            )
+            tap.shift = shift
             background, _ = settled_background(robot, bench.camera_key)
             ep_dir = out_dir / f"ep{i:03d}"
             save_raw(ep_dir, "background", background)
 
-            target = np.asarray(plan.target_px, dtype=float)
             overlay.set_target(plan.target_px)
-            log_say(f"Policy episode {i}", False)
-            run = rollout_episode(robot, policy, pre, post, obs_proc, obs_features, planner, events)
-            m, final = measure_final(robot, planner, bench, background, target)
+            trial = f"Trial {i + 1} of {NUM_EPISODES}"
+            if human:
+                wait_for_operator(
+                    view,
+                    robot,
+                    obs_proc,
+                    bench.camera_key,
+                    f"{trial}: press the right arrow to start",
+                    events,
+                )
+                if events["stop_recording"] or view.closed:
+                    break
+            log_say(f"{METHOD} episode {i}", False)
+            t_drive = time.perf_counter()
+            tap.start()
+            if METHOD == "policy":
+                run = rollout_episode(robot, policy, pre, post, obs_proc, obs_features, planner, events)
+            elif METHOD == "scripted":
+                run = run_scripted(robot, teleop, plan, planner, events, processors)
+            elif METHOD == "expert":
+                run = run_expert(
+                    robot, teleop, plan, planner, bench.camera_key, background, events, processors, ep_dir
+                )
+            else:
+                run = run_human(teleop, guard, view, robot, obs_proc, bench.camera_key, trial, events)
+            traj = tap.stop()
+            duration_s = round(time.perf_counter() - t_drive, 2)
+            m, final = measure_final(robot, arm, planner, bench, background, target, shift)
             overlay.set_target(None)
+            tap.shift = (0, 0)
             save_raw(ep_dir, "final", final)
             save_raw(ep_dir, "final_overlay", draw_target(final, target, bench.target_style()))
-            np.savez_compressed(ep_dir / "traj.npz", **{k: np.asarray(v) for k, v in run["log"].items()})
+            log = run.pop("log", {})
+            np.savez_compressed(ep_dir / "traj.npz", **traj, **{k: np.asarray(v) for k, v in log.items()})
 
             row = {
                 "episode": i,
                 "seed": SEED_BASE + i,
+                "method": METHOD,
+                "operator": OPERATOR if human else None,
+                "image_shift_px": list(shift),
                 "target_px": [round(float(v), 2) for v in target],
                 "stage_xy_mm": [round(float(v), 4) for v in stage_xy],
                 "surface_z_mm": round(surface_z, 4),
                 "reason": run["reason"],
-                "duration_s": run["duration_s"],
-                "loop_hz": run["loop_hz"],
-                "steps": len(run["log"]["t"]),
-                "clamped_steps": int(np.sum(run["log"]["clamped"])),
+                "duration_s": duration_s,
+                "steps": len(traj["obs_t"]),
+                "clamped_steps": int(np.sum(log["clamped"])) if log else None,
+                **{k: v for k, v in run.items() if k not in ("reason", "duration_s")},
                 **m,
             }
             results.append(row)
             with (out_dir / "results.jsonl").open("a", encoding="utf-8", newline="\n") as f:
                 f.write(json.dumps(row) + "\n")
             logging.info(
-                f"episode {i}: {run['reason']} after {run['duration_s']} s | FK error {m['fk_error_um']:.0f} um, "
+                f"episode {i}: {run['reason']} after {duration_s} s | FK error {m['fk_error_um']:.0f} um, "
                 f"vision {m.get('vision_error_um', float('nan')):.0f} um, tip {m['tip_height_um']:+.0f} um"
             )
-            if robot.robot.GetStatusRobot().error_status:
+            if arm.GetStatusRobot().error_status:
                 raise RuntimeError("Robot reported an error during the episode; stopping.")
-            q_now = np.array(robot.robot.GetRtJointPos())
+            q_now = np.array(arm.GetRtJointPos())
             retreat = True
 
         events["exit_early"] = False
         try:
-            go_home(robot, teleop, planner, home, events, processors)
-        except RuntimeError as e:
+            if human:
+                human_go_home(teleop, planner, home, fps)
+            else:
+                go_home(robot, teleop, planner, home, events, processors)
+        except (RuntimeError, PlanningError) as e:
             logging.error(f"Could not return home ({e}); the arm holds its current pose.")
     finally:
         overlay.set_target(None)
+        if view is not None:
+            with contextlib.suppress(Exception):
+                view.close()
         with contextlib.suppress(Exception):
             robot.disconnect()
         with contextlib.suppress(Exception):

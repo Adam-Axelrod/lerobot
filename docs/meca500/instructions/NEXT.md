@@ -27,6 +27,55 @@ not push more than 0.1 mm into the dish.
 | The pipette slides or presses on the dish | Press **Esc** and tell Claude. |
 | The arm heads somewhere clearly wrong | Press **Esc** (or the e-stop if it is close to anything). |
 
+## Next: the rest of the results table
+Work down this list and stop when time runs out. All of it uses `scripts\meca500\eval_auto.py`:
+set the values in its CONFIG block, run it, and send Claude the folder name it prints. Do the **E0
+height check** before each session. Every run uses the same seeds, so every method gets the same
+targets. **If a recalibration is needed, tell Claude:** it can change the test set.
+
+If ACT misses most targets above, stop here and tell Claude: Diffusion comes first instead.
+
+| # | Row | Set in CONFIG | Time |
+|---|---|---|---|
+| 2 | Automatic collection, from its logs | Nothing to run on the bench: see below | - |
+| 3 | Scripted controller | `METHOD = "scripted"` | ~40 min |
+| 4a | ACT, small knock | `METHOD = "policy"`, `IMAGE_SHIFT_PX = 16` | ~40 min |
+| 4b | ACT, big knock | `METHOD = "policy"`, `IMAGE_SHIFT_PX = 58` | ~40 min |
+| 4c | Scripted, both knocks | `METHOD = "scripted"`, `NUM_EPISODES = 10`, `IMAGE_SHIFT_PX` 16, then 58 | ~40 min |
+| 4d | Automatic collection, both knocks | `METHOD = "expert"`, `NUM_EPISODES = 10`, `IMAGE_SHIFT_PX` 16, then 58 | ~40 min |
+| 5 | You on the SpaceMouse | `METHOD = "human"`, `OPERATOR = "experienced"` | ~1 h |
+| 6 | Diffusion | `METHOD = "policy"`, `MODEL` and `EVAL_NAME` for the Diffusion model | ~45 min |
+| 7 | ACT on 100, then 50 demos | `METHOD = "policy"`, `MODEL` and `EVAL_NAME` for each | ~45 min each |
+| 8 | ACT, precision off (ask Claude first: it may not be worth running) | `IGNORE_PRECISION = True` | ~40 min |
+| 9, 10 | Other operators | `METHOD = "human"`, `OPERATOR = "embryology"`, `"novice1"`, ... | ~1 h each |
+
+Set `IMAGE_SHIFT_PX` back to 0 and `IGNORE_PRECISION` back to False after those rows. A session that
+stops early can carry on: set `FIRST_EPISODE` to the next trial number.
+
+**Row 2.** On the PC that has the dataset:
+`.venv\Scripts\python.exe scripts\meca500\score_eval.py --dataset <path to basler_stage_touch_dataset_2026-11>`.
+Run it again with `--from-episode 50` for the batches after the E1 fix, and send Claude both lines.
+
+**Human trials (first time: try 2-3 trials with `NUM_EPISODES = 3` and a hand on the e-stop).** This
+mode has only been tested without the arm.
+- Plug in the SpaceMouse. The arm moves to each start by itself, then a window shows the microscope
+  feed and the ring. Nothing moves until the right arrow starts the trial; the clock starts then.
+- **Translation only:** twisting the SpaceMouse does nothing, and the pipette keeps its angle.
+- **Coming in:** travel along the pipette's own direction, down the gap by the lamp. **Enter** switches
+  between coarse and fine.
+- **Finishing:** put the tip in the ring and lower it until the title says `ON THE DISH`: it cannot go
+  lower. Press the right arrow when you are happy. The limit is 120 s.
+- Going too close to the lamp or the dish wall ends the trial and counts as a collision. If the next
+  move cannot be planned, the title asks you to back the pipette out and press the right arrow.
+- Give each new operator the same few minutes of practice first, using `NUM_EPISODES = 3` and a
+  different `OPERATOR` name so the practice runs are not scored as trials.
+
+| Symptom | What to do |
+|---|---|
+| `Failed to open SpaceMouse` | Plug it in, close 3Dconnexion's own software and anything else using it, rerun. |
+| The tip stops before `ON THE DISH`, and the title never changes | Stop and tell Claude: the dish height may have drifted. |
+| The tip visibly presses or bends | Press **Esc** or the e-stop, and tell Claude. |
+
 ## Collection (complete)
 `basler_stage_touch_dataset_2026-11` holds 206 episodes, 200 of them usable.
 

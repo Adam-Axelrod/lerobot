@@ -38,3 +38,10 @@ class Meca500SpacemouseConfig(TeleoperatorConfig):
     # Auto-home target used by scripts/meca500/record.py around every episode.
     home_joints: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 90.0, 0.0])
     home_timeout_s: float = 30.0
+
+    # For timed trials (scripts/meca500/eval_auto.py). translation_only ignores the rotation axes;
+    # start_paused holds the arm until resume(); home_hotkey=False disables H, whose unplanned
+    # MoveJoints is not collision-checked.
+    translation_only: bool = False
+    start_paused: bool = False
+    home_hotkey: bool = True
