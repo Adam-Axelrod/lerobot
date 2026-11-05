@@ -8,7 +8,7 @@
 `outputs\eval_auto\basler_stage_touch_2026-11_delta_act_20261105-121850`). That is the paper's
 "ACT, no decoys" row; it ran on the fixed rollout code, so it does not need rerunning. Probes show why
 it failed: the expert aimed every path at the target, so the joint state at the pre-touch point gave
-the target away and the policy never learnt to read the marker. `record_auto.py` now plans each path
+the target away; the policy read the marker to set off but not to finish. `record_auto.py` now plans each path
 to a DECOY up to 1.6 mm from the target while the marker stays on the true target; the pre-touch
 correction then closes the gap in the recorded final approach, so only the image says where to go.
 

@@ -114,8 +114,8 @@ ATTEMPT_SEED_STRIDE = 100_000
 # the true target and the vision correction at the pre-touch checkpoint closes the gap, in the
 # recorded final approach. 0 = plan straight to the target (basler_stage_touch_dataset_2026-11).
 # Why: with the path aimed at the target, the joint state at the pre-touch point gave the target
-# away, and the first ACT model never learnt to read the marker (2026-11-05 bench test: 0/20,
-# median 2 mm; probes: <=7% response to a moved marker near the dish, the expert's own image
+# away, and the first ACT model read the marker to set off but not to finish (2026-11-05 bench
+# test: 0/20, median 2 mm; probes: 1.4% response to a moved marker at pre-touch, the expert's own image
 # corrections were only ~0.1 mm). 1.6 mm keeps the tip inside the lit field (radius ~2.4 mm).
 DECOY_MAX_MM = 1.6
 

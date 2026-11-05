@@ -128,8 +128,9 @@ def sample_decoy_px(rng: np.random.Generator, true_px, max_mm: float, lim: Plann
 
     The recorder plans the whole path to this DECOY while the marker sits on the true target, and
     the vision correction then closes the gap. Without it the pre-touch pose was the target plus a
-    planned offset, so the joint state told the policy where to go and the first ACT model learnt
-    to ignore the marker (2026-11-05 probes: <=7% response to a moved marker near the dish).
+    planned offset, so the joint state told the policy where to go and the first ACT model used
+    the marker to set off but not to finish (2026-11-05 probes: 1.4% response to a moved marker
+    at the pre-touch point, 7% near the dish).
     """
     true_px = np.asarray(true_px, float)
     if max_mm <= 0:
