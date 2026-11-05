@@ -104,6 +104,11 @@ PRECISION_MAX_REL_TARGET = 0.15
 # Seeds are SEED_BASE + episode index, so a resumed dataset never repeats an episode.
 # basler_stage_touch_dataset_2026-11 used 1_000_000, eval_auto uses 5_000_000.
 SEED_BASE = 2_000_000
+# A discarded or unplannable episode is retried with seed + ATTEMPT_SEED_STRIDE * attempt (a fresh
+# target), and the session stops cleanly after this many failures in a row. Before this the same
+# seed was retried forever (2026-11-05), and killing the process lost the unfinalised dataset.
+MAX_EPISODE_ATTEMPTS = 5
+ATTEMPT_SEED_STRIDE = 100_000
 
 # Plan each path to a DECOY up to this far (mm, dish plane) from the true target; the marker shows
 # the true target and the vision correction at the pre-touch checkpoint closes the gap, in the
@@ -546,21 +551,27 @@ def main() -> None:
         retreat = False  # the first episode's transit starts from home, not the dish
         with VideoEncodingManager(dataset):
             recorded = 0
+            attempt = 0
             while recorded < NUM_EPISODES and not events["stop_recording"]:
                 ep = dataset.num_episodes
+                if attempt >= MAX_EPISODE_ATTEMPTS:
+                    logging.error(f"Episode {ep} failed {attempt} times in a row; stopping the session.")
+                    break
+                seed = SEED_BASE + ep + ATTEMPT_SEED_STRIDE * attempt
+                attempt += 1
                 try:
                     if stager is None:
-                        plan = plan_with_decoy(planner, SEED_BASE + ep, DECOY_MAX_MM)
+                        plan = plan_with_decoy(planner, seed, DECOY_MAX_MM)
                         new_xy = None
                     else:
-                        new_xy, plan = stager.plan_episode(SEED_BASE + ep)
+                        new_xy, plan = stager.plan_episode(seed)
                         # The transit runs before the stage moves: plan it against the dish where it is.
                         stager.place(stage_xy)
                         stager.check_parked_arm(plan.start_joints, stage_xy, new_xy)
                     transit = planner.plan_transit(q_now, plan.start_joints, retreat=retreat)
                 except PlanningError as e:
-                    logging.error(str(e))
-                    break
+                    logging.warning(f"Episode {ep} (seed {seed}) could not be planned: {e}")
+                    continue
 
                 overlay.set_target(None)
                 log_say(f"Moving to start of episode {ep}", False)
@@ -620,6 +631,7 @@ def main() -> None:
                 n_frames = int(dataset.writer.episode_buffer.get("size", 0))
                 dataset.save_episode()
                 recorded += 1
+                attempt = 0
                 with meta_path.open("a") as f:
                     # n_frames: what the dataset holds (the plan's own count can differ by a frame or
                     # two, because record_loop paces by wall time).

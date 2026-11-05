@@ -327,6 +327,32 @@ def test_decoy_plan_aims_off_target_but_reports_and_marks_the_true_target(kin):
     assert planner.sample_episode(3).decoy_px is None
 
 
+def test_decoy_plan_rejects_a_true_target_the_correction_cannot_reach(kin):
+    """The planner only checks the path to the decoy; the correction's move onto the true target
+    (and the slack around it) must be checked too, or the episode is discarded at the bench on
+    every retry."""
+    planner, _ = _planner(kin, [])
+    calls = []
+    real_line = planner.plan_line
+
+    def line(q_from, p_to, speed, name="correction"):
+        calls.append(np.asarray(p_to))
+        return real_line(q_from, p_to, speed, name)
+
+    planner.plan_line = line
+    plan = plan_with_decoy(planner, 3, 0.5, correction_slack_mm=0.2)
+    assert len(calls) == 5
+    np.testing.assert_allclose(calls[0], plan.target_xyz)
+    assert max(np.linalg.norm(c - np.asarray(plan.target_xyz)) for c in calls) == pytest.approx(0.2)
+
+    def blocked(q_from, p_to, speed, name="correction"):
+        raise PlanningError(f"{name} would collide (tool vs dish_wall, -0.0 mm)")
+
+    planner.plan_line = blocked
+    with pytest.raises(PlanningError, match="corrected touch"):
+        plan_with_decoy(planner, 3, 0.5)
+
+
 def test_decoys_stay_within_reach_and_inside_the_target_region(kin):
     planner, cal = _planner(kin, [])
     rng = np.random.default_rng(0)

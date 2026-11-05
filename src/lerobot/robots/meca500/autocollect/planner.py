@@ -450,13 +450,21 @@ class Planner:
         return a + np.outer(min_jerk(n), b - a)
 
 
-def plan_with_decoy(planner: Planner, seed: int, decoy_max_mm: float) -> EpisodePlan:
+def plan_with_decoy(
+    planner: Planner, seed: int, decoy_max_mm: float, correction_slack_mm: float = 0.15
+) -> EpisodePlan:
     """``planner.sample_episode(seed)``, but with the path aimed at a decoy up to ``decoy_max_mm``
     from the target (see sample_decoy_px). The returned plan's target_px / target_xyz are the TRUE
     target - what the marker shows and the vision correction lands on - and decoy_px is where the
     path aimed. The true target is drawn from its own stream (seed + 9_000_000), so it stays put
     while the planner redraws unreachable decoys or the recorder tries another stage position.
     ``decoy_max_mm <= 0`` is exactly ``sample_episode(seed)``.
+
+    The planner only checks the path to the decoy, so the correction's move from the pre-touch
+    point to the true target (and to points ``correction_slack_mm`` around it, for the shift the
+    correction adds) is checked here; PlanningError if it would collide. Without this, a target
+    by the dish wall planned fine and was discarded at the correction every time (2026-11-05:
+    97 retries of one episode).
     """
     if decoy_max_mm <= 0:
         return planner.sample_episode(seed)
@@ -467,4 +475,8 @@ def plan_with_decoy(planner: Planner, seed: int, decoy_max_mm: float) -> Episode
     plan.decoy_px = plan.target_px
     plan.target_px = (float(true_px[0]), float(true_px[1]))
     plan.target_xyz = tuple(float(v) for v in planner.touch_point(true_px))
+    q_pre = plan.joints[plan.pretouch_index]
+    s = correction_slack_mm
+    for dx, dy in [(0, 0), (s, 0), (-s, 0), (0, s), (0, -s)]:
+        planner.plan_line(q_pre, np.asarray(plan.target_xyz) + [dx, dy, 0.0], plan.precision_speed_mm_s, "corrected touch")
     return plan
