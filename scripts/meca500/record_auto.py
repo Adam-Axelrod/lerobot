@@ -58,7 +58,7 @@ from lerobot.robots.meca500.autocollect.correction import measure
 from lerobot.robots.meca500.autocollect.dish_map import DishHeightMap
 from lerobot.robots.meca500.autocollect.focus_check import FocusMismatchError, check_focus
 from lerobot.robots.meca500.autocollect.overlay import TargetOverlayStep
-from lerobot.robots.meca500.autocollect.planner import Planner, PlanningError, plan_with_decoy
+from lerobot.robots.meca500.autocollect.planner import Planner, PlanningError, plan_recovery, plan_with_decoy
 from lerobot.robots.meca500.autocollect.stage import MLS203Stage, StageError, StageModel
 from lerobot.robots.meca500.autocollect.tip_detect import image_shift
 from lerobot.robots.utils import make_robot_from_config
@@ -119,6 +119,15 @@ ATTEMPT_SEED_STRIDE = 100_000
 # corrections were only ~0.1 mm). 1.6 mm keeps the tip inside the lit field (radius ~2.4 mm).
 DECOY_MAX_MM = 1.6
 
+# Recovery episodes (planner.plan_recovery): each starts OFF course, part-way (RECOVERY_START_FRAC
+# of the way from start to pre-touch) along a path aimed RECOVERY_OFFSET_MM from the target,
+# reached unrecorded, and the recording is the teacher's path from there to the true target.
+# The bench runs on 2026-11-05/06 reached precision entry aimed 2-3 mm off, where the demos were
+# never more than ~0.7 mm off, and did not recover. Record into their own NAME and SEED_BASE.
+RECOVERY = False
+RECOVERY_OFFSET_MM = (1.0, 4.0)
+RECOVERY_START_FRAC = (0.5, 1.0)
+
 # Vision correction of the final approach (see autocollect/correction.py). Open loop the tip
 # landed 60-120 um off the target on 2026-11-03, against a 50 um success threshold.
 VISION_CORRECTION = True
@@ -148,6 +157,12 @@ STAGE_MOVES = True
 STAGE_ATTEMPTS = 10  # stage positions tried per episode before giving up
 MAX_MAP_MISMATCH_MM = 0.05  # the height map must agree with the scope calibration at the reference
 # -----------------------------------------------------------------
+
+
+def plan_for(planner: Planner, seed: int):
+    if RECOVERY:
+        return plan_recovery(planner, seed, RECOVERY_OFFSET_MM, RECOVERY_START_FRAC)
+    return plan_with_decoy(planner, seed, DECOY_MAX_MM)
 
 
 def build_planner(bench: BenchConfig) -> Planner:
@@ -436,7 +451,7 @@ class StagePlanner:
             xy = self.model.sample(rng)
             self.place(xy)
             try:
-                return xy, plan_with_decoy(self.planner, seed, DECOY_MAX_MM)
+                return xy, plan_for(self.planner, seed)
             except PlanningError as e:
                 last = e
         raise PlanningError(f"No stage position in {STAGE_ATTEMPTS} tries gave a plan ({last}).")
@@ -601,14 +616,17 @@ def main() -> None:
                 attempt += 1
                 try:
                     if stager is None:
-                        plan = plan_with_decoy(planner, seed, DECOY_MAX_MM)
+                        plan = plan_for(planner, seed)
                         new_xy = None
                     else:
                         new_xy, plan = stager.plan_episode(seed)
+                    # A recovery episode parks at its lead-in's high start for the stage move.
+                    park_q = plan.start_joints if plan.lead_in is None else plan.lead_in[0]
+                    if stager is not None:
                         # The transit runs before the stage moves: plan it against the dish where it is.
                         stager.place(stage_xy)
-                        stager.check_parked_arm(plan.start_joints, stage_xy, new_xy)
-                    transit = planner.plan_transit(q_now, plan.start_joints, retreat=retreat)
+                        stager.check_parked_arm(park_q, stage_xy, new_xy)
+                    transit = planner.plan_transit(q_now, park_q, retreat=retreat)
                 except PlanningError as e:
                     logging.warning(f"Episode {ep} (seed {seed}) could not be planned: {e}")
                     log_discard(ep, seed, "planning", str(e))
@@ -617,7 +635,7 @@ def main() -> None:
                 overlay.set_target(None)
                 log_say(f"Moving to start of episode {ep}", False)
                 run_plan(robot, teleop, transit, np.zeros(len(transit)), fps, deaf(), processors)
-                wait_settled(robot, plan.start_joints, SETTLE_TIMEOUT_S)
+                wait_settled(robot, park_q, SETTLE_TIMEOUT_S)
                 if events["stop_recording"]:
                     break
 
@@ -633,6 +651,12 @@ def main() -> None:
                 if VISION_CORRECTION:
                     background, still_px = settled_background(robot, bench.camera_key)
                     extra_stage["background_still_px"] = round(still_px, 2)
+                if plan.lead_in is not None:
+                    log_say(f"Moving off course to the recovery start of episode {ep}", False)
+                    run_plan(robot, teleop, plan.lead_in, np.zeros(len(plan.lead_in)), fps, deaf(), processors)
+                    wait_settled(robot, plan.start_joints, SETTLE_TIMEOUT_S)
+                    if events["stop_recording"]:
+                        break
                 overlay.set_target(plan.target_px)
                 log_say(f"Recording episode {ep}", False)
                 events["exit_early"] = False

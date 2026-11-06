@@ -171,6 +171,10 @@ class EpisodePlan:
     # Set for recovery episodes (plan_recovery): the start is a pose part-way along a path aimed
     # at decoy_px; recovery["start_frac"] says how far along (0 = its start, 1 = its pre-touch).
     recovery: dict | None = None
+    # Recovery episodes: the unrecorded path from a high start down to joints[0] (part of the
+    # decoy's checked plan). The recorder moves the stage and grabs the detector background at
+    # lead_in[0], with the tip out of view, then flies this before recording.
+    lead_in: np.ndarray | None = None
 
     @property
     def start_joints(self) -> np.ndarray:
@@ -533,6 +537,7 @@ def plan_recovery(
     xy = planner.calib.pixel_to_xy
     offset = float(np.linalg.norm(xy(np.asarray(decoy.target_px))[0] - xy(true_px)[0]))
     plan.recovery = {"start_frac": round(frac, 3), "decoy_offset_mm": round(offset, 3)}
+    plan.lead_in = decoy.joints[: k + 1]
     q_pre = plan.joints[plan.pretouch_index]
     s = correction_slack_mm
     for dx, dy in [(0, 0), (s, 0), (-s, 0), (0, s), (0, -s)]:
