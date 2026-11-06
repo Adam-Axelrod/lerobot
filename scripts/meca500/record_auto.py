@@ -58,7 +58,13 @@ from lerobot.robots.meca500.autocollect.correction import measure
 from lerobot.robots.meca500.autocollect.dish_map import DishHeightMap
 from lerobot.robots.meca500.autocollect.focus_check import FocusMismatchError, check_focus
 from lerobot.robots.meca500.autocollect.overlay import TargetOverlayStep
-from lerobot.robots.meca500.autocollect.planner import Planner, PlanningError, plan_recovery, plan_with_decoy
+from lerobot.robots.meca500.autocollect.planner import (
+    Planner,
+    PlanningError,
+    plan_hover,
+    plan_recovery,
+    plan_with_decoy,
+)
 from lerobot.robots.meca500.autocollect.stage import MLS203Stage, StageError, StageModel
 from lerobot.robots.meca500.autocollect.tip_detect import image_shift
 from lerobot.robots.utils import make_robot_from_config
@@ -75,7 +81,7 @@ from lerobot.utils.visualization_utils import init_rerun
 # ----------------------------- CONFIG -----------------------------
 RIG = "meca500_basler"
 USER = "AdamAxelrod"
-NAME = "basler_stage_touch_decoy_2026-11"  # one dataset per rig and target style - never mix
+NAME = "basler_stage_touch_recovery_2026-11"  # one dataset per rig and target style - never mix
 TASK = "move_pipette_to_target"
 NUM_EPISODES = 50
 RESUME = False  # append to an existing local dataset of the same NAME
@@ -103,7 +109,7 @@ MAX_REL_TARGET = 1.5
 PRECISION_MAX_REL_TARGET = 0.15
 # Seeds are SEED_BASE + episode index, so a resumed dataset never repeats an episode.
 # basler_stage_touch_dataset_2026-11 used 1_000_000, eval_auto uses 5_000_000.
-SEED_BASE = 2_000_000
+SEED_BASE = 3_000_000  # recovery episodes; the decoy dataset used 2_000_000
 # A discarded or unplannable episode is retried with seed + ATTEMPT_SEED_STRIDE * attempt (a fresh
 # target), and the session stops cleanly after this many failures in a row. Before this the same
 # seed was retried forever (2026-11-05), and killing the process lost the unfinalised dataset.
@@ -124,9 +130,14 @@ DECOY_MAX_MM = 1.6
 # reached unrecorded, and the recording is the teacher's path from there to the true target.
 # The bench runs on 2026-11-05/06 reached precision entry aimed 2-3 mm off, where the demos were
 # never more than ~0.7 mm off, and did not recover. Record into their own NAME and SEED_BASE.
-RECOVERY = False
+RECOVERY = True
 RECOVERY_OFFSET_MM = (1.0, 4.0)
 RECOVERY_START_FRAC = (0.5, 1.0)
+# "offcourse" (above) or "hover" (planner.plan_hover): the tip starts RECOVERY_HOVER_MM straight
+# above the ring and the recording is a vertical descent to the touch. The 2026-11-06 handover
+# policies stopped with the tip's image on the ring 0.45-1.5 mm up, a state no demo contains.
+RECOVERY_KIND = "offcourse"
+RECOVERY_HOVER_MM = (0.5, 2.5)
 
 # Vision correction of the final approach (see autocollect/correction.py). Open loop the tip
 # landed 60-120 um off the target on 2026-11-03, against a 50 um success threshold.
@@ -160,6 +171,8 @@ MAX_MAP_MISMATCH_MM = 0.05  # the height map must agree with the scope calibrati
 
 
 def plan_for(planner: Planner, seed: int):
+    if RECOVERY and RECOVERY_KIND == "hover":
+        return plan_hover(planner, seed, RECOVERY_HOVER_MM)
     if RECOVERY:
         return plan_recovery(planner, seed, RECOVERY_OFFSET_MM, RECOVERY_START_FRAC)
     return plan_with_decoy(planner, seed, DECOY_MAX_MM)

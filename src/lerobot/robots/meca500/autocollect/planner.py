@@ -545,3 +545,48 @@ def plan_recovery(
             q_pre, np.asarray(plan.target_xyz) + [dx, dy, 0.0], plan.precision_speed_mm_s, "corrected touch"
         )
     return plan
+
+
+def plan_hover(
+    planner: Planner, seed: int, height_mm: tuple[float, float] = (0.5, 2.5), correction_slack_mm: float = 0.15
+) -> EpisodePlan:
+    """A hover-recovery episode: the tip starts straight above the ring and goes straight down.
+
+    On 2026-11-06 both handover policies brought the tip's image onto the ring 0.45-1.5 mm above
+    the dish and stopped there: in every demo the tip reaches the ring in the image only ~0.1-0.2 mm
+    above the dish, just before the dwell, so "tip on ring" looked finished. This episode starts in
+    that state - the touch orientation, ``height_mm`` straight above the touch point, reached
+    unrecorded along a normal plan to its pre-touch point - and records a vertical descent with the
+    orientation held, so the tip's image stays on the ring until it touches.
+
+    The plan is the single hover frame with ``touch_axis`` vertical, so the recorder's vision
+    correction (checkpoints and touch, all along touch_axis) carries out the descent.
+    """
+    rng = np.random.default_rng(seed + 8_000_000)
+    true_px = planner.sample_target_px(np.random.default_rng(seed + 9_000_000))
+    base = planner.sample_episode(seed, target_sampler=lambda r: true_px)
+    k = base.pretouch_index
+    p_touch = np.asarray(base.target_xyz, float)
+    h = float(rng.uniform(*height_mm))
+    lead = planner.plan_line(base.joints[k], p_touch + [0.0, 0.0, h], 3 * base.precision_speed_mm_s, "hover lead-in")
+    q_hover = lead[-1]
+    s = correction_slack_mm
+    for dx, dy in [(0, 0), (s, 0), (-s, 0), (0, s), (0, -s)]:
+        planner.plan_line(q_hover, p_touch + [dx, dy, 0.0], base.precision_speed_mm_s, "hover descent")
+    plan = EpisodePlan(
+        joints=np.asarray([q_hover]),
+        precision=np.ones(1),
+        fps=base.fps,
+        seed=seed,
+        target_px=(float(true_px[0]), float(true_px[1])),
+        target_xyz=tuple(float(v) for v in p_touch),
+        clearance=planner.checker.check_path(np.vstack([base.joints[: k + 1], lead]), planner.lim.check_step_deg),
+        phase_frames={},
+        touch_axis=(0.0, 0.0, -1.0),
+        pretouch_back_mm=h,
+        precision_speed_mm_s=base.precision_speed_mm_s,
+        dwell_frames=base.dwell_frames,
+    )
+    plan.lead_in = np.vstack([base.joints[: k + 1], lead])
+    plan.recovery = {"kind": "hover", "height_mm": round(h, 3)}
+    return plan
