@@ -398,7 +398,12 @@ def ring_aux_kwargs() -> dict:
     meta = LeRobotDatasetMetadata(f"{USER}/{NAME}")
     cams = [k for k, ft in meta.features.items() if ft["dtype"] in ("image", "video")]
     h, w = meta.features[cams[0]]["shape"][:2]
-    lines = (Path(meta.root) / "autocollect_episodes.jsonl").read_text().splitlines()
+    ep_file = Path(meta.root) / "autocollect_episodes.jsonl"
+    if not ep_file.exists():  # a Hub snapshot holds meta/ only (see build_episode_subset)
+        from huggingface_hub import hf_hub_download
+
+        ep_file = Path(hf_hub_download(meta.repo_id, "autocollect_episodes.jsonl", repo_type="dataset"))
+    lines = ep_file.read_text().splitlines()
     eps = {(r := json.loads(line))["episode_index"]: r["target_px"] for line in lines if line.strip()}
     if sorted(eps) != list(range(meta.total_episodes)):
         raise SystemExit(f"autocollect_episodes.jsonl does not cover episodes 0..{meta.total_episodes - 1}")
