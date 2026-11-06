@@ -105,10 +105,10 @@ FIRST_EPISODE = 0
 # A local pretrained_model folder or a Hub model repo (downloaded once into the HF cache).
 # Must be trained on a DELTA dataset recorded on this rig with the digital target.
 # Local copies come from CREATE by scp: the lab PC downloads from the Hub at ~100 KB/s.
-MODEL = "outputs/train/basler_stage_touch_decoy_2026-11_tip_delta_ring1/checkpoints/100000/pretrained_model"
-EVAL_NAME = "basler_stage_touch_decoy_2026-11_tip_delta_ring1_act"  # names the "policy" results folder; see session_name()
+MODEL = "outputs/train/basler_stage_touch_decoy_2026-11_delta/checkpoints/100000/pretrained_model"
+EVAL_NAME = "basler_stage_touch_decoy_2026-11_delta_act"  # names the "policy" results folder; see session_name()
 TASK = "move_pipette_to_target"
-NUM_EPISODES = 5  # model E trial (2026-11-06): check field-entry aim before a full set
+NUM_EPISODES = 10  # model A with COARSE_ACTION_STEPS (2026-11-06): same targets as its 5 Nov eps 0-9
 # Training episodes used seeds 1_000_000 + episode index: this range shares none of them.
 SEED_BASE = 5_000_000
 # Longest demonstration in basler_stage_touch_dataset_2026-11 is 36.9 s (median 21.8 s).
@@ -126,6 +126,12 @@ EPISODE_TIME_S = 45.0
 # predicted step is "hold" - and ensembling only ever executes first steps. A whole chunk
 # carries the motion after the hold, so the arm moves through it.
 TEMPORAL_ENSEMBLE_COEFF: float | None = None
+# Chunk mode only. An int re-plans after this many steps during the coarse approach (before the
+# policy first sets the precision flag), instead of running the whole chunk open-loop. Each
+# 30-step coarse chunk carries the tip 3-9 mm blind, and the 2026-11-05 runs reached precision
+# entry aimed 2-3 mm off (bench_error_timeline.py). A chunk that holds still at any point runs
+# to its end, so the pre-touch holds do not stall as they did with ensembling. None = off.
+COARSE_ACTION_STEPS: int | None = 10
 
 # Per-step clamps (deg), just above the largest step in the 200 training episodes
 # (coarse max 0.956, precision max 0.0167; p99 0.61 and 0.014): they never touch
@@ -173,6 +179,8 @@ def session_name() -> str:
     name = {"policy": EVAL_NAME, "human": f"human_{OPERATOR}"}.get(METHOD, METHOD)
     if METHOD == "policy" and IGNORE_PRECISION:
         name += "_precision_off"
+    if METHOD == "policy" and COARSE_ACTION_STEPS:
+        name += f"_coarse{COARSE_ACTION_STEPS}"
     return f"{name}_shift{IMAGE_SHIFT_PX}" if IMAGE_SHIFT_PX else name
 
 
@@ -257,6 +265,7 @@ def rollout_episode(
     live_every = n_steps if n_steps > 1 else LIVE_EVERY_ENSEMBLE
     live = []
     reason, settled, ever_precise = "time limit", 0, False
+    chunk_steps, chunk_held = 0, False
     prev_tip = None
     # Integrate onto the last goal SENT, not the controller's live setpoint: the training deltas
     # are differences between successive commanded goals, and GetRtTargetJointPos() lags the
@@ -286,6 +295,14 @@ def rollout_episode(
         a = action.squeeze(0).float().cpu().numpy()
         precise = bool(a[6] > 0.5)
         ever_precise |= precise
+        if COARSE_ACTION_STEPS and TEMPORAL_ENSEMBLE_COEFF is None:
+            chunk_steps += 1
+            chunk_held |= bool(np.abs(a[:6]).max() < 1e-4)
+            if not policy._action_queue:
+                chunk_steps, chunk_held = 0, False
+            elif chunk_steps >= COARSE_ACTION_STEPS and not ever_precise and not chunk_held:
+                policy._action_queue.clear()  # the next step predicts a fresh chunk
+                chunk_steps = 0
         normal_clamp = PRECISION_MAX_REL_TARGET if precise else MAX_REL_TARGET
         clamp = MAX_REL_TARGET if IGNORE_PRECISION else normal_clamp
         if tip_mode:
