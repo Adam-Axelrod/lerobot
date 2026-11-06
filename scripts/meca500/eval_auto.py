@@ -108,7 +108,7 @@ FIRST_EPISODE = 0
 MODEL = "outputs/train/basler_stage_touch_decoy_2026-11_delta/checkpoints/100000/pretrained_model"
 EVAL_NAME = "basler_stage_touch_decoy_2026-11_delta_act"  # names the "policy" results folder; see session_name()
 TASK = "move_pipette_to_target"
-NUM_EPISODES = 10  # model A with COARSE_ACTION_STEPS (2026-11-06): same targets as its 5 Nov eps 0-9
+NUM_EPISODES = 5  # handover trial (2026-11-06): 5 each of A and E, same targets as their earlier runs
 # Training episodes used seeds 1_000_000 + episode index: this range shares none of them.
 SEED_BASE = 5_000_000
 # Longest demonstration in basler_stage_touch_dataset_2026-11 is 36.9 s (median 21.8 s).
@@ -131,7 +131,16 @@ TEMPORAL_ENSEMBLE_COEFF: float | None = None
 # 30-step coarse chunk carries the tip 3-9 mm blind, and the 2026-11-05 runs reached precision
 # entry aimed 2-3 mm off (bench_error_timeline.py). A chunk that holds still at any point runs
 # to its end, so the pre-touch holds do not stall as they did with ensembling. None = off.
-COARSE_ACTION_STEPS: int | None = 10
+COARSE_ACTION_STEPS: int | None = None
+# "policy" only: the planner drives each episode to its pre-touch point exactly as the expert
+# does (path aimed at a decoy, same collision checks and stage move, no vision correction), the
+# arm settles, and the policy takes over from there. Tests whether the learned final approach
+# converges from a start inside its training range, apart from the approach (2026-11-06: A and
+# the no-decoy model reached precision entry aimed 2.1-2.7 mm off, the demos 0.18-0.67 mm).
+# Time, the trajectory log and the scores count from the handover. The settle rule cannot end an
+# episode until the tip has moved HANDOVER_MIN_MOVE_UM, since the demos hold still on arrival.
+HANDOVER = True
+HANDOVER_MIN_MOVE_UM = 50.0
 
 # Per-step clamps (deg), just above the largest step in the 200 training episodes
 # (coarse max 0.956, precision max 0.0167; p99 0.61 and 0.014): they never touch
@@ -181,6 +190,8 @@ def session_name() -> str:
         name += "_precision_off"
     if METHOD == "policy" and COARSE_ACTION_STEPS:
         name += f"_coarse{COARSE_ACTION_STEPS}"
+    if METHOD == "policy" and HANDOVER:
+        name += "_handover"
     return f"{name}_shift{IMAGE_SHIFT_PX}" if IMAGE_SHIFT_PX else name
 
 
@@ -249,7 +260,8 @@ def load_policy(model: str):
 
 
 def rollout_episode(
-    robot, policy, pre, post, obs_proc, obs_features, planner, events, live_key: str | None = None
+    robot, policy, pre, post, obs_proc, obs_features, planner, events, live_key: str | None = None,
+    min_move_um: float = 0.0,
 ) -> dict:
     """Run the policy until it settles, the time runs out, a check fails or the operator stops it.
 
@@ -266,6 +278,7 @@ def rollout_episode(
     live = []
     reason, settled, ever_precise = "time limit", 0, False
     chunk_steps, chunk_held = 0, False
+    first_tip = None
     prev_tip = None
     # Integrate onto the last goal SENT, not the controller's live setpoint: the training deltas
     # are differences between successive commanded goals, and GetRtTargetJointPos() lags the
@@ -350,7 +363,9 @@ def rollout_episode(
 
         step_um = 0.0 if prev_tip is None else float(np.linalg.norm(tip - prev_tip)) * 1000
         prev_tip = tip
-        settled = settled + 1 if (ever_precise and step_um < SETTLED_UM_PER_STEP) else 0
+        first_tip = tip if first_tip is None else first_tip
+        moved = float(np.linalg.norm(tip - first_tip)) * 1000 >= min_move_um
+        settled = settled + 1 if (ever_precise and moved and step_um < SETTLED_UM_PER_STEP) else 0
         if settled >= SETTLED_S * fps:
             reason = "settled"
             break
@@ -552,6 +567,8 @@ def main() -> None:
     fps = planner.lim.fps
 
     # The planned paths keep to the clamps they were recorded under; the policy's are tighter.
+    if HANDOVER and (METHOD != "policy" or COARSE_ACTION_STEPS or TEMPORAL_ENSEMBLE_COEFF is not None):
+        sys.exit("HANDOVER needs METHOD = 'policy' with whole chunks (COARSE_ACTION_STEPS and ensembling off).")
     scripted = METHOD in ("scripted", "expert")
     robot = make_robot_from_config(
         rig_config(
@@ -699,6 +716,16 @@ def main() -> None:
                 )
                 if events["stop_recording"] or view.closed:
                     break
+            handover_s = None
+            if METHOD == "policy" and HANDOVER:
+                k = plan.pretouch_index
+                t_h = time.perf_counter()
+                run_plan(robot, teleop, plan.joints[: k + 1], plan.precision[: k + 1], fps, events, processors)
+                events["exit_early"] = False
+                if events["stop_recording"]:
+                    break
+                wait_settled(controller, plan.joints[k], SETTLE_TIMEOUT_S)
+                handover_s = round(time.perf_counter() - t_h, 2)
             log_say(f"{METHOD} episode {i}", False)
             t_drive = time.perf_counter()
             tap.start()
@@ -706,7 +733,10 @@ def main() -> None:
                 run = rollout_episode(
                     robot, policy, pre, post, obs_proc, obs_features, planner, events,
                     live_key=bench.camera_key if SAVE_LIVE_FRAMES else None,
+                    min_move_um=HANDOVER_MIN_MOVE_UM if HANDOVER else 0.0,
                 )
+                if handover_s is not None:
+                    run["handover_s"] = handover_s
             elif METHOD == "scripted":
                 run = run_scripted(robot, teleop, plan, planner, events, processors)
             elif METHOD == "expert":
