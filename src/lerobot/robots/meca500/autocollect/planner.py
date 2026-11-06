@@ -122,7 +122,9 @@ def target_px_allowed(px, lim: PlannerLimits, image_size) -> bool:
     return np.linalg.norm(np.asarray(px) - lim.target_field_centre_px) <= lim.target_field_radius_frac * lim.target_field_radius_px
 
 
-def sample_decoy_px(rng: np.random.Generator, true_px, max_mm: float, lim: PlannerLimits, calib) -> np.ndarray:
+def sample_decoy_px(
+    rng: np.random.Generator, true_px, max_mm: float, lim: PlannerLimits, calib, min_mm: float = 0.0
+) -> np.ndarray:
     """A pixel up to ``max_mm`` (uniform in distance, uniform direction, in the dish plane) from
     ``true_px``, inside the allowed target region.
 
@@ -138,7 +140,7 @@ def sample_decoy_px(rng: np.random.Generator, true_px, max_mm: float, lim: Plann
     xy0 = calib.pixel_to_xy(true_px)[0]
     for _ in range(1000):
         ang = rng.uniform(0, 2 * np.pi)
-        d = rng.uniform(0, max_mm) * np.array([np.cos(ang), np.sin(ang)])
+        d = rng.uniform(min_mm, max_mm) * np.array([np.cos(ang), np.sin(ang)])
         px = calib.xy_to_pixel(xy0 + d)[0]
         if target_px_allowed(px, lim, calib.image_size):
             return px
@@ -166,6 +168,9 @@ class EpisodePlan:
     # Set when the path was planned to a decoy (see sample_decoy_px): target_px/target_xyz are then
     # the TRUE target the marker shows and the correction lands on; this is where the path aimed.
     decoy_px: tuple[float, float] | None = None
+    # Set for recovery episodes (plan_recovery): the start is a pose part-way along a path aimed
+    # at decoy_px; recovery["start_frac"] says how far along (0 = its start, 1 = its pre-touch).
+    recovery: dict | None = None
 
     @property
     def start_joints(self) -> np.ndarray:
@@ -183,6 +188,8 @@ class EpisodePlan:
     def meta(self) -> dict:
         """JSON-safe record for episodes_meta.jsonl (deliberately NOT dataset features)."""
         decoy = {} if self.decoy_px is None else {"decoy_px": [round(float(v), 2) for v in self.decoy_px]}
+        if self.recovery is not None:
+            decoy["recovery"] = self.recovery
         return {
             "seed": int(self.seed),
             "target_px": [round(float(v), 2) for v in self.target_px],
@@ -220,9 +227,10 @@ class Planner:
 
     # ------------------------------------------------------------------ episode
 
-    def sample_episode(self, seed: int, target_sampler=None) -> EpisodePlan:
+    def sample_episode(self, seed: int, target_sampler=None, start_q=None) -> EpisodePlan:
         """``target_sampler(rng) -> px`` replaces the uniform target draw (initial and on
-        replacement), e.g. to keep redrawn decoys around one true target."""
+        replacement), e.g. to keep redrawn decoys around one true target. ``start_q`` fixes the
+        start pose instead of sampling it (plan_recovery)."""
         rng = np.random.default_rng(seed)
         draw = target_sampler or self.sample_target_px
         self.rejections = {}
@@ -239,7 +247,7 @@ class Planner:
                 )
                 target_px = draw(rng)
             try:
-                plan = self._try_episode(rng, target_px)
+                plan = self._try_episode(rng, target_px, *([] if start_q is None else [start_q]))
                 plan.seed = seed
                 return plan
             except _RejectedSampleError as r:
@@ -261,7 +269,7 @@ class Planner:
             [xy[0] + lim.touch_bias_xy_mm[0], xy[1] + lim.touch_bias_xy_mm[1], self.calib.surface_z_mm + lim.touch_offset_mm]
         )
 
-    def _try_episode(self, rng: np.random.Generator, target_px=None) -> EpisodePlan:
+    def _try_episode(self, rng: np.random.Generator, target_px=None, start_q=None) -> EpisodePlan:
         lim = self.lim
         surface = self.calib.surface_z_mm
 
@@ -279,29 +287,27 @@ class Planner:
         p_gate = p_touch - axis * rng.uniform(*lim.gate_back_mm)
 
         # --- start
-        p_start = self.start_nominal[:3, 3] + rng.uniform(-1, 1, 3) * np.asarray(lim.start_pos_jitter_mm)
-        if p_start[2] < surface + lim.start_min_height_mm:
-            raise _RejectedSampleError("start too low")
-        r_start = random_rotation(rng, lim.start_rot_jitter_deg) @ self.start_nominal[:3, :3]
-        q_start = self.kin.ik(make_transform(r_start, p_start), lim.start_nominal_joints)
-        if q_start is None:
-            raise _RejectedSampleError("start IK")
+        if start_q is None:
+            p_start = self.start_nominal[:3, 3] + rng.uniform(-1, 1, 3) * np.asarray(lim.start_pos_jitter_mm)
+            if p_start[2] < surface + lim.start_min_height_mm:
+                raise _RejectedSampleError("start too low")
+            r_start = random_rotation(rng, lim.start_rot_jitter_deg) @ self.start_nominal[:3, :3]
+            q_start = self.kin.ik(make_transform(r_start, p_start), lim.start_nominal_joints)
+            if q_start is None:
+                raise _RejectedSampleError("start IK")
+        else:
+            q_start = np.asarray(start_q, dtype=float)
+            t_start = self.kin.tip(q_start)
+            p_start, r_start = t_start[:3, 3], t_start[:3, :3]
 
-        # --- coarse curve: start -> via(s) -> gate
-        n_via = int(rng.integers(lim.n_via[0], lim.n_via[1] + 1))
-        fracs = np.sort(rng.uniform(0.25, 0.75, n_via))
-        vias = [
-            p_start + f * (p_gate - p_start) + rng.uniform(-1, 1, 3) * np.asarray(lim.via_jitter_mm)
-            for f in fracs
-        ]
-        coarse_poly = catmull_rom(np.vstack([p_start, *vias, p_gate]))
-
+        # A recovery start already below the gate (part-way down a decoy's gate line) goes straight
+        # to the pre-touch point: back up to the gate and down again is not a correction.
+        below_gate = start_q is not None and float(np.dot(p_start - p_gate, axis)) > 0
         phases = [
-            ("coarse", coarse_poly, r_start, r_touch, lim.coarse_speed_mm_s, lim.max_joint_step_deg, 0.0),
             (
                 "gate",
-                np.vstack([p_gate, p_pre]),
-                r_touch,
+                np.vstack([p_start if below_gate else p_gate, p_pre]),
+                r_start if below_gate else r_touch,
                 r_touch,
                 lim.gate_speed_mm_s,
                 lim.max_joint_step_deg,
@@ -317,6 +323,19 @@ class Planner:
                 1.0,
             ),
         ]
+
+        if not below_gate:
+            # --- coarse curve: start -> via(s) -> gate (a recovery start takes the direct curve)
+            n_via = 0 if start_q is not None else int(rng.integers(lim.n_via[0], lim.n_via[1] + 1))
+            fracs = np.sort(rng.uniform(0.25, 0.75, n_via))
+            vias = [
+                p_start + f * (p_gate - p_start) + rng.uniform(-1, 1, 3) * np.asarray(lim.via_jitter_mm)
+                for f in fracs
+            ]
+            coarse_poly = catmull_rom(np.vstack([p_start, *vias, p_gate]))
+            phases.insert(
+                0, ("coarse", coarse_poly, r_start, r_touch, lim.coarse_speed_mm_s, lim.max_joint_step_deg, 0.0)
+            )
 
         joints, precision, phase_frames, speeds = [q_start], [0.0], {}, {}
         for name, poly, r0, r1, speed, max_step, flag in phases:
@@ -480,4 +499,44 @@ def plan_with_decoy(
     s = correction_slack_mm
     for dx, dy in [(0, 0), (s, 0), (-s, 0), (0, s), (0, -s)]:
         planner.plan_line(q_pre, np.asarray(plan.target_xyz) + [dx, dy, 0.0], plan.precision_speed_mm_s, "corrected touch")
+    return plan
+
+
+def plan_recovery(
+    planner: Planner,
+    seed: int,
+    offset_mm: tuple[float, float] = (1.0, 4.0),
+    start_frac: tuple[float, float] = (0.5, 1.0),
+    correction_slack_mm: float = 0.15,
+) -> EpisodePlan:
+    """A recovery episode: the arm starts OFF course and the recorded path brings it back.
+
+    A path is planned to a decoy ``offset_mm`` from the true target (as plan_with_decoy), and the
+    start is its pose ``start_frac`` of the way from its start to its pre-touch point: an approach
+    already aimed 1-4 mm off, as the policies' own were on the bench (2026-11-05/06: aimed 2-3 mm
+    off at precision entry, where the demos were never more than ~0.7 mm off). The recorder
+    transits there unrecorded and records the teacher's path from that pose to the TRUE target.
+    So the data holds corrections from the states a policy drifts into but never the drift
+    itself, which recording would teach (the DART / DAgger point).
+    """
+    rng = np.random.default_rng(seed + 8_000_000)
+    true_px = planner.sample_target_px(np.random.default_rng(seed + 9_000_000))
+    decoy = planner.sample_episode(
+        seed,
+        target_sampler=lambda r: sample_decoy_px(r, true_px, offset_mm[1], planner.lim, planner.calib, offset_mm[0]),
+    )
+    frac = float(rng.uniform(*start_frac))
+    k = int(round(frac * decoy.pretouch_index))
+    plan = planner.sample_episode(seed + 7_000_000, target_sampler=lambda r: true_px, start_q=decoy.joints[k])
+    plan.seed = seed
+    plan.decoy_px = decoy.target_px
+    xy = planner.calib.pixel_to_xy
+    offset = float(np.linalg.norm(xy(np.asarray(decoy.target_px))[0] - xy(true_px)[0]))
+    plan.recovery = {"start_frac": round(frac, 3), "decoy_offset_mm": round(offset, 3)}
+    q_pre = plan.joints[plan.pretouch_index]
+    s = correction_slack_mm
+    for dx, dy in [(0, 0), (s, 0), (-s, 0), (0, s), (0, -s)]:
+        planner.plan_line(
+            q_pre, np.asarray(plan.target_xyz) + [dx, dy, 0.0], plan.precision_speed_mm_s, "corrected touch"
+        )
     return plan
