@@ -105,8 +105,8 @@ FIRST_EPISODE = 0
 # A local pretrained_model folder or a Hub model repo (downloaded once into the HF cache).
 # Must be trained on a DELTA dataset recorded on this rig with the digital target.
 # Local copies come from CREATE by scp: the lab PC downloads from the Hub at ~100 KB/s.
-MODEL = "outputs/train/basler_stage_touch_decoy_2026-11_delta/checkpoints/100000/pretrained_model"
-EVAL_NAME = "basler_stage_touch_decoy_2026-11_delta_act"  # names the "policy" results folder; see session_name()
+MODEL = "outputs/train/basler_stage_touch_decoy_2026-11_tip_delta_ring1/checkpoints/100000/pretrained_model"
+EVAL_NAME = "basler_stage_touch_decoy_2026-11_tip_delta_ring1_act"  # names the "policy" results folder; see session_name()
 TASK = "move_pipette_to_target"
 NUM_EPISODES = 5  # handover trial (2026-11-06): 5 each of A and E, same targets as their earlier runs
 # Training episodes used seeds 1_000_000 + episode index: this range shares none of them.
