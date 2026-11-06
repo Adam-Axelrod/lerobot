@@ -1,13 +1,15 @@
 """Rewrite a recorded (absolute joint target) dataset as image-only, tip-motion actions.
 
-    python scripts/meca500/convert_to_tip_actions.py [--src NAME] [--force]
+    python scripts/meca500/convert_to_tip_actions.py [--src NAME] [--keep-state] [--force]
 
-Writes AdamAxelrod/<src>_tip_delta:
+Writes AdamAxelrod/<src>_tip_delta (or <src>_js_tip_delta with --keep-state):
 - action = per-step tip motion in the camera's axes, [du, dv, dz, ru, rv, rz] in mm and rad
   (autocollect/tip_actions.py), plus precision.state left absolute. Forward increments, the
   last frame of each episode holds, as in convert_to_delta_actions.py.
 - observation.state is removed, so the policy sees the image only. Zhao et al. 2025 found that
   removing the state only helped with end-effector actions; with joint actions it scored 0.
+  --keep-state keeps it: the image-only model E centred the tip over the ring from a scripted
+  pre-touch start (48-88 um, 2026-11-06) but could not tell its height and hovered 1.1-1.5 mm up.
 
 The source must hold absolute joint targets (record_auto.py's datasets do), not deltas.
 Ends with a round trip: each episode's actions are integrated back through IK from its first
@@ -42,10 +44,12 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--src", default=DEFAULT_SRC)
     ap.add_argument("--force", action="store_true", help="overwrite the destination if it exists")
+    ap.add_argument("--keep-state", action="store_true", help="keep observation.state (joints) as an input")
     args = ap.parse_args()
 
     home = Path(HF_LEROBOT_HOME) / USER
-    src, tmp, dst = home / args.src, home / f"{args.src}_tip_tmp", home / f"{args.src}_tip_delta"
+    suffix = "_js_tip_delta" if args.keep_state else "_tip_delta"
+    src, tmp, dst = home / args.src, home / f"{args.src}_tip_tmp", home / f"{args.src}{suffix}"
     for p in (tmp, dst):
         if p.exists():
             if not args.force:
@@ -82,10 +86,13 @@ def main() -> None:
     (tmp / "meta/info.json").write_text(json.dumps(info, indent=4), newline="\n")
     print(f"rewrote {len(files)} parquet file(s)")
 
-    remove_feature(
-        LeRobotDataset(f"{USER}/{tmp.name}", root=tmp), "observation.state", output_dir=dst, repo_id=f"{USER}/{dst.name}"
-    )
-    shutil.rmtree(tmp)
+    if args.keep_state:
+        shutil.move(tmp, dst)
+    else:
+        remove_feature(
+            LeRobotDataset(f"{USER}/{tmp.name}", root=tmp), "observation.state", output_dir=dst, repo_id=f"{USER}/{dst.name}"
+        )
+        shutil.rmtree(tmp)
     for extra in ("autocollect_episodes.jsonl", "autocollect_discards.jsonl", "autocollect/excluded_episodes.json"):
         if (src / extra).exists():
             (dst / extra).parent.mkdir(parents=True, exist_ok=True)
