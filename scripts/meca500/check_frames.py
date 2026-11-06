@@ -88,13 +88,48 @@ def contact_sheet(images: list[np.ndarray], columns: int = 5) -> np.ndarray:
     return np.vstack([np.hstack(row + [blank] * (columns - len(row))) for row in rows])
 
 
+def check_dataset(args, um_per_px: float) -> None:
+    """The recorder's own final frames, marked as for a run. No verdicts are drawn."""
+    lines = (args.dataset / "autocollect_episodes.jsonl").read_text(encoding="utf-8").splitlines()
+    rows = {r["episode_index"]: r for r in (json.loads(line) for line in lines if line.strip())}
+    out_dir = args.out or args.dataset / "autocollect" / "check"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    images = []
+    for ep in args.episodes or sorted(rows):
+        row = rows[ep]
+        frame = cv2.imread(str(args.dataset / "autocollect" / "raw" / f"ep{ep:04d}" / "final.png"))
+        if frame is None:
+            print(f"Missing final frame for episode {ep}: skipped.")
+            continue
+        final = row.get("final") or {}
+        tip = final.get("detected_px")
+        err = row.get("final_error_um")
+        label = f"ep {ep}  detector: " + ("no tip" if tip is None or err is None else f"{err:.0f} um")
+        image = annotate(frame, row["target_px"], um_per_px, tip, label)
+        cv2.imwrite(str(out_dir / f"ep{ep:04d}.png"), image)
+        images.append(image)
+    if images:
+        cv2.imwrite(str(out_dir / "all.png"), contact_sheet(images))
+    print(f"{len(images)} images at {um_per_px:.2f} um/px -> {out_dir}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("run", type=Path, help="an outputs/eval_auto/<run> folder")
+    parser.add_argument("run", type=Path, nargs="?", help="an outputs/eval_auto/<run> folder")
+    parser.add_argument(
+        "--dataset", type=Path, help="a record_auto dataset root instead: its autocollect/raw/epNNNN/final.png"
+    )
+    parser.add_argument("--episodes", type=int, nargs="+", help="--dataset: only these episodes")
+    parser.add_argument("--out", type=Path, help="--dataset: output folder (default <dataset>/autocollect/check)")
     args = parser.parse_args()
     um_per_px = BenchConfig.load(RIG).calibration().mm_per_px * 1000
+    if args.dataset is not None:
+        check_dataset(args, um_per_px)
+        return
+    if args.run is None:
+        parser.error("give a run folder, or --dataset")
     lines = (args.run / "results.jsonl").read_text(encoding="utf-8").splitlines()
     rows = [json.loads(line) for line in lines if line.strip()]
     out_dir = args.run / "check"
