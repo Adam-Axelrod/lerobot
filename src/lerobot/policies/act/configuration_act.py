@@ -135,6 +135,13 @@ class ACTConfig(PreTrainedConfig):
     # confusion" in imitation learning, de Haan et al. 2019). Inference never corrupts the state.
     state_noise_std: float = 0.0
     state_dropout: float = 0.0
+    # Auxiliary ring-localisation loss for image-only policies. Each image token of the encoder
+    # output (first camera) gets a score; a softmax over the tokens gives an expected (u, v) that
+    # is trained by L1 towards the episode's drawn target, ring_aux_uv[episode_index], in [-1, 1]
+    # image coordinates. It makes the tokens the decoder reads carry where the ring is; the policy
+    # still sees only the image at inference, where the head is unused.
+    ring_aux_weight: float = 0.0
+    ring_aux_uv: list | None = None
 
     # Training preset
     optimizer_lr: float = 1e-5

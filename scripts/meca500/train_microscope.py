@@ -139,6 +139,10 @@ GEOMETRIC_TRANSFORMS = ("affine",)  # zeroed: they move the image without moving
 # rotation (rotation would turn the camera axes) and up to this fraction of the frame of shift.
 # Refused on any other action space.
 SHIFT_AUGMENT_FRACTION = 0.0
+# ACT only: weight of an auxiliary loss that has the encoder locate the drawn ring (the
+# episode's target_px from autocollect_episodes.jsonl). 0 = off. Labels do not follow a shifted
+# image, so it is refused together with SHIFT_AUGMENT_FRACTION.
+RING_AUX_WEIGHT = 0.0
 
 # --- Random subset of the dataset ---
 # 1.0 = train on every episode. e.g. 0.5 = a random half of the episodes.
@@ -375,6 +379,7 @@ def build_policy_config() -> PreTrainedConfig:
         ) from e
 
     model_repo_id = f"{HF_USER}/{RUN_NAME}_{ARCHITECTURE}"
+    extra = ring_aux_kwargs() if RING_AUX_WEIGHT > 0 else {}
     # input_features/output_features left as the empty defaults => inferred from
     # the dataset in make_policy, which includes every action channel.
     return policy_cls(
@@ -382,7 +387,24 @@ def build_policy_config() -> PreTrainedConfig:
         push_to_hub=PUSH_TO_HUB,
         repo_id=model_repo_id,  # always set: required by validate() even when not pushing
         **POLICY_KWARGS,
+        **extra,
     )
+
+
+def ring_aux_kwargs() -> dict:
+    """Per-episode ring position in [-1, 1] image coordinates, for ACT's ring_aux loss."""
+    if ARCHITECTURE != "act" or SHIFT_AUGMENT_FRACTION > 0:
+        raise SystemExit("RING_AUX_WEIGHT needs ARCHITECTURE='act' and SHIFT_AUGMENT_FRACTION=0.")
+    meta = LeRobotDatasetMetadata(f"{USER}/{NAME}")
+    cams = [k for k, ft in meta.features.items() if ft["dtype"] in ("image", "video")]
+    h, w = meta.features[cams[0]]["shape"][:2]
+    lines = (Path(meta.root) / "autocollect_episodes.jsonl").read_text().splitlines()
+    eps = {(r := json.loads(line))["episode_index"]: r["target_px"] for line in lines if line.strip()}
+    if sorted(eps) != list(range(meta.total_episodes)):
+        raise SystemExit(f"autocollect_episodes.jsonl does not cover episodes 0..{meta.total_episodes - 1}")
+    uv = [[eps[e][0] / w * 2 - 1, eps[e][1] / h * 2 - 1] for e in range(meta.total_episodes)]
+    print(f"[ring_aux] weight {RING_AUX_WEIGHT}, {len(uv)} episode targets, image {w}x{h} ({cams[0]})")
+    return {"ring_aux_weight": RING_AUX_WEIGHT, "ring_aux_uv": uv}
 
 
 def main() -> None:

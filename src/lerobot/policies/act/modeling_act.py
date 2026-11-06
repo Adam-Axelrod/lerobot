@@ -176,6 +176,11 @@ class ACTPolicy(PreTrainedPolicy):
             loss = l1_loss + mean_kld * self.config.kl_weight
         else:
             loss = l1_loss
+        if cfg.ring_aux_weight > 0:
+            table = torch.as_tensor(cfg.ring_aux_uv, dtype=torch.float32, device=self.model.ring_uv.device)
+            ring_loss = F.l1_loss(self.model.ring_uv, table[batch["episode_index"].long()])
+            loss = loss + cfg.ring_aux_weight * ring_loss
+            loss_dict["ring_aux_loss"] = ring_loss.item()
 
         return loss, loss_dict
 
@@ -384,6 +389,9 @@ class ACT(nn.Module):
 
         # Final action regression head on the output of the transformer's decoder.
         self.action_head = nn.Linear(config.dim_model, self.config.action_feature.shape[0])
+        if config.ring_aux_weight > 0:
+            self.ring_aux_head = nn.Linear(config.dim_model, 1)
+        self.ring_uv = None
 
         self._reset_parameters()
 
@@ -484,12 +492,14 @@ class ACT(nn.Module):
         if self.config.env_state_feature:
             encoder_in_tokens.append(self.encoder_env_state_input_proj(batch[OBS_ENV_STATE]))
 
+        img_start, img_hw = len(encoder_in_tokens), None
         if self.config.image_features:
             # For a list of images, the H and W may vary but H*W is constant.
             # NOTE: If modifying this section, verify on MPS devices that
             # gradients remain stable (no explosions or NaNs).
             for img in batch[OBS_IMAGES]:
                 cam_features = self.backbone(img)["feature_map"]
+                img_hw = img_hw or tuple(cam_features.shape[-2:])
                 cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
                 cam_features = self.encoder_img_feat_input_proj(cam_features)
 
@@ -508,6 +518,14 @@ class ACT(nn.Module):
 
         # Forward pass through the transformer modules.
         encoder_out = self.encoder(encoder_in_tokens, pos_embed=encoder_in_pos_embed)
+        if self.config.ring_aux_weight > 0 and img_hw is not None:
+            # Expected (u, v) of the first camera's token centres under a softmax of the scores.
+            h, w = img_hw
+            p = self.ring_aux_head(encoder_out[img_start : img_start + h * w]).squeeze(-1).float().softmax(0)
+            dev = p.device
+            grid_u = ((torch.arange(w, device=dev) + 0.5) / w * 2 - 1).repeat(h)
+            grid_v = ((torch.arange(h, device=dev) + 0.5) / h * 2 - 1).repeat_interleave(w)
+            self.ring_uv = torch.stack([grid_u @ p, grid_v @ p], dim=-1)  # (B, 2)
         # TODO(rcadene, alexander-soare): remove call to `device` ; precompute and use buffer
         decoder_in = torch.zeros(
             (self.config.chunk_size, batch_size, self.config.dim_model),
