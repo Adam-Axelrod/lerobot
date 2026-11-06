@@ -12,6 +12,8 @@ By-eye verdicts. The detector can misplace a tip resting on the dish, so eval_au
 each epNNN/final_overlay.png. Put the verdicts in <run>/verdicts.json, keyed by episode:
     {"3": "hit", "7": "miss", "8": 62.0}
 "hit"/"miss" override the success decision; a number replaces the measured distance in um.
+"close" is a miss at SUCCESS_UM judged within CLOSE_UM (the second column). Without a verdict the
+second column uses the distance; a "miss" at or under SUCCESS_UM (e.g. never touched) is never close.
 
 --dataset scores the automatic-collection row from what the recorder logged, against all saved
 episodes: autocollect_episodes.jsonl for the final error, and the commanded joints in the dataset
@@ -42,6 +44,9 @@ from lerobot.robots.meca500.autocollect.metrics import path_metrics
 
 RIG = "meca500_basler"
 SUCCESS_UM = 50.0
+# Second, looser column ("close enough", Adam 2026-11-06): the pipette ends on the target.
+# SUCCESS_UM stays the primary measure.
+CLOSE_UM = 100.0
 FPS = 20
 
 
@@ -60,9 +65,16 @@ def score_trial(row: dict, verdict, kin) -> dict:
         success = False
     else:
         success = distance is not None and distance <= SUCCESS_UM and not collision
+    if verdict in ("hit", "close"):
+        close = True
+    elif verdict == "miss" and distance is not None and distance <= SUCCESS_UM:
+        close = False  # missed for another reason than distance (e.g. never touched)
+    else:
+        close = distance is not None and distance <= CLOSE_UM and not collision
     out = {
         "episode": row["episode"],
         "success": success,
+        "close": close,
         "distance_um": distance,
         "collision": collision,
         "press": press,
@@ -108,6 +120,7 @@ def summarise(trials: list[dict]) -> dict:
     return {
         "n": len(trials),
         "successes": len(hits),
+        "close": sum(t["close"] for t in trials),
         "collisions": sum(t["collision"] for t in trials),
         "press_stops": sum(t["press"] for t in trials),
         "no_distance": sum(t["distance_um"] is None for t in trials),
@@ -123,6 +136,7 @@ def summarise(trials: list[dict]) -> dict:
 def format_row(name: str, s: dict) -> str:
     return (
         f"{name:<44} {s['successes']:>3}/{s['n']:<3} {100 * s['successes'] / max(s['n'], 1):>4.0f}%  "
+        f"<= {CLOSE_UM:.0f} um {s['close']:>3}/{s['n']:<3} {100 * s['close'] / max(s['n'], 1):>4.0f}%  "
         f"{s['distance_median']:>6.0f} [{s['distance_q1']:.0f}, {s['distance_q3']:.0f}] um  "
         f"{s['time_median']:>6.1f} s  SPARC {s['sparc_median']:>6.2f}  economy {100 * s['economy_median']:>4.0f}%  "
         f"collisions {s['collisions']}  press stops {s['press_stops']}  no distance {s['no_distance']}"
