@@ -24,6 +24,10 @@ The medians per checkpoint are printed; per-row results go to --out.
 2026-11-05, basler_stage_touch_2026-11_delta (no decoys), 40 episodes, 80 px = 1.07 mm:
 median gain start 0.62, pretouch 0.014, near 0.071, while the texture swap moved the chunk as much
 as the marker did. That is the "at most 7%" response near the dish.
+
+Image-only tip-action policies (dataset *_tip_delta) are probed the same way: pass the source
+dataset and its joint-delta copy (--dataset ..._decoy_2026-11 --delta-dataset ..._decoy_2026-11_delta)
+for the frames and hold points; the joint state is then unused by the policy.
 """
 
 import argparse
@@ -43,6 +47,7 @@ import eval_auto as ev  # noqa: E402
 from lerobot.policies import prepare_observation_for_inference  # noqa: E402
 from lerobot.robots.meca500.autocollect.bench import BenchConfig  # noqa: E402
 from lerobot.robots.meca500.autocollect.overlay import draw_target  # noqa: E402
+from lerobot.robots.meca500.autocollect.tip_actions import camera_axes  # noqa: E402
 from lerobot.utils.constants import OBS_STR  # noqa: E402
 from lerobot.utils.feature_utils import build_dataset_frame, hw_to_dataset_features  # noqa: E402
 
@@ -123,8 +128,13 @@ def main() -> None:
     def read(ep: int, png: str) -> np.ndarray:
         return cv2.cvtColor(cv2.imread(str(raw / f"ep{ep:04d}" / png)), cv2.COLOR_BGR2RGB)
 
+    axes = camera_axes(calib)
+
     def disp(q, deltas) -> np.ndarray:
-        """Tip XY displacement (mm) after integrating the chunk's joint deltas from q."""
+        """Tip XY displacement (mm) after integrating the chunk's actions from q. Tip actions
+        (image-only policies) add up directly in camera axes; map them back to base X/Y."""
+        if probe.policy.tip_actions:
+            return axes.T @ deltas[:, :2].sum(0)
         return kin.tip(q + deltas[:, :6].sum(0))[:3, 3][:2] - kin.tip(q)[:3, 3][:2]
 
     rows = []
