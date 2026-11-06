@@ -25,6 +25,12 @@ The medians per checkpoint are printed; per-row results go to --out.
 median gain start 0.62, pretouch 0.014, near 0.071, while the texture swap moved the chunk as much
 as the marker did. That is the "at most 7%" response near the dish.
 
+2026-11-06: that 0.62 was a small-sample median. On every usable episode (EVERY=1) the same model
+gives start 0.29 [95% CI 0.08, 0.44] on its own 200 episodes and 0.32 [0.02, 0.60] on the 100
+decoy episodes; the decoy model A gives 0.20 / 0.24, and the paired difference is not significant
+(Wilcoxon p 0.6). Start gains spread over about -0.3 to +1.1 per episode: use EVERY = 1 for
+anything that is compared. Pretouch gains stay at or below 0.07 for every model.
+
 Image-only tip-action policies (dataset *_tip_delta) are probed the same way: pass the source
 dataset and its joint-delta copy (--dataset ..._decoy_2026-11 --delta-dataset ..._decoy_2026-11_delta)
 for the frames and hold points; the joint state is then unused by the policy.
@@ -54,7 +60,7 @@ from lerobot.utils.feature_utils import build_dataset_frame, hw_to_dataset_featu
 RIG = "meca500_basler"
 ROOT = Path.home() / ".cache/huggingface/lerobot/AdamAxelrod"
 SHIFT_PX = 80
-EVERY = 5
+EVERY = 1  # the per-episode spread is wide; 5 gave a misleading 0.62 (see above)
 SEED = 0
 
 
