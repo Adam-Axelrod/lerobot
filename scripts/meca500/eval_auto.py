@@ -139,7 +139,7 @@ FIRST_EPISODE = 0
 MODEL = "outputs/train/basler_stage_touch_decoyrec_2026-11_delta/checkpoints/100000/pretrained_model"
 EVAL_NAME = "basler_stage_touch_decoyrec_2026-11_delta_act"  # names the "policy" results folder; see session_name()
 TASK = "move_pipette_to_target"
-NUM_EPISODES = 20  # NEXT.md row 2: policy_asr at 0 mm (episodes 0-2 ran first as the cautious trials)
+NUM_EPISODES = 20  # policy_asr at 0 mm, final code
 # Training episodes used seeds 1_000_000 + episode index: this range shares none of them.
 SEED_BASE = 5_000_000
 # Longest demonstration in basler_stage_touch_dataset_2026-11 is 36.9 s (median 21.8 s).
