@@ -37,6 +37,43 @@ class PinnedXYBench(BenchConfig):
         )
 
 
+class SoftwareSlideBench(BenchConfig):
+    """The bench as the methods would see it had the base slid by ``offset_mm`` (eval_auto BASE_OFFSET_MM).
+
+    After a physical slide d with the pre-slide map pinned, the methods take every pixel to the
+    robot XY it had before, which in the slid robot's frame is d away from where that pixel really
+    is. Here nothing moves; the methods' map is the current one shifted by d, so a command aimed
+    at a pixel lands d off it, as it would. The scene, the dish model (placed by the map's linear
+    part only, autocollect/stage.py) and the heights stay real, so every collision and press check
+    still acts on the real arm in the real scene."""
+
+    offset_mm: tuple[float, float] = (0.0, 0.0)
+
+    def calibration(self) -> ScopeCalibration:
+        current = super().calibration()
+        a = [list(row) for row in current.px_to_xy]
+        a[0][2] += float(self.offset_mm[0])
+        a[1][2] += float(self.offset_mm[1])
+        return replace(current, px_to_xy=a)
+
+
+def software_slide_benches(bench: BenchConfig, offset_mm) -> SlideBenches:
+    """SlideBenches for a software slide; refuses while a physical slide is in force."""
+    if split_benches(bench).measurement is not None:
+        raise RuntimeError("a physical slide is in force (apply_slide.py): a software slide on top of it is refused.")
+    method = SoftwareSlideBench(rig=bench.rig, root=bench.root, raw=bench.raw)
+    method.offset_mm = (float(offset_mm[0]), float(offset_mm[1]))
+    d = list(method.offset_mm)
+    measurement = {
+        "software_slide": True,
+        "slide_mm": d,
+        "slide_norm_mm": round(float(sum(v * v for v in d) ** 0.5), 4),
+        "rotation_deg": 0.0,
+        "methods_use": "the current calibration with its pixel -> XY map shifted by slide_mm; the policy also sees virtual joints (VirtualSlide)",
+    }
+    return SlideBenches(method, bench, measurement)
+
+
 @dataclass
 class SlideBenches:
     method: BenchConfig  # what every method plans and aims with

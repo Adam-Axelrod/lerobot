@@ -514,7 +514,8 @@ class FakeAsrDetector:
 
         self.calls += 1
         tip = self.planner.kin.tip(self.robot.robot.q)[:3, 3]
-        px = self.planner.calib.xy_to_pixel(tip[:2])[0]
+        calib = self.robot.truth or self.planner.calib  # the real camera geometry
+        px = calib.xy_to_pixel(tip[:2])[0]
         if tip[2] - self.planner.calib.surface_z_mm > 6 or np.linalg.norm(px - self.centre) > self.radius:
             return None
         px = px + self.rng.normal(0, self.noise, 2)
@@ -613,6 +614,15 @@ def run_asr_session(monkeypatch, tmp_path, *, offset=(0.0, 0.0), sees=True, meth
     monkeypatch.setattr(eval_auto, "make_service", make_service)
     monkeypatch.setattr(eval_auto, "initialize_in_this_thread", lambda service: None)
     monkeypatch.setattr(eval_auto, "ProcessTipDetector", make_detector)
+    real_make = eval_auto.make_robot_from_config
+
+    def make_robot(cfg):
+        robot = real_make(cfg)
+        # A software slide shifts the methods' map: the camera keeps the real one.
+        robot.truth = BenchConfig.load("meca500_basler").calibration()
+        return robot
+
+    monkeypatch.setattr(eval_auto, "make_robot_from_config", make_robot)
     eval_auto.main()
     return eval_auto, holder
 
@@ -651,7 +661,8 @@ def test_policy_asr_searches_then_reports_where_it_failed(monkeypatch, tmp_path)
 def test_virtual_slide_moves_the_real_tip_and_shows_the_policy_the_planned_joints(monkeypatch, tmp_path):
     eval_auto, holder = run_asr_session(monkeypatch, tmp_path, offset=(2.0, 0.0))
     run, rows = read_results(tmp_path)
-    assert "_slide2x0_" in run.name and rows[0]["base_offset_mm"] == [2.0, 0.0]
+    assert "_swslide2x0_" in run.name and rows[0]["base_offset_mm"] == [2.0, 0.0]
+    assert rows[0]["slide"]["software_slide"] is True
     assert holder["plan"].recovery is None  # the test set, not whatever record_auto collects
     # The policy's first view is the planned start, while the real arm started 2 mm along x.
     plan, kin = holder["plan"], holder["planner"].kin
@@ -791,6 +802,44 @@ def test_after_a_physical_slide_scripted_aims_with_the_old_calibration_and_is_me
     assert row["fk_error_um"] == pytest.approx(1000, abs=60)
     assert row["vision_error_um"] == pytest.approx(1000, abs=80)
     assert abs(row["tip_height_um"]) < 20  # touched the current dish, not the stale pinned height
+
+
+def test_a_software_slide_makes_scripted_miss_by_the_offset_and_is_labelled(monkeypatch, tmp_path):
+    """BASE_OFFSET_MM for a method without a policy: it aims through the scope map shifted by the
+    offset, as through the pinned map after a physical slide, so it misses by the offset."""
+    import eval_auto
+
+    eval_auto_mod, holder = run_session(monkeypatch, tmp_path, "scripted", episodes=1)
+    monkeypatch.setattr(eval_auto, "BASE_OFFSET_MM", (0.0, 2.0))
+    real_make = eval_auto.make_robot_from_config
+
+    def make_robot(cfg):
+        robot = real_make(cfg)
+        robot.truth = BenchConfig.load("meca500_basler").calibration()  # the camera sees the real tip
+        return robot
+
+    monkeypatch.setattr(eval_auto, "make_robot_from_config", make_robot)
+    eval_auto.main()
+    run, rows = read_results(tmp_path)
+    row = rows[0]
+    assert "_swslide0x2" in run.name
+    assert row["slide"]["software_slide"] is True and row["slide"]["slide_norm_mm"] == 2.0
+    assert row["fk_error_um"] == pytest.approx(2000, abs=60)
+    assert row["vision_error_um"] == pytest.approx(2000, abs=80)
+    assert abs(row["tip_height_um"]) < 20  # the real dish height
+    calib = BenchConfig.load("meca500_basler").calibration()
+    with np.load(run / "ep000" / "traj.npz") as z:
+        end = holder["planner"].kin.tip(z["obs_q"][-1])[:3, 3]
+    miss = end[:2] - calib.pixel_to_xy(np.asarray(row["target_px"]))[0]
+    np.testing.assert_allclose(miss, [0.0, 2.0], atol=0.06)  # in the slide's direction
+
+
+def test_a_software_slide_is_refused_on_top_of_a_physical_one(tmp_path):
+    from lerobot.robots.meca500.autocollect.slide import software_slide_benches
+
+    root = slid_bench(tmp_path)
+    with pytest.raises(RuntimeError):
+        software_slide_benches(BenchConfig.load("meca500_basler", benches_dir=root.parent), (0.0, 2.0))
 
 
 def test_virtual_slide_round_trips():

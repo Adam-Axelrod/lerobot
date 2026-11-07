@@ -76,8 +76,13 @@ def reached_view(row: dict, field, kin=None) -> bool | None:
 
 
 def slide_of(row: dict) -> float:
-    """The measured physical slide of the robot (mm) the trial ran at; 0 at the original position."""
+    """The slide of the robot (mm) the trial ran at - measured, or set in software; 0 at the original position."""
     return float((row.get("slide") or {}).get("slide_norm_mm", 0.0))
+
+
+def software_slide(row: dict) -> bool:
+    """A software slide (eval_auto BASE_OFFSET_MM): never pooled with physical slides."""
+    return bool((row.get("slide") or {}).get("software_slide", False))
 
 
 # The protocol's final distance: the detector's, or forward kinematics' when the detector found no
@@ -191,7 +196,8 @@ def load_run(run: Path) -> list[dict]:
 
 
 def session_of(run: Path) -> str:
-    return re.sub(r"_\d{8}-\d{6}$", "", run.name)
+    # The software slide's offset is in the row's label (" @ X mm software"), not the session's.
+    return re.sub(r"_swslide[-\d.x]+", "", re.sub(r"_\d{8}-\d{6}$", "", run.name))
 
 
 def summarise(trials: list[dict]) -> dict:
@@ -373,7 +379,7 @@ def main() -> None:
             if args.episodes_below is not None and row["episode"] >= args.episodes_below:
                 continue
             # A physical slide keeps the session name: its trials are a row of their own.
-            slid = f" @ {slide_of(row):.1f} mm" if slide_of(row) else ""
+            slid = f" @ {slide_of(row):.1f} mm" + (" software" if software_slide(row) else "") if slide_of(row) else ""
             sessions.setdefault(session_of(run) + slid, []).append(row)
     problems = check_same_targets(sessions)
     if problems and not args.allow_different_targets:
@@ -387,7 +393,7 @@ def main() -> None:
             for r, t in zip(rows, trials, strict=True):
                 print("    " + trial_line(r, t))
         latex.append(latex_main_row(name, s))
-        base = name.split(" @ ")[0]
+        base = name.split(" @ ")[0] + (" (software slide)" if name.endswith(" software") else "")
         moved.setdefault(base, {})[trials[0]["slide_mm"] if trials else 0.0] = s
         if any("search_used" in r for r in rows):
             # policy_asr: the same trials as if there were no search - one that needed it ends,
@@ -403,6 +409,11 @@ def main() -> None:
         unchecked = [r["episode"] for r in rows if r["_verdict"] is None]
         if unchecked:
             print(f"    not checked by eye yet (verdicts.json): {unchecked}")
+    for base in [k for k in moved if " (software slide)" in k]:
+        # The software-slide row shares the 0 mm column with its session's normal row.
+        normal = moved.get(base.replace(" (software slide)", ""), {})
+        if 0.0 in normal:
+            moved[base].setdefault(0.0, normal[0.0])
     if latex:
         print("\n% main table: View % & Coll. % & <=50 um % & <=100 um % & median [IQR] um & time s & SPARC")
         print("\n".join(latex))

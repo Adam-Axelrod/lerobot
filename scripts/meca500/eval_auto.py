@@ -41,7 +41,10 @@ before sending it. Transits are absolute scripted moves, as in record_auto.
 BASE_OFFSET_MM slides the robot base in software (autocollect/asr_bridge.VirtualSlide), for the
 "move the robot relative to the microscope" test: the policy is shown, and commands, the joints of
 a robot whose base sits BASE_OFFSET_MM away, while the real arm puts the tip where that robot
-would. The start pose moves with it. Images, contact and collision checks are all real.
+would. The start pose moves with it. Every method also aims through the scope map shifted by
+the offset (autocollect/slide.SoftwareSlideBench), as the pinned pre-slide map would after a
+physical slide, so scripted and expert commands land the offset off too. Images, contact,
+heights and collision checks are all real. Rows carry slide.software_slide = true.
 
 IMAGE_SHIFT_PX > 0 simulates a knocked camera (autocollect/disturbance.py): every frame every
 reader sees is shifted, in a seeded direction per episode. The final position by forward
@@ -100,7 +103,7 @@ from lerobot.robots.meca500.autocollect.asr_bridge import (
     make_service,
 )
 from lerobot.robots.meca500.autocollect.bench import BenchConfig
-from lerobot.robots.meca500.autocollect.slide import split_benches
+from lerobot.robots.meca500.autocollect.slide import software_slide_benches, split_benches
 from lerobot.robots.meca500.autocollect.disturbance import sample_shift, shift_frame
 from lerobot.robots.meca500.autocollect.focus_check import FocusMismatchError, check_focus
 from lerobot.robots.meca500.autocollect.operator_guard import OperatorGuard
@@ -129,7 +132,7 @@ METHOD = "expert"
 # 16 px (~0.2 mm) is inside the expert's 0.5 mm correction cap; 58 px (~0.75 mm) is beyond it.
 IMAGE_SHIFT_PX = 0
 # The software slide of the robot base (robot frame, mm; x, y in the table plane). (0, 0) is a
-# normal run. "policy" and "policy_asr" only.
+# normal run. Every method: autocollect/slide.SoftwareSlideBench.
 BASE_OFFSET_MM = (0.0, 0.0)
 # A later session carrying on after a stop: runs seeds SEED_BASE + FIRST_EPISODE onwards.
 FIRST_EPISODE = 0
@@ -278,7 +281,7 @@ def session_name() -> str:
     if METHOD == "scripted_asr":
         name += "" if SEARCH else "_nosearch"
     if any(BASE_OFFSET_MM):
-        name += "_slide" + "x".join(f"{v:g}" for v in BASE_OFFSET_MM)
+        name += "_swslide" + "x".join(f"{v:g}" for v in BASE_OFFSET_MM)
     return f"{name}_shift{IMAGE_SHIFT_PX}" if IMAGE_SHIFT_PX else name
 
 
@@ -983,8 +986,6 @@ def main() -> None:
         sys.exit(f"METHOD must be policy, policy_asr, scripted, scripted_asr, expert or human, not {METHOD!r}")
     asr = METHOD in ("policy_asr", "scripted_asr")
     learned = METHOD in ("policy", "policy_asr")
-    if any(BASE_OFFSET_MM) and not learned:
-        sys.exit("BASE_OFFSET_MM is for the learned methods (policy, policy_asr).")
     if asr and (IMAGE_SHIFT_PX or COARSE_ACTION_STEPS or TEMPORAL_ENSEMBLE_COEFF is not None):
         sys.exit("policy_asr / scripted_asr run whole chunks on unshifted frames: set IMAGE_SHIFT_PX 0, COARSE_ACTION_STEPS and ensembling off.")
     human = METHOD == "human"
@@ -1001,7 +1002,11 @@ def main() -> None:
     init_logging()
     register_third_party_plugins()
     try:
-        benches = split_benches(BenchConfig.load(RIG))
+        benches = (
+            software_slide_benches(BenchConfig.load(RIG), BASE_OFFSET_MM)
+            if any(BASE_OFFSET_MM)
+            else split_benches(BenchConfig.load(RIG))
+        )
     except RuntimeError as e:
         sys.exit(f"\nREFUSING TO START: {e}\n")
     # Every method plans and aims with benches.method: after a physical slide, the pinned pre-slide
@@ -1010,7 +1015,7 @@ def main() -> None:
     bench = benches.method
     truth_calib = benches.truth.calibration()
     if benches.measurement is not None:
-        logging.info(f"Physical slide in force: {benches.measurement}. Methods keep the pre-slide pixel <-> XY map.")
+        logging.info(f"Slide in force: {benches.measurement}. Methods keep the pre-slide pixel <-> XY map.")
     try:
         pos = check_focus(bench.section("scope"))
     except FocusMismatchError as e:
@@ -1073,7 +1078,8 @@ def main() -> None:
     )
     processors = (teleop_proc, robot_proc, obs_proc)
     obs_features = hw_to_dataset_features(robot.observation_features, OBS_STR, use_video=True)
-    slide = VirtualSlide(planner.kin, BASE_OFFSET_MM) if any(BASE_OFFSET_MM) else None
+    # The policy also needs the slid robot's joints; every other method aims through the shifted map.
+    slide = VirtualSlide(planner.kin, BASE_OFFSET_MM) if any(BASE_OFFSET_MM) and learned else None
 
     out_dir = Path("outputs/eval_auto") / f"{session_name()}_{time.strftime('%Y%m%d-%H%M%S')}"
     out_dir.mkdir(parents=True)
