@@ -127,13 +127,13 @@ from lerobot.utils.utils import init_logging, log_say
 RIG = "meca500_basler"
 # Which row this session fills: "policy", "policy_asr", "scripted", "scripted_asr", "expert" or "human"
 # (see the docstring).
-METHOD = "policy_asr"
+METHOD = "expert"
 # Pixels to shift every frame by (12.85 um/px), simulating a knocked camera. 0 is a normal run.
 # 16 px (~0.2 mm) is inside the expert's 0.5 mm correction cap; 58 px (~0.75 mm) is beyond it.
 IMAGE_SHIFT_PX = 0
 # The software slide of the robot base (robot frame, mm; x, y in the table plane). (0, 0) is a
 # normal run. Every method: autocollect/slide.SoftwareSlideBench.
-BASE_OFFSET_MM = (0.0, 2.0)
+BASE_OFFSET_MM = (0.0, 0.0)
 # A later session carrying on after a stop: runs seeds SEED_BASE + FIRST_EPISODE onwards.
 FIRST_EPISODE = 0
 # A local pretrained_model folder or a Hub model repo (downloaded once into the HF cache).
@@ -142,7 +142,7 @@ FIRST_EPISODE = 0
 MODEL = "outputs/train/basler_stage_touch_decoyrec_2026-11_delta/checkpoints/100000/pretrained_model"
 EVAL_NAME = "basler_stage_touch_decoyrec_2026-11_delta_act"  # names the "policy" results folder; see session_name()
 TASK = "move_pipette_to_target"
-NUM_EPISODES = 10  # software slide, seeds 0-9
+NUM_EPISODES = 10  # software slide 2 and 4 mm done 2026-11-07; back to no slide
 # Training episodes used seeds 1_000_000 + episode index: this range shares none of them.
 SEED_BASE = 5_000_000
 # Longest demonstration in basler_stage_touch_dataset_2026-11 is 36.9 s (median 21.8 s).
