@@ -23,7 +23,7 @@ from lerobot.robots.meca500.autocollect.bench import BenchConfig
 
 RIG = "meca500_basler"
 WIDTH_IN = 3.5
-FRAME_W_PX = 200  # each frame's width in the PDF: ~230 dpi at 0.85 in
+FRAME_W_PX = 160  # each frame's width in the PDF: ~190 dpi at 0.85 in, keeps the PDF under 250 KB
 SMOOTH_S = 0.25
 
 
