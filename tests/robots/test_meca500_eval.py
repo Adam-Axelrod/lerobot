@@ -612,7 +612,7 @@ def run_asr_session(monkeypatch, tmp_path, *, offset=(0.0, 0.0), sees=True, meth
 
     monkeypatch.setattr(eval_auto, "make_service", make_service)
     monkeypatch.setattr(eval_auto, "initialize_in_this_thread", lambda service: None)
-    monkeypatch.setattr(eval_auto, "AsrTipDetector", make_detector)
+    monkeypatch.setattr(eval_auto, "ProcessTipDetector", make_detector)
     eval_auto.main()
     return eval_auto, holder
 

@@ -80,6 +80,80 @@ class AsrTipDetector:
         return best
 
 
+def _detector_process(site_yaml, field_centre_px, field_radius_px, requests, replies) -> None:
+    """ProcessTipDetector's child: its own ASR runtime and CUDA context, one frame at a time."""
+    import tempfile
+
+    from action_state_runtime.config.runtime import load_config
+    from action_state_runtime.runtime import ActionStateRuntime
+
+    runtime = ActionStateRuntime(config=load_config(str(site_yaml)), backend_mode="real", audit_dir=tempfile.mkdtemp())
+    runtime.preload_detector()
+    det = AsrTipDetector(runtime, field_centre_px, field_radius_px)
+    replies.put("ready")
+    while True:
+        frame = requests.get()
+        if frame is None:
+            return
+        try:
+            s = det.detect(frame)
+            replies.put(None if s is None else (s.px, s.confidence))
+        except Exception as e:  # reported to the caller, which decides
+            replies.put(RuntimeError(f"{type(e).__name__}: {e}"))
+
+
+class ProcessTipDetector:
+    """AsrTipDetector in a child process, for use while the policy runs on the GPU.
+
+    In one process, the policy (torch) and the detector (onnxruntime) on the GPU from two threads
+    deadlocked once (2026-11-07 12:21); serialising them with a lock starved the 20 Hz control loop
+    to 4 Hz, because the watcher re-took the lock at once. In its own process the detector has its
+    own CUDA context, and the watcher thread here only passes frames over a queue - it waits
+    without holding the GIL - so the control loop neither waits nor competes for Python.
+    ``detect`` has AsrTipDetector's interface: the frame goes over, the sighting comes back.
+    """
+
+    def __init__(self, site_yaml, field_centre_px, field_radius_px, start_timeout_s: float = 120.0):
+        import multiprocessing as mp
+
+        ctx = mp.get_context("spawn")
+        self._requests, self._replies = ctx.Queue(maxsize=1), ctx.Queue()
+        self._proc = ctx.Process(
+            target=_detector_process,
+            args=(str(site_yaml), list(field_centre_px), float(field_radius_px), self._requests, self._replies),
+            name="asr-detector",
+            daemon=True,
+        )
+        self._proc.start()
+        self._lock = threading.Lock()
+        try:
+            msg = self._replies.get(timeout=start_timeout_s)
+        except Exception as e:
+            self.close()
+            raise RuntimeError(f"ASR detector process did not start within {start_timeout_s:.0f} s") from e
+        if msg != "ready":
+            self.close()
+            raise RuntimeError(f"ASR detector process failed to start: {msg}")
+
+    def detect(self, rgb: np.ndarray, timeout_s: float = 10.0) -> TipSighting | None:
+        t = time.perf_counter()
+        with self._lock:  # one request in flight
+            self._requests.put(np.ascontiguousarray(rgb))
+            reply = self._replies.get(timeout=timeout_s)
+        if isinstance(reply, Exception):
+            raise reply
+        return None if reply is None else TipSighting((float(reply[0][0]), float(reply[0][1])), float(reply[1]), t)
+
+    def close(self) -> None:
+        try:
+            self._requests.put_nowait(None)
+        except Exception:
+            pass
+        self._proc.join(timeout=5.0)
+        if self._proc.is_alive():
+            self._proc.terminate()
+
+
 class TipWatcher:
     """Runs a detector on the newest frame, over and over, in a background thread.
 

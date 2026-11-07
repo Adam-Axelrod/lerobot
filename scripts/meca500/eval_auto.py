@@ -92,8 +92,7 @@ from lerobot.processor import (
     transition_to_observation,
 )
 from lerobot.robots.meca500.autocollect.asr_bridge import (
-    GPU_LOCK,
-    AsrTipDetector,
+    ProcessTipDetector,
     Meca500AsrHost,
     TipWatcher,
     VirtualSlide,
@@ -133,7 +132,7 @@ IMAGE_SHIFT_PX = 0
 # normal run. "policy" and "policy_asr" only.
 BASE_OFFSET_MM = (0.0, 0.0)
 # A later session carrying on after a stop: runs seeds SEED_BASE + FIRST_EPISODE onwards.
-FIRST_EPISODE = 3
+FIRST_EPISODE = 0
 # A local pretrained_model folder or a Hub model repo (downloaded once into the HF cache).
 # Must be trained on a DELTA dataset recorded on this rig with the digital target.
 # Local copies come from CREATE by scp: the lab PC downloads from the Hub at ~100 KB/s.
@@ -298,6 +297,8 @@ class ObservationTap:
         # The newest frame any reader got, for the tip watcher's thread (which must not read the
         # robot itself while the control loop does).
         self.latest: np.ndarray | None = None
+        self.heartbeat: Path | None = None
+        self._beat = 0.0
         # Every video_every-th frame read while started, at half size, for epNNN/episode.mp4.
         self.video_every = 0
         self.video: list[np.ndarray] = []
@@ -308,6 +309,12 @@ class ObservationTap:
         if self.shift != (0, 0):
             obs[self._key] = shift_frame(obs[self._key], *self.shift)
         self.latest = obs[self._key]
+        now = time.perf_counter()
+        if self.heartbeat is not None and now - self._beat >= 1.0:
+            # Liveness for scripts/meca500/stall_watch.py: every reader passes here, ~20 Hz.
+            self._beat = now
+            with contextlib.suppress(OSError):
+                self.heartbeat.write_text(f"{time.time():.1f}\n", encoding="utf-8")
         if self._t is not None and self.video_every and len(self._t) % self.video_every == 0:
             f = obs[self._key]
             self.video.append((time.perf_counter() - self._t0, np.ascontiguousarray(f[::2, ::2])))
@@ -416,8 +423,7 @@ def rollout_episode(
             live.append((step, raw[live_key].copy(), [float(raw[f"joint_{j + 1}.pos"]) for j in range(6)]))
         obs = obs_proc(raw)
         frame = build_dataset_frame(obs_features, obs, prefix=OBS_STR)
-        with GPU_LOCK:  # never alongside the tip watcher's GPU work (asr_bridge.GPU_LOCK)
-            action = predict_action(frame, policy, torch.device(DEVICE), pre, post, False, TASK, robot.name)
+        action = predict_action(frame, policy, torch.device(DEVICE), pre, post, False, TASK, robot.name)
         a = action.squeeze(0).float().cpu().numpy()
         precise = bool(a[6] > 0.5)
         ever_precise |= precise
@@ -1041,6 +1047,7 @@ def main() -> None:
 
     out_dir = Path("outputs/eval_auto") / f"{session_name()}_{time.strftime('%Y%m%d-%H%M%S')}"
     out_dir.mkdir(parents=True)
+    tap.heartbeat = out_dir / "heartbeat.txt"
     commit = harness_commit()
     (out_dir / "config.json").write_text(
         json.dumps(
@@ -1088,7 +1095,12 @@ def main() -> None:
         if not service.onnx_ready:
             sys.exit("ASR did not initialise.")
         logging.info(f"ASR ready in {time.perf_counter() - t_load:.0f} s.")
-        detector = AsrTipDetector(service.runtime, target_cfg["field_centre_px"], target_cfg["field_radius_px"])
+        # The detector the watcher and the search use runs in its own process: in this one, it and
+        # the policy deadlocked on the GPU, and a lock between them starved the control loop
+        # (asr_bridge.ProcessTipDetector). ASR's servo uses the service's own runtime, here, while
+        # no policy runs.
+        detector = ProcessTipDetector(ASR_SITE_YAML, target_cfg["field_centre_px"], target_cfg["field_radius_px"])
+        logging.info("ASR tip detector process ready.")
         watcher = TipWatcher(
             detector, lambda: tap.latest, min_confidence=WATCH_MIN_CONFIDENCE, hits=WATCH_HITS, max_jump_px=WATCH_JUMP_PX
         )
@@ -1281,6 +1293,8 @@ def main() -> None:
             logging.error(f"Could not return home ({e}); the arm holds its current pose.")
     finally:
         overlay.set_target(None)
+        if isinstance(detector, ProcessTipDetector):
+            detector.close()
         if view is not None:
             with contextlib.suppress(Exception):
                 view.close()
