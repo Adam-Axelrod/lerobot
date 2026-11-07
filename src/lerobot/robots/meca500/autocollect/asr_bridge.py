@@ -20,6 +20,7 @@ Frames from the robot are RGB; ASR is given BGR, as its own tools read images wi
 from __future__ import annotations
 
 import logging
+import queue
 import threading
 import time
 from collections.abc import Callable
@@ -111,40 +112,68 @@ class ProcessTipDetector:
     own CUDA context, and the watcher thread here only passes frames over a queue - it waits
     without holding the GIL - so the control loop neither waits nor competes for Python.
     ``detect`` has AsrTipDetector's interface: the frame goes over, the sighting comes back.
+
+    A child that dies or stops answering is restarted (up to MAX_RESTARTS) and the frame retried
+    once: on 2026-11-07 18:20 the child vanished silently a few seconds into a session, the watcher
+    and then the finish timed out, and the session ended at its first trial. ``restarts`` records
+    each restart with the child's exit code.
     """
 
+    MAX_RESTARTS = 3
+
     def __init__(self, site_yaml, field_centre_px, field_radius_px, start_timeout_s: float = 120.0):
+        self._args = (str(site_yaml), list(field_centre_px), float(field_radius_px))
+        self._start_timeout_s = start_timeout_s
+        self._lock = threading.Lock()
+        self.restarts: list[dict] = []
+        self._start()
+
+    def _start(self) -> None:
         import multiprocessing as mp
 
         ctx = mp.get_context("spawn")
         self._requests, self._replies = ctx.Queue(maxsize=1), ctx.Queue()
         self._proc = ctx.Process(
-            target=_detector_process,
-            args=(str(site_yaml), list(field_centre_px), float(field_radius_px), self._requests, self._replies),
-            name="asr-detector",
-            daemon=True,
+            target=_detector_process, args=(*self._args, self._requests, self._replies), name="asr-detector", daemon=True
         )
         self._proc.start()
-        self._lock = threading.Lock()
         try:
-            msg = self._replies.get(timeout=start_timeout_s)
+            msg = self._replies.get(timeout=self._start_timeout_s)
         except Exception as e:
             self.close()
-            raise RuntimeError(f"ASR detector process did not start within {start_timeout_s:.0f} s") from e
+            raise RuntimeError(f"ASR detector process did not start within {self._start_timeout_s:.0f} s") from e
         if msg != "ready":
             self.close()
             raise RuntimeError(f"ASR detector process failed to start: {msg}")
 
+    def _ask(self, rgb: np.ndarray, timeout_s: float):
+        if not self._proc.is_alive():
+            raise queue.Empty
+        self._requests.put(rgb, timeout=timeout_s)
+        return self._replies.get(timeout=timeout_s)
+
     def detect(self, rgb: np.ndarray, timeout_s: float = 10.0) -> TipSighting | None:
         t = time.perf_counter()
+        frame = np.ascontiguousarray(rgb)
         with self._lock:  # one request in flight
-            self._requests.put(np.ascontiguousarray(rgb))
-            reply = self._replies.get(timeout=timeout_s)
+            try:
+                reply = self._ask(frame, timeout_s)
+            except (queue.Empty, queue.Full):
+                if len(self.restarts) >= self.MAX_RESTARTS:
+                    raise RuntimeError(f"ASR detector process failed {len(self.restarts) + 1} times") from None
+                alive = self._proc.is_alive()
+                self.close()
+                self.restarts.append({"t": round(time.time(), 1), "alive": alive, "exitcode": self._proc.exitcode})
+                logging.warning(f"ASR detector process {'hung' if alive else 'died'} (exit code {self._proc.exitcode}); restarting it.")
+                self._start()
+                reply = self._ask(frame, timeout_s)
         if isinstance(reply, Exception):
             raise reply
         return None if reply is None else TipSighting((float(reply[0][0]), float(reply[0][1])), float(reply[1]), t)
 
     def close(self) -> None:
+        # Never block on the pipe to a dead child, now or at interpreter exit.
+        self._requests.cancel_join_thread()
         try:
             self._requests.put_nowait(None)
         except Exception:
@@ -152,6 +181,7 @@ class ProcessTipDetector:
         self._proc.join(timeout=5.0)
         if self._proc.is_alive():
             self._proc.terminate()
+            self._proc.join(timeout=5.0)
 
 
 class TipWatcher:

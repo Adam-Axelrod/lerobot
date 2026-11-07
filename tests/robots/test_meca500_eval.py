@@ -307,6 +307,8 @@ def run_session(monkeypatch, tmp_path, method, shift=0, episodes=2, policy=None)
     monkeypatch.setattr(eval_auto.BenchConfig, "load", lambda rig: bench_real(rig))
     monkeypatch.setattr(eval_auto, "METHOD", method)
     monkeypatch.setattr(eval_auto, "IMAGE_SHIFT_PX", shift)
+    monkeypatch.setattr(eval_auto, "BASE_OFFSET_MM", (0.0, 0.0))  # whatever the bench session is set to
+    monkeypatch.setattr(eval_auto, "FIRST_EPISODE", 0)
     monkeypatch.setattr(eval_auto, "NUM_EPISODES", episodes)
     monkeypatch.setattr(eval_auto, "check_focus", lambda scope: 4.0)
     monkeypatch.setattr(eval_auto, "precise_sleep", lambda s: None)

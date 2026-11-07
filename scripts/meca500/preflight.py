@@ -3,8 +3,8 @@
     python scripts/meca500/preflight.py
 
 Reads eval_auto.py's CONFIG block and checks, in order:
-    config     METHOD and the settings that must go with it (no image shift, no software slide in a
-               table row, whole chunks for the *_asr methods)
+    config     METHOD and the settings that must go with it (no image shift, a software slide is
+               only noted, whole chunks for the *_asr methods)
     slide      the physical-slide state is consistent (autocollect/slide.py) and which calibration the
                methods will use - pinned pre-slide, or the normal one
     files      scope calibration residual, dish height map present and agreeing with it, MODEL
@@ -63,7 +63,8 @@ def main() -> None:
     # config
     check("config: METHOD known", ev.METHOD in ("policy", "policy_asr", "scripted", "scripted_asr", "expert", "human"), ev.METHOD)
     check("config: IMAGE_SHIFT_PX 0", ev.IMAGE_SHIFT_PX == 0 or not asr, str(ev.IMAGE_SHIFT_PX))
-    check("config: no software slide (BASE_OFFSET_MM) in a table session", not any(ev.BASE_OFFSET_MM), str(ev.BASE_OFFSET_MM))
+    if any(ev.BASE_OFFSET_MM):
+        print(f"[note] SOFTWARE SLIDE {tuple(ev.BASE_OFFSET_MM)} mm: every method aims through the shifted map; rows labelled software_slide")
     if asr:
         check("config: whole chunks", ev.COARSE_ACTION_STEPS is None and ev.TEMPORAL_ENSEMBLE_COEFF is None)
 
