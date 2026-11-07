@@ -96,6 +96,7 @@ from lerobot.robots.meca500.autocollect.asr_bridge import (
     Meca500AsrHost,
     TipWatcher,
     VirtualSlide,
+    initialize_in_this_thread,
     make_service,
 )
 from lerobot.robots.meca500.autocollect.bench import BenchConfig
@@ -131,14 +132,14 @@ IMAGE_SHIFT_PX = 0
 # normal run. "policy" and "policy_asr" only.
 BASE_OFFSET_MM = (0.0, 0.0)
 # A later session carrying on after a stop: runs seeds SEED_BASE + FIRST_EPISODE onwards.
-FIRST_EPISODE = 0
+FIRST_EPISODE = 3
 # A local pretrained_model folder or a Hub model repo (downloaded once into the HF cache).
 # Must be trained on a DELTA dataset recorded on this rig with the digital target.
 # Local copies come from CREATE by scp: the lab PC downloads from the Hub at ~100 KB/s.
 MODEL = "outputs/train/basler_stage_touch_decoyrec_2026-11_delta/checkpoints/100000/pretrained_model"
 EVAL_NAME = "basler_stage_touch_decoyrec_2026-11_delta_act"  # names the "policy" results folder; see session_name()
 TASK = "move_pipette_to_target"
-NUM_EPISODES = 3  # first cautious policy_asr trials on the arm (NEXT.md row 1); then 20
+NUM_EPISODES = 20  # NEXT.md row 2: policy_asr at 0 mm (episodes 0-2 ran first as the cautious trials)
 # Training episodes used seeds 1_000_000 + episode index: this range shares none of them.
 SEED_BASE = 5_000_000
 # Longest demonstration in basler_stage_touch_dataset_2026-11 is 36.9 s (median 21.8 s).
@@ -1078,10 +1079,13 @@ def main() -> None:
             press_limit_mm=PRESS_LIMIT_MM,
         )
         service = make_service(host, ASR_SITE_YAML, out_dir / "asr", converge_px=ASR_CONVERGE_PX)
-        logging.info("Loading the ASR perception package (about a minute the first time)...")
-        init = service.initialize(timeout=600.0)
-        if not init.success:
-            sys.exit(f"ASR did not initialise: {init.reason}")
+        logging.info("Loading the ASR perception package...")
+        t_load = time.perf_counter()
+        # On this thread, not ASR's worker (asr_bridge.initialize_in_this_thread: the worker hung twice).
+        initialize_in_this_thread(service)
+        if not service.onnx_ready:
+            sys.exit("ASR did not initialise.")
+        logging.info(f"ASR ready in {time.perf_counter() - t_load:.0f} s.")
         detector = AsrTipDetector(service.runtime, target_cfg["field_centre_px"], target_cfg["field_radius_px"])
         watcher = TipWatcher(
             detector, lambda: tap.latest, min_confidence=WATCH_MIN_CONFIDENCE, hits=WATCH_HITS, max_jump_px=WATCH_JUMP_PX

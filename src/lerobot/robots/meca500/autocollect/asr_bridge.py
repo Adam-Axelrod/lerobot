@@ -323,6 +323,28 @@ def make_service(
     return service
 
 
+def initialize_in_this_thread(service) -> None:
+    """Load ASR's perception package on the CALLING thread and install it in ``service``.
+
+    ``ASRService.initialize`` loads it in a worker thread. On the lab PC that hung twice in four
+    eval_auto launches (2026-11-07): onnxruntime's CUDA session creation spun with the GIL held,
+    so not even initialize's timeout could fire. Loading on the main thread never hung (seven
+    loads that day). This does what the worker does - the same runtime constructor and
+    ``preload_detector`` - then marks the controller ready.
+    """
+    import copy
+
+    from action_state_runtime.runtime import ActionStateRuntime
+
+    ctl = service._controller
+    runtime = ActionStateRuntime(
+        config=copy.deepcopy(ctl._runtime_config), audit_dir=ctl._output_dir, backend_mode="real"
+    )
+    runtime.preload_detector()
+    ctl._rt = runtime
+    ctl._onnx_ready = True
+
+
 class VirtualSlide:
     """The robot base displaced by ``offset_mm`` (robot frame), in software.
 

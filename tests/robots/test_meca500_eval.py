@@ -529,6 +529,8 @@ class FakeAsrService:
         self.host, self.holder, self.converge_px = host, detector_holder, converge_px
         self.runtime = object()
 
+    onnx_ready = True
+
     def initialize(self, timeout=None):
         return MagicMock(success=True)
 
@@ -609,6 +611,7 @@ def run_asr_session(monkeypatch, tmp_path, *, offset=(0.0, 0.0), sees=True, meth
         return det
 
     monkeypatch.setattr(eval_auto, "make_service", make_service)
+    monkeypatch.setattr(eval_auto, "initialize_in_this_thread", lambda service: None)
     monkeypatch.setattr(eval_auto, "AsrTipDetector", make_detector)
     eval_auto.main()
     return eval_auto, holder
