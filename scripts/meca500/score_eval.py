@@ -122,6 +122,12 @@ def score_trial(row: dict, verdict, kin, field=None) -> dict:
     # Of those, a classical move (search / lower / servo / touch) the collision check refused before
     # it started - counted in Coll. % like a policy stopped by the check, and footnoted.
     refusal = collision and "would collide" in reason
+    # ... including a refusal recorded only inside a stage (the search's move to its height) or a
+    # servo move, where the row's own reason names the failed stage instead.
+    inner = [str(s.get("error", "")) for s in row.get("stages") or []]
+    inner += [str(m.get("refused", "")) for m in (row.get("servo") or {}).get("moves") or []]
+    if any("would collide" in r for r in inner):
+        collision = refusal = True
     if verdict == "hit":
         success = True
     elif verdict == "miss":
