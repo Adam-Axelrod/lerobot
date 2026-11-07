@@ -79,6 +79,10 @@ def score_trial(row: dict, verdict, kin, field=None) -> dict:
     stopped = reason.startswith("stopped")
     press = stopped and "below the dish" in reason
     collision = stopped and not press
+    # *_asr: the approach's own collision-check stop counts too, whatever came after (a search).
+    approach = str(((row.get("stages") or [{}])[0]).get("reason", ""))
+    if approach.startswith("stopped") and "below the dish" not in approach:
+        collision = True
     # Of those, a classical move (search / lower / servo / touch) the collision check refused before
     # it started - counted in Coll. % like a policy stopped by the check, and footnoted.
     refusal = collision and "would collide" in reason

@@ -209,6 +209,9 @@ ASR_SITE_YAML = "assets/benches/meca500_basler/asr_site.yaml"
 # The servo stops within this many px of the target (13.3 um/px). ASR's own default is 30 px.
 ASR_CONVERGE_PX = 3.0
 ASR_TIMEOUT_S = 120.0
+# ASR's anchor must lie within this of the tip our detector process saw just before (both are ASR's
+# own tip convention, so no offset): a farther anchor is on something else.
+ANCHOR_MAX_PX = 30.0
 # ASR's tip point is not the pipette's free end: it sits back along the shaft (2026-11-07 bench:
 # the servo converged on ASR's point and left the free end ~340 um short). The target handed to
 # ASR is the ring plus this offset (ASR px - free-end px at the servo height), measured by
@@ -791,15 +794,34 @@ def finish_with_asr(
 
     try:
         attempt = "lower"
-        # 3. Down (or up) to the servo height along the pipette's axis, the corridor every approach
-        # uses: straight down from a pre-touch point can bring the tilted pipette within margin of
-        # the dish wall. The sideways shift this adds (as much as the drop, at ~45 deg) is the
-        # servo's to correct.
+        # 3. Down (or up) to the servo height. Straight down keeps the tip's image where the
+        # handover saw it. Along the pipette's axis instead (2026-11-07 policy_asr x20) moved the tip
+        # as far sideways as it dropped - 2-4.5 mm from handovers 2-4.6 mm up - out of the lit field,
+        # and ASR's anchor found no tip. The axis is only the fallback for when the collision check
+        # refuses the vertical line (near the dish wall, as at a scripted pre-touch point).
         t = time.perf_counter()
         axis = planner.kin.tip(np.asarray(robot.robot.GetRtJointPos(), dtype=float))[:3, 2]
         drop = planner.calib.surface_z_mm + SERVO_HEIGHT_MM - p[2]
-        move_tip_to(robot, teleop, planner, p + drop / axis[2] * axis, DESCENT_SPEED_MM_S, "lower to servo height", fps, processors)
-        stage("lower", t, drop_mm=round(float(drop), 3))
+        how = "vertical"
+        try:
+            move_tip_to(robot, teleop, planner, p + [0.0, 0.0, drop], DESCENT_SPEED_MM_S, "lower to servo height", fps, processors)
+        except StageFailedError:
+            how = "along the pipette (vertical refused)"
+            move_tip_to(
+                robot, teleop, planner, p + drop / axis[2] * axis, DESCENT_SPEED_MM_S, "lower to servo height", fps, processors
+            )
+        # The tip must still be in view, as confidently as at the handover, before ASR anchors on it.
+        seen = detector.detect(grab(robot, key, 3))
+        stage(
+            "lower", t, drop_mm=round(float(drop), 3), how=how,
+            tip_px_before=[round(v, 1) for v in sighting.px],
+            tip_px_after=None if seen is None else [round(v, 1) for v in seen.px],
+            confidence_after=None if seen is None else round(seen.confidence, 3),
+        )
+        if seen is None or seen.confidence < WATCH_MIN_CONFIDENCE:
+            out["failure_stage"] = "lower"
+            out["reason"] = "tip not in view after lowering"
+            return out
         if events["stop_recording"]:
             return out
 
@@ -808,10 +830,13 @@ def finish_with_asr(
         t = time.perf_counter()
         host.reset()
         anchor = service.capture_anchor(AnchorRequest(AnchorRole.FOCAL), timeout=60.0)
-        if not anchor.valid:
-            stage("servo", t, anchor=anchor.reason)
+        # The anchor must be on the tip just seen (2026-11-07 ep 8 anchored on a frame-edge point).
+        off_tip = anchor.visual_tip_px is not None and np.hypot(*np.subtract(anchor.visual_tip_px, seen.px)) > ANCHOR_MAX_PX
+        if not anchor.valid or off_tip:
+            why = anchor.reason if not anchor.valid else f"anchor {np.round(anchor.visual_tip_px, 1).tolist()} not on the tip {np.round(seen.px, 1).tolist()}"
+            stage("servo", t, anchor=why)
             out["failure_stage"] = "servo"
-            out["reason"] = f"ASR anchor failed: {anchor.reason}"
+            out["reason"] = f"ASR anchor failed: {why}"
             return out
         # ASR servos ITS tip point: aim it ASR_TIP_OFFSET_PX from the ring so the free end lands on it.
         asr_target = np.asarray(target, dtype=float) + np.asarray(ASR_TIP_OFFSET_PX, dtype=float)
@@ -847,6 +872,11 @@ def finish_with_asr(
                 )
                 out["servo"]["free_end_score"] = round(float(free.score), 2)
         stage("servo", t, converged=r.converged, reason=r.reason, steps=r.servo_steps)
+        if not r.converged:
+            # No blind touch (2026-11-07 ep 8 touched 6.5 mm off after ASR's first move was refused).
+            out["failure_stage"] = "servo"
+            out["reason"] = f"ASR did not converge: {r.reason}"
+            return out
 
         attempt = "touch"
         # 5. Straight down onto the dish.
@@ -1293,7 +1323,7 @@ def main() -> None:
             logging.error(f"Could not return home ({e}); the arm holds its current pose.")
     finally:
         overlay.set_target(None)
-        if isinstance(detector, ProcessTipDetector):
+        if hasattr(detector, "close"):  # the detector's own process
             detector.close()
         if view is not None:
             with contextlib.suppress(Exception):

@@ -170,12 +170,16 @@ class TipWatcher:
         min_confidence: float = 0.8,
         hits: int = 2,
         max_jump_px: float = 40.0,
+        min_period_s: float = 0.1,
     ):
         self.detector = detector
         self.frame_source = frame_source
         self.min_confidence = min_confidence
         self.hits = hits
         self.max_jump_px = max_jump_px
+        # At least this long per detection: a detector that returns at once (an error, a fake)
+        # must not turn this thread into a busy loop that starves the control loop of the GIL.
+        self.min_period_s = min_period_s
         self.seen = threading.Event()
         self.sighting: TipSighting | None = None
         self.history: list[dict] = []
@@ -201,12 +205,14 @@ class TipWatcher:
     def _run(self) -> None:
         streak: list[TipSighting] = []
         try:
-            while not self._stop.is_set():
+            while not self._stop.wait(0.0):
+                t_call = time.perf_counter()
                 frame = self.frame_source()
                 if frame is None:
                     time.sleep(0.02)
                     continue
                 s = self.detector.detect(frame)
+                self._stop.wait(max(0.0, self.min_period_s - (time.perf_counter() - t_call)))
                 self.history.append(
                     {
                         "t": round(time.perf_counter() - self._t0, 3),

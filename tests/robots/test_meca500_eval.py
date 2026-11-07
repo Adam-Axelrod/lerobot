@@ -662,7 +662,7 @@ def test_virtual_slide_moves_the_real_tip_and_shows_the_policy_the_planned_joint
     np.testing.assert_allclose(shift, [2.0, 0.0, 0.0], atol=1e-3)
     # The replayed plan now lands 2 mm off; the servo, working in the real image, brings it back.
     assert rows[0]["reason"] == "finished" and rows[0]["fk_error_um"] < 60
-    assert rows[0]["servo"]["converged"] and len(rows[0]["servo"]["moves"]) >= 2
+    assert rows[0]["servo"]["converged"] and len(rows[0]["servo"]["moves"]) >= 1
     assert rows[0]["handover"]["vision_to_target_um"] > 1000
 
 
