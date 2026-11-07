@@ -347,6 +347,10 @@ def main() -> None:
     )
     parser.add_argument("--allow-different-targets", action="store_true")
     parser.add_argument(
+        "--episodes-below", type=int, default=None,
+        help="only episodes (seeds) below this, e.g. 10 for the 0 mm column of the moved table (slides ran seeds 0-9)",
+    )
+    parser.add_argument(
         "--exclude", type=int, nargs="*", default=[],
         help="episode numbers to leave out of the run rows (state why in the paper)",
     )
@@ -365,6 +369,8 @@ def main() -> None:
     for run in args.runs:
         for row in load_run(run):
             if row["episode"] in args.exclude:
+                continue
+            if args.episodes_below is not None and row["episode"] >= args.episodes_below:
                 continue
             # A physical slide keeps the session name: its trials are a row of their own.
             slid = f" @ {slide_of(row):.1f} mm" if slide_of(row) else ""

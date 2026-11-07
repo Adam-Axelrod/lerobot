@@ -705,6 +705,19 @@ def test_apply_slide_measures_the_slide_from_the_calibrations_and_moves_the_scen
     assert abs(m["rotation_deg"]) < 1e-6
     t = bench.registration_transform()
     np.testing.assert_allclose(t[:3, 3], [-2.0, 1.0, 0.0], atol=1e-9)  # the scene moved the other way
+    # A further slide (2 -> 4 mm) without going back: measured from the ORIGINAL calibration only.
+    after = json.loads((tmp_path / real.calibration_path().name).read_text())
+    after["px_to_xy"][0][2] -= 2.0  # the robot moved another 2 mm along +x: pixels map 2 mm further back
+    (tmp_path / real.calibration_path().name).write_text(json.dumps(after))
+    other = tmp_path / "other.json"
+    other.write_text(json.dumps(after))
+    monkeypatch.setattr(sys, "argv", ["apply_slide.py", "--replace", "--before", str(other)])
+    with pytest.raises(SystemExit):
+        apply_slide.main()  # not the pinned original: refused
+    monkeypatch.setattr(sys, "argv", ["apply_slide.py", "--replace", "--before", str(tmp_path / "before.json")])
+    apply_slide.main()
+    np.testing.assert_allclose(json.loads((tmp_path / "slide_measurement.json").read_text())["slide_mm"], [4.0, -1.0], atol=1e-6)
+    np.testing.assert_allclose(bench.registration_transform()[:3, 3], [-4.0, 1.0, 0.0], atol=1e-9)
     monkeypatch.setattr(sys, "argv", ["apply_slide.py", "--reset"])
     apply_slide.main()
     assert bench.registration_transform() is None

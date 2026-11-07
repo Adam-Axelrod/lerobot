@@ -2,6 +2,7 @@
 
     python scripts/meca500/apply_slide.py --before <scope_calibration backup from before the slide>
     python scripts/meca500/apply_slide.py --reset      # back at the original position
+    python scripts/meca500/apply_slide.py --replace --before <the pinned original>   # 2 -> 4 mm
 
 The microscope, the lamp, the stage and the dish stay put while the robot base moves by d, so in
 robot coordinates every one of them moves by -d. A full auto_calibrate.py run after the slide
@@ -47,6 +48,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--before", type=Path, help="the scope calibration from before the slide (a .bak.json)")
     ap.add_argument("--reset", action="store_true", help="remove the slide registration (robot back in place)")
+    ap.add_argument(
+        "--replace", action="store_true",
+        help="a further slide (e.g. 2 -> 4 mm) without returning to 0 mm: --before must be the ORIGINAL "
+        "calibration already pinned; the slide is measured from it and the registration replaced",
+    )
     args = ap.parse_args()
     bench = BenchConfig.load(RIG)
     reg_path, out_path = bench.registration_path(), bench.root / MEASUREMENT
@@ -59,8 +65,16 @@ def main() -> None:
         return
     if args.before is None:
         ap.error("give --before, or --reset")
-    if reg_path.exists():
-        sys.exit(f"{reg_path} exists: run --reset first, then measure the new slide from the original position.")
+    if reg_path.exists() and not args.replace:
+        sys.exit(f"{reg_path} exists: run --reset first, or --replace with the ORIGINAL calibration as --before.")
+    if args.replace:
+        # The registration is absolute (CAD -> robot = -d, d measured from the original calibration),
+        # so a further slide is measured and registered against the true 0 mm reference only if
+        # --before is that original - the file pinned at the first slide.
+        if not pinned_cal.exists():
+            sys.exit("--replace needs a slide in force (no pinned calibration): use a plain run.")
+        if json.loads(Path(args.before).read_text(encoding="utf-8")) != json.loads(pinned_cal.read_text(encoding="utf-8")):
+            sys.exit(f"--before {args.before} is not the pinned original calibration {pinned_cal.name}: refusing.")
 
     before = ScopeCalibration.load(args.before)
     after = bench.calibration()
