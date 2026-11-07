@@ -30,7 +30,8 @@ Definitions:
     collision  a stop on the collision model. Reaching the press limit under the dish is not one:
              it is how most policy touches end, so it is counted separately and the trial is
              judged on where the tip landed
-    distance median [IQR] of the final distance, by the tip detector on the frame the method saw
+    distance median [IQR] of every trial's final distance: the tip detector on the frame the method
+             saw, or forward kinematics when it found no tip or a stray (STRAY_UM from FK)
     time     median arrival_s of the successful trials (metrics.path_metrics)
     SPARC, economy   median over all trials with a path
 """
@@ -54,14 +55,23 @@ CLOSE_UM = 100.0
 FPS = 20
 
 
-def reached_view(row: dict, field) -> bool | None:
+def reached_view(row: dict, field, kin=None) -> bool | None:
     """Did the tip get under the microscope? policy_asr / scripted_asr: the handover happened
-    (searched or not). Other methods: the final tip, by forward kinematics, is in the lit field."""
+    (searched or not). Other methods: the tip, by forward kinematics through the scope calibration,
+    ever entered the lit field during the trial (the trajectory in traj.npz); without one, the
+    final tip."""
     if "stages" in row:
         return any(s["stage"] == "handover" for s in row["stages"])
-    if field is None or row.get("fk_tip_px") is None:
+    if field is None:
         return None
-    centre, radius = field
+    centre, radius = np.asarray(field[0], float), float(field[1])
+    path = row.get("_path")
+    if path is not None and kin is not None and len(path[1]):
+        calib = _calibration()
+        px = calib.xy_to_pixel(np.array([kin.tip(q)[:3, 3][:2] for q in path[1]]))
+        return bool(np.any(np.linalg.norm(px - centre, axis=1) <= radius))
+    if row.get("fk_tip_px") is None:
+        return None
     return bool(np.linalg.norm(np.subtract(row["fk_tip_px"], centre)) <= radius)
 
 
@@ -70,9 +80,30 @@ def slide_of(row: dict) -> float:
     return float((row.get("slide") or {}).get("slide_norm_mm", 0.0))
 
 
+# The protocol's final distance: the detector's, or forward kinematics' when the detector found no
+# tip or a stray (disagreeing with FK by more than this, i.e. not the same tip).
+STRAY_UM = 500.0
+
+
+_CALIB = []
+
+
+def _calibration():
+    if not _CALIB:
+        _CALIB.append(BenchConfig.load(RIG).calibration())
+    return _CALIB[0]
+
+
+def final_distance(row: dict) -> float | None:
+    vision, fk = row.get("vision_error_um"), row.get("fk_error_um")
+    if vision is None or (fk is not None and abs(vision - fk) > STRAY_UM):
+        return fk
+    return vision
+
+
 def score_trial(row: dict, verdict, kin, field=None) -> dict:
     """One results.jsonl row, plus its by-eye verdict and its path metrics."""
-    distance = row.get("vision_error_um")
+    distance = final_distance(row)
     if isinstance(verdict, int | float) and not isinstance(verdict, bool):
         distance = float(verdict)
     reason = str(row.get("reason", ""))
@@ -98,12 +129,16 @@ def score_trial(row: dict, verdict, kin, field=None) -> dict:
         close = False  # missed for another reason than distance (e.g. never touched)
     else:
         close = distance is not None and distance <= CLOSE_UM and not collision
+    if row.get("failure_stage"):
+        # *_asr: a trial that failed at a stage never touched (no touch without a converged servo),
+        # so wherever the tip hovered it is neither a success nor close (2026-11-07 ep 16).
+        success = close = False
     out = {
         "episode": row["episode"],
         "success": success,
         "close": close,
         "search_used": bool(row.get("search_used", False)),
-        "view": reached_view(row, field),
+        "view": reached_view(row, field, kin),
         "slide_mm": slide_of(row),
         "failure_stage": row.get("failure_stage"),
         "distance_um": distance,
@@ -111,6 +146,11 @@ def score_trial(row: dict, verdict, kin, field=None) -> dict:
         "refusal": refusal,
         "press": press,
     }
+    q_end = row.get("_approach_end_q")
+    if q_end is not None and kin is not None and row.get("target_px") is not None:
+        calib = _calibration()
+        px = calib.xy_to_pixel(kin.tip(q_end)[:3, 3][:2])[0]
+        out["approach_end_um"] = float(np.linalg.norm(px - np.asarray(row["target_px"], float))) * calib.mm_per_px * 1000
     path = row.get("_path")
     if path is not None and len(path[0]) >= 4:
         t, q = path
@@ -122,7 +162,11 @@ def without_search(trial: dict) -> dict:
     """A policy_asr trial scored as if the search did not exist: one that needed it fails."""
     if not trial["search_used"]:
         return trial
-    return trial | {"success": False, "close": False, "distance_um": None, "failure_stage": "view", "view": False}
+    # Without the search the trial ends where the policy left the tip: its final distance is the
+    # FK distance at the policy's last command.
+    return trial | {
+        "success": False, "close": False, "distance_um": trial.get("approach_end_um"), "failure_stage": "view", "view": False,
+    }
 
 
 def load_run(run: Path) -> list[dict]:
@@ -137,6 +181,8 @@ def load_run(run: Path) -> list[dict]:
             with np.load(traj) as z:
                 # Runs from before ObservationTap logged only the policy's own t and q_meas.
                 row["_path"] = (z["obs_t"], z["obs_q"]) if "obs_t" in z else (z["t"], z["q_meas"])
+                if "q_cmd" in z and len(z["q_cmd"]):
+                    row["_approach_end_q"] = np.asarray(z["q_cmd"][-1], float)  # the policy's last command
     verdict_file = run / "verdicts.json"
     verdicts = json.loads(verdict_file.read_text(encoding="utf-8")) if verdict_file.exists() else {}
     for row in rows:
@@ -224,6 +270,27 @@ def latex_moved_row(name: str, by_slide: dict[float, dict]) -> str:
     return f"{name} & " + " & ".join(cells) + f" \\\\  % {slides}"
 
 
+def offset_grid():
+    """The pixel box the ASR tip offset was measured over (asr_tip_offset.json), or None."""
+    path = BenchConfig.load(RIG).root / "asr_tip_offset.json"
+    if not path.exists():
+        return None
+    px = np.array([f["target_px"] for f in json.loads(path.read_text(encoding="utf-8"))["frames"]], float)
+    return px.min(axis=0), px.max(axis=0)
+
+
+def trial_line(row: dict, t: dict) -> str:
+    grid = offset_grid()
+    tgt = np.asarray(row["target_px"], float)
+    inside = None if grid is None else bool(np.all(tgt >= grid[0]) and np.all(tgt <= grid[1]))
+    sv = row.get("servo") or {}
+    return (
+        f"ep{row['episode']:02d} target ({tgt[0]:.1f}, {tgt[1]:.1f}) in offset grid {inside} | "
+        f"{'hit' if t['success'] else 'close' if t['close'] else 'miss'} {num(t['distance_um'])} um | "
+        f"free end at servo {sv.get('free_end_to_target_um')} um | search {t['search_used']} | fail {t['failure_stage']}"
+    )
+
+
 def check_same_targets(sessions: dict[str, list[dict]]) -> list[str]:
     """Seeds whose target differs between sessions."""
     by_seed: dict[int, tuple[str, list[float]]] = {}
@@ -279,6 +346,14 @@ def main() -> None:
         "--verdicts", type=Path, help="--dataset: a JSON file of by-eye verdicts, keyed by episode"
     )
     parser.add_argument("--allow-different-targets", action="store_true")
+    parser.add_argument(
+        "--exclude", type=int, nargs="*", default=[],
+        help="episode numbers to leave out of the run rows (state why in the paper)",
+    )
+    parser.add_argument(
+        "--trials", action="store_true",
+        help="also print one line per trial: target pixel, inside the ASR tip-offset grid or not, outcome",
+    )
     args = parser.parse_args()
     if not args.runs and args.dataset is None:
         parser.error("give at least one run folder, or --dataset")
@@ -289,6 +364,8 @@ def main() -> None:
     sessions: dict[str, list[dict]] = {}
     for run in args.runs:
         for row in load_run(run):
+            if row["episode"] in args.exclude:
+                continue
             # A physical slide keeps the session name: its trials are a row of their own.
             slid = f" @ {slide_of(row):.1f} mm" if slide_of(row) else ""
             sessions.setdefault(session_of(run) + slid, []).append(row)
@@ -300,6 +377,9 @@ def main() -> None:
         trials = [score_trial(r, r["_verdict"], kin, field) for r in rows]
         s = summarise(trials)
         print(format_row(name, s))
+        if args.trials:
+            for r, t in zip(rows, trials, strict=True):
+                print("    " + trial_line(r, t))
         latex.append(latex_main_row(name, s))
         base = name.split(" @ ")[0]
         moved.setdefault(base, {})[trials[0]["slide_mm"] if trials else 0.0] = s
