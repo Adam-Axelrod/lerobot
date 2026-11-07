@@ -18,6 +18,18 @@ fix the test set: every METHOD faces the same targets, starts and stage position
                           and the same collision check). They lower the tip until the floor stops
                           it, then press the right arrow. Starts at the planned approach
                           orientation, since they cannot rotate.
+               policy_asr - MODEL brings the tip under the microscope while Huanyu's tip detector
+                          (ActionStateRuntime, autocollect/asr_bridge.py) watches every frame; as
+                          soon as it sees the tip (WATCH_HITS confident frames in a row) the policy
+                          stops and a classical controller finishes: lower the tip straight down
+                          to SERVO_HEIGHT_MM, ASR's visual servo onto the target pixel, then a
+                          straight-down touch. If the policy ends without the tip in view, SEARCH
+                          looks for it: a bounded spiral at a safe height around where the policy
+                          left the tip, every move collision-checked. Episodes that needed the
+                          search are marked ("search_used"), so results are reported with and
+                          without it. Each stage is logged with its time and outcome.
+               scripted_asr - the baseline for policy_asr: the planned path (aimed at the target
+                          through the calibration) to its pre-touch point, then the same stages.
     4. measure - final tip position from forward kinematics AND from the tip detector on the
                raw frame, both against the target, in px and um; raw frames are saved for the
                by-eye check, plus the joint trajectory for the smoothness metric.
@@ -25,6 +37,11 @@ fix the test set: every METHOD faces the same targets, starts and stage position
 The robot runs with relative_actions=False throughout: this script integrates the policy's
 delta onto the controller's current target itself, so that it can check the resulting pose
 before sending it. Transits are absolute scripted moves, as in record_auto.
+
+BASE_OFFSET_MM slides the robot base in software (autocollect/asr_bridge.VirtualSlide), for the
+"move the robot relative to the microscope" test: the policy is shown, and commands, the joints of
+a robot whose base sits BASE_OFFSET_MM away, while the real arm puts the tip where that robot
+would. The start pose moves with it. Images, contact and collision checks are all real.
 
 IMAGE_SHIFT_PX > 0 simulates a knocked camera (autocollect/disturbance.py): every frame every
 reader sees is shifted, in a seeded direction per episode. The final position by forward
@@ -38,6 +55,7 @@ trial), Esc stops the session. Enter toggles precision mode for "human".
 """
 
 import contextlib
+from dataclasses import replace as dc_replace
 import json
 import logging
 import sys
@@ -73,7 +91,15 @@ from lerobot.processor import (
     observation_to_transition,
     transition_to_observation,
 )
+from lerobot.robots.meca500.autocollect.asr_bridge import (
+    AsrTipDetector,
+    Meca500AsrHost,
+    TipWatcher,
+    VirtualSlide,
+    make_service,
+)
 from lerobot.robots.meca500.autocollect.bench import BenchConfig
+from lerobot.robots.meca500.autocollect.slide import split_benches
 from lerobot.robots.meca500.autocollect.disturbance import sample_shift, shift_frame
 from lerobot.robots.meca500.autocollect.focus_check import FocusMismatchError, check_focus
 from lerobot.robots.meca500.autocollect.operator_guard import OperatorGuard
@@ -95,20 +121,24 @@ from lerobot.utils.utils import init_logging, log_say
 
 # ----------------------------- CONFIG -----------------------------
 RIG = "meca500_basler"
-# Which row this session fills: "policy", "scripted", "expert" or "human" (see the docstring).
-METHOD = "policy"
+# Which row this session fills: "policy", "policy_asr", "scripted", "scripted_asr", "expert" or "human"
+# (see the docstring).
+METHOD = "policy_asr"
 # Pixels to shift every frame by (12.85 um/px), simulating a knocked camera. 0 is a normal run.
 # 16 px (~0.2 mm) is inside the expert's 0.5 mm correction cap; 58 px (~0.75 mm) is beyond it.
 IMAGE_SHIFT_PX = 0
+# The software slide of the robot base (robot frame, mm; x, y in the table plane). (0, 0) is a
+# normal run. "policy" and "policy_asr" only.
+BASE_OFFSET_MM = (0.0, 0.0)
 # A later session carrying on after a stop: runs seeds SEED_BASE + FIRST_EPISODE onwards.
 FIRST_EPISODE = 0
 # A local pretrained_model folder or a Hub model repo (downloaded once into the HF cache).
 # Must be trained on a DELTA dataset recorded on this rig with the digital target.
 # Local copies come from CREATE by scp: the lab PC downloads from the Hub at ~100 KB/s.
-MODEL = "outputs/train/basler_stage_touch_decoy_2026-11_tip_delta_ring1/checkpoints/100000/pretrained_model"
-EVAL_NAME = "basler_stage_touch_decoy_2026-11_tip_delta_ring1_act"  # names the "policy" results folder; see session_name()
+MODEL = "outputs/train/basler_stage_touch_decoyrec_2026-11_delta/checkpoints/100000/pretrained_model"
+EVAL_NAME = "basler_stage_touch_decoyrec_2026-11_delta_act"  # names the "policy" results folder; see session_name()
 TASK = "move_pipette_to_target"
-NUM_EPISODES = 5  # handover trial (2026-11-06): 5 each of A and E, same targets as their earlier runs
+NUM_EPISODES = 3  # first cautious policy_asr trials on the arm (NEXT.md row 1); then 20
 # Training episodes used seeds 1_000_000 + episode index: this range shares none of them.
 SEED_BASE = 5_000_000
 # Longest demonstration in basler_stage_touch_dataset_2026-11 is 36.9 s (median 21.8 s).
@@ -139,7 +169,7 @@ COARSE_ACTION_STEPS: int | None = None
 # the no-decoy model reached precision entry aimed 2.1-2.7 mm off, the demos 0.18-0.67 mm).
 # Time, the trajectory log and the scores count from the handover. The settle rule cannot end an
 # episode until the tip has moved HANDOVER_MIN_MOVE_UM, since the demos hold still on arrival.
-HANDOVER = True
+HANDOVER = False
 HANDOVER_MIN_MOVE_UM = 50.0
 
 # Per-step clamps (deg), just above the largest step in the 200 training episodes
@@ -167,6 +197,40 @@ DEVICE = "cuda"
 # after the no-decoy ACT test, which has no such frames; it does not change what the policy sees.
 SAVE_LIVE_FRAMES = True
 LIVE_EVERY_ENSEMBLE = 10
+# Every VIDEO_EVERY-th frame read during the drive (20 Hz in the policy loop and scripted moves),
+# kept at half size and written as epNNN/episode.mp4 with the target drawn on. 0 = no video.
+VIDEO_EVERY = 2
+
+# --- METHOD = "policy_asr" ---
+# ASR's site file: perception package (ViT-B ONNX), image size and the initial pixel/robot Jacobian
+# from scope_calibration.json. Needs the ActionStateRuntime clone installed in .venv.
+ASR_SITE_YAML = "assets/benches/meca500_basler/asr_site.yaml"
+# The servo stops within this many px of the target (13.3 um/px). ASR's own default is 30 px.
+ASR_CONVERGE_PX = 3.0
+ASR_TIMEOUT_S = 120.0
+# Handover: this many detections in a row at or above this confidence, within WATCH_JUMP_PX of
+# each other. On the 2026-11-05/06 rollout frames the tip scored 0.8-1.0 once in view; the only
+# stray detections (single frames, tip out of view) scored 0.63-0.68.
+WATCH_MIN_CONFIDENCE = 0.8
+WATCH_HITS = 2
+WATCH_JUMP_PX = 120.0
+# The fallback when the policy ends with the tip out of view. False reports the "without search"
+# row directly; with True the episodes that searched are marked, so both rows come from one run.
+SEARCH = True
+SEARCH_HEIGHT_MM = 1.0  # the search runs this far above the dish (straight up or down to it first)
+SEARCH_STEP_MM = 1.0  # spacing of the spiral's rings and points (the lit field is 4.8 mm across)
+SEARCH_RADIUS_MM = 4.0
+SEARCH_SPEED_MM_S = 2.0
+# The servo runs with the tip this far above the dish: the demos first reach the ring in the image
+# ~0.1 mm up, and the tip stays sharp and detectable there. Then a vertical touch.
+SERVO_HEIGHT_MM = 0.15
+DESCENT_SPEED_MM_S = 1.0
+TOUCH_SPEED_MM_S = 0.2
+# Bounds on the servo's moves, which are level (ASR's Jacobian has no z column), straight and
+# collision-checked: the longest single move, and how far from where it started the servo may take
+# the tip. The lit field is 4.8 mm across, and ASR covered 2 mm in one move in the 2026-11-06 dry run.
+ASR_MAX_STEP_MM = 5.0
+ASR_MAX_TRAVEL_MM = 5.0
 
 # --- METHOD = "human" ---
 OPERATOR = "experienced"  # names the results folder: "experienced", "novice1", "embryology", ...
@@ -175,6 +239,13 @@ HUMAN_TIME_S = 120.0  # as in record_microscope.py
 GAIN_TR = 50.0
 GAIN_TR_FINE = 5.0
 # -----------------------------------------------------------------
+
+
+def safety_surface(planner) -> float:
+    """The dish surface (robot-frame z) under the press limit and the floor of every policy_asr
+    move: the current dish height map's, for every method and after a physical slide too (the
+    methods keep only the pre-slide pixel <-> XY map, autocollect/slide.py)."""
+    return planner.calib.surface_z_mm
 
 
 def deaf() -> dict:
@@ -192,6 +263,12 @@ def session_name() -> str:
         name += f"_coarse{COARSE_ACTION_STEPS}"
     if METHOD == "policy" and HANDOVER:
         name += "_handover"
+    if METHOD == "policy_asr":
+        name = f"{EVAL_NAME}_asr" + ("" if SEARCH else "_nosearch")
+    if METHOD == "scripted_asr":
+        name += "" if SEARCH else "_nosearch"
+    if any(BASE_OFFSET_MM):
+        name += "_slide" + "x".join(f"{v:g}" for v in BASE_OFFSET_MM)
     return f"{name}_shift{IMAGE_SHIFT_PX}" if IMAGE_SHIFT_PX else name
 
 
@@ -210,12 +287,22 @@ class ObservationTap:
         self._t0 = 0.0
         self._t: list[float] | None = None
         self._q: list[list[float]] = []
+        # The newest frame any reader got, for the tip watcher's thread (which must not read the
+        # robot itself while the control loop does).
+        self.latest: np.ndarray | None = None
+        # Every video_every-th frame read while started, at half size, for epNNN/episode.mp4.
+        self.video_every = 0
+        self.video: list[np.ndarray] = []
         robot.get_observation = self.read
 
     def read(self) -> dict:
         obs = self._read()
         if self.shift != (0, 0):
             obs[self._key] = shift_frame(obs[self._key], *self.shift)
+        self.latest = obs[self._key]
+        if self._t is not None and self.video_every and len(self._t) % self.video_every == 0:
+            f = obs[self._key]
+            self.video.append((time.perf_counter() - self._t0, np.ascontiguousarray(f[::2, ::2])))
         if self._t is not None:
             self._t.append(time.perf_counter() - self._t0)
             self._q.append([float(obs[f"joint_{i + 1}.pos"]) for i in range(6)])
@@ -224,6 +311,7 @@ class ObservationTap:
     def start(self) -> None:
         self._t0 = time.perf_counter()
         self._t, self._q = [], []
+        self.video = []
 
     def stop(self) -> dict:
         out = {"obs_t": np.asarray(self._t or []), "obs_q": np.asarray(self._q)}
@@ -261,19 +349,22 @@ def load_policy(model: str):
 
 def rollout_episode(
     robot, policy, pre, post, obs_proc, obs_features, planner, events, live_key: str | None = None,
-    min_move_um: float = 0.0,
+    min_move_um: float = 0.0, stop_when=None, slide: VirtualSlide | None = None,
 ) -> dict:
     """Run the policy until it settles, the time runs out, a check fails or the operator stops it.
 
     With ``live_key``, the result's "live" holds (step, frame, joints) at each policy call: the
-    camera frame before the marker overlay, copied in memory (see SAVE_LIVE_FRAMES)."""
+    camera frame before the marker overlay, copied in memory (see SAVE_LIVE_FRAMES).
+    ``stop_when`` (a threading.Event) ends the episode as soon as it is set: the handover.
+    ``slide`` runs the policy on a virtually displaced base: it sees and commands the virtual
+    joints, the arm gets the real ones (BASE_OFFSET_MM)."""
     kin, checker, calib = planner.kin, planner.checker, planner.calib
     fps = planner.lim.fps
     policy.reset()
     pre.reset()
     post.reset()
     log = {k: [] for k in ("t", "q_cmd", "q_meas", "delta", "precision", "clamped", "backstop_cut")}
-    n_steps = int(getattr(policy.config, "n_action_steps", 1))
+    n_steps = int(getattr(getattr(policy, "config", None), "n_action_steps", 1))
     live_every = n_steps if n_steps > 1 else LIVE_EVERY_ENSEMBLE
     live = []
     reason, settled, ever_precise = "time limit", 0, False
@@ -286,6 +377,10 @@ def rollout_episode(
     # step - the first bench test (2026-11-05) commanded only 54% of what the policy asked for
     # and never reached the dish. The arm is at rest after the transit, so the setpoint is the goal.
     q_goal = np.asarray(robot.robot.GetRtTargetJointPos(), dtype=float)
+    if slide is not None:
+        q_goal = slide.to_virtual(q_goal)  # the goal in the policy's (virtual) frame
+        if q_goal is None:
+            raise PlanningError("no IK solution for the virtual start pose")
     tip_mode = getattr(policy, "tip_actions", False)
     axes = camera_axes(calib) if tip_mode else None
     t_goal = kin.tip(q_goal) if tip_mode else None
@@ -297,7 +392,16 @@ def rollout_episode(
         if events["stop_recording"]:
             reason = "operator"
             break
+        if stop_when is not None and stop_when.is_set():
+            reason = "handover: tip in view"
+            break
         raw = robot.get_observation()
+        if slide is not None:
+            q_virtual = slide.to_virtual([raw[f"joint_{j + 1}.pos"] for j in range(6)])
+            if q_virtual is None:
+                reason = "stopped: no IK solution for the virtual joint state"
+                break
+            raw = {**raw, **{f"joint_{j + 1}.pos": float(q_virtual[j]) for j in range(6)}}
         step = len(log["t"])
         if live_key is not None and step % live_every == 0:
             # Copied before the overlay step can draw on it; the copy is never fed back.
@@ -329,9 +433,15 @@ def rollout_episode(
             joint_step = a[:6]
         delta = np.clip(joint_step, -clamp, clamp)
         q_cmd = q_goal + delta
+        q_policy = q_cmd
+        if slide is not None:
+            q_cmd = slide.to_real(q_policy)
+            if q_cmd is None:
+                reason = "stopped: no IK solution for the slid command"
+                break
 
         tip = kin.tip(q_cmd)[:3, 3]
-        height = float(tip[2] - calib.surface_z_mm)
+        height = float(tip[2] - safety_surface(planner))
         if height < -PRESS_LIMIT_MM:
             reason = f"stopped: commanded tip {height * 1000:.0f} um below the dish surface"
             break
@@ -348,11 +458,19 @@ def rollout_episode(
         )
         # What was actually sent: the robot's backstop clamp (measured from the lagging setpoint)
         # may have cut the step, and the next delta must start from where the goal really is.
-        q_goal = np.array([sent[f"joint_{i + 1}.pos"] for i in range(6)], dtype=float)
+        q_sent = np.array([sent[f"joint_{i + 1}.pos"] for i in range(6)], dtype=float)
+        if slide is None:
+            q_goal = q_sent
+        else:
+            cut = np.abs(q_sent - q_cmd).max() > 1e-6
+            q_goal = slide.to_virtual(q_sent) if cut else q_policy
+            if q_goal is None:
+                reason = "stopped: no IK solution for the virtual goal"
+                break
         if tip_mode:
             # A clamped step did not reach t_next: carry on from where the goal really is.
             t_goal = t_next if np.abs(q_goal - q_ik).max() < 1e-6 else kin.tip(q_goal)
-        log["backstop_cut"].append(bool(np.abs(q_goal - q_cmd).max() > 1e-6))
+        log["backstop_cut"].append(bool(np.abs(q_sent - q_cmd).max() > 1e-6))
         log["t"].append(t0 - t_start)
         log["q_cmd"].append(q_cmd)
         log["q_meas"].append(np.asarray(robot.robot.GetRtJointPos(), dtype=float))
@@ -415,12 +533,30 @@ def save_live(ep_dir: Path, live: list, target) -> None:
     )
 
 
-def measure_final(robot, arm, planner, bench, background, target_px, shift=(0, 0)) -> tuple[dict, np.ndarray]:
+def save_video(ep_dir: Path, frames: list, target, style, fps: float) -> None:
+    """epNNN/episode.mp4: the kept (time, frame) pairs back at full size, with the target drawn on;
+    episode_t.json holds each frame's time since the drive started (the trajectory's clock)."""
+    if not frames:
+        return
+    import cv2
+
+    h, w = frames[0][1].shape[0] * 2, frames[0][1].shape[1] * 2
+    ep_dir.mkdir(parents=True, exist_ok=True)
+    out = cv2.VideoWriter(str(ep_dir / "episode.mp4"), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+    for _, f in frames:
+        full = cv2.resize(f, (w, h), interpolation=cv2.INTER_LINEAR)
+        out.write(cv2.cvtColor(draw_target(full, target, style), cv2.COLOR_RGB2BGR))
+    out.release()
+    (ep_dir / "episode_t.json").write_text(json.dumps([round(t, 3) for t, _ in frames]), encoding="utf-8", newline="\n")
+
+
+def measure_final(robot, arm, planner, bench, background, target_px, shift=(0, 0), calib=None) -> tuple[dict, np.ndarray]:
     """Tip vs target by forward kinematics and by the tip detector, after the arm stops.
 
     ``robot`` supplies the frames and ``arm`` the controller connection (they differ for "human").
+    ``calib`` is the TRUE calibration (post-slide, see autocollect/slide.py); default the planner's.
     """
-    kin, calib = planner.kin, planner.calib
+    kin, calib = planner.kin, (calib or planner.calib)
     arm.WaitIdle(timeout=10)
     q = np.asarray(arm.GetRtJointPos(), dtype=float)
     tip = kin.tip(q)[:3, 3]
@@ -460,6 +596,241 @@ def run_expert(robot, teleop, plan, planner, key, background, events, processors
         return {"reason": f"stopped: {e}"}
     events["exit_early"] = False
     return {"reason": "finished", "corrections": extra["corrections"]}
+
+
+class StageFailedError(RuntimeError):
+    """A policy_asr stage could not be carried out; the arm holds where it is."""
+
+
+def move_tip_to(robot, teleop, planner, p, speed_mm_s, name, fps, processors, coarse=False) -> np.ndarray:
+    """A straight, collision-checked tip move holding the orientation; returns the settled joints."""
+    q = np.asarray(robot.robot.GetRtJointPos(), dtype=float)
+    floor = safety_surface(planner) - PRESS_LIMIT_MM
+    if p[2] < floor:
+        # A backstop: no policy_asr move aims below the dish (touch_offset_mm >= 0 keeps them above).
+        logging.warning(f"{name}: target {1000 * (floor - p[2]):.0f} um below the press limit; held at the limit.")
+        p = np.array([p[0], p[1], floor])
+    if np.linalg.norm(planner.kin.tip(q)[:3, 3] - p) < 1e-3:
+        return q
+    try:
+        path = planner.plan_line(
+            q, p, speed_mm_s, name, max_step_deg=planner.lim.max_joint_step_deg if coarse else None
+        )
+    except PlanningError as e:
+        raise StageFailedError(str(e)) from e
+    # Flag 0: the plan keeps its own step limit, and the policy-mode precision backstop is tighter.
+    run_plan(robot, teleop, path, np.zeros(len(path)), fps, deaf(), processors)
+    return wait_settled(robot, path[-1], SETTLE_TIMEOUT_S)
+
+
+def spiral_offsets(step_mm: float, radius_mm: float) -> list[np.ndarray]:
+    """Points on rings step_mm apart out to radius_mm, about step_mm apart along each ring."""
+    pts = []
+    for r in np.arange(step_mm, radius_mm + 1e-9, step_mm):
+        n = max(6, int(np.ceil(2 * np.pi * r / step_mm)))
+        pts += [r * np.array([np.cos(a), np.sin(a)]) for a in np.linspace(0, 2 * np.pi, n, endpoint=False)]
+    return pts
+
+
+def look_for_tip(robot, detector, key: str):
+    """Two still frames: the tip counts as found only if both see it, close together."""
+    hits = []
+    for _ in range(2):
+        s = detector.detect(grab(robot, key, 3))
+        if s is None or s.confidence < WATCH_MIN_CONFIDENCE:
+            return None
+        hits.append(s)
+    return hits[-1] if np.hypot(*np.subtract(hits[0].px, hits[1].px)) <= WATCH_JUMP_PX else None
+
+
+def search_for_tip(robot, teleop, planner, detector, key, fps, processors) -> tuple:
+    """The fallback: a spiral at a safe height around where the policy left the tip."""
+    t0 = time.perf_counter()
+    pose = planner.kin.tip(np.asarray(robot.robot.GetRtJointPos(), dtype=float))
+    # Always at SEARCH_HEIGHT_MM: much higher and the tip is too blurred to detect (the 2026-11-06
+    # handover frames: detected at 0.9-1.0 confidence up to ~1.5 mm above the dish). It gets there
+    # along the pipette's own axis - the way every approach comes in - since straight down from a
+    # pre-touch point brought the tilted pipette within margin of the dish wall.
+    z = planner.calib.surface_z_mm + SEARCH_HEIGHT_MM
+    axis = pose[:3, 2]
+    p0 = pose[:3, 3] + (z - pose[2, 3]) / axis[2] * axis
+    info = {"points_tried": 0, "points_refused": 0, "height_change_mm": round(float(z - pose[2, 3]), 3)}
+    move_tip_to(robot, teleop, planner, p0, SEARCH_SPEED_MM_S, "search height", fps, processors, coarse=True)
+    found = look_for_tip(robot, detector, key)
+    for off in spiral_offsets(SEARCH_STEP_MM, SEARCH_RADIUS_MM):
+        if found is not None:
+            break
+        info["points_tried"] += 1
+        try:
+            move_tip_to(
+                robot, teleop, planner, np.array([p0[0] + off[0], p0[1] + off[1], z]),
+                SEARCH_SPEED_MM_S, "search", fps, processors, coarse=True,
+            )
+        except StageFailedError:
+            info["points_refused"] += 1
+            continue
+        found = look_for_tip(robot, detector, key)
+    info["found"] = found is not None
+    info["duration_s"] = round(time.perf_counter() - t0, 2)
+    return found, info
+
+
+def run_policy_asr(
+    robot, teleop, policy, pre, post, obs_proc, obs_features, planner, events, key, target,
+    watcher, detector, service, host, fps, processors, slide, live_key, plan=None,
+) -> dict:
+    """METHOD "policy_asr": the learned approach, the handover, then the classical finish.
+
+    With ``policy`` None ("scripted_asr", the baseline) the approach is instead the planned path
+    to its pre-touch point, open loop, and the same stages follow."""
+    t0 = time.perf_counter()
+    kin = planner.kin
+    out = {"stages": [], "search_used": False, "failure_stage": None}
+
+    def stage(name: str, t_start: float, **info) -> None:
+        out["stages"].append({"stage": name, "t_s": round(t_start - t0, 2), "duration_s": round(time.perf_counter() - t_start, 2), **info})
+        out["stage_reached"] = name
+
+    def tip_now() -> np.ndarray:
+        return kin.tip(np.asarray(robot.robot.GetRtJointPos(), dtype=float))[:3, 3]
+
+    # 1. The approach: scripted (the baseline), or learned with the detector watching.
+    t = time.perf_counter()
+    if policy is None:
+        k = plan.pretouch_index
+        run_plan(robot, teleop, plan.joints[: k + 1], np.zeros(k + 1), fps, events, processors)
+        events["exit_early"] = False
+        wait_settled(robot, plan.joints[k], SETTLE_TIMEOUT_S)
+        out["log"], out["live"] = {}, []
+        stage("approach", t, reason="scripted path to the pre-touch point")
+        out["reason"] = "scripted"
+        watcher.sighting = None
+        if events["stop_recording"]:
+            return out
+        return finish_with_asr(robot, teleop, planner, events, key, target, None, detector, service, host, fps, processors, out, t0, stage, tip_now)
+    watcher.start()
+    try:
+        run = rollout_episode(
+            robot, policy, pre, post, obs_proc, obs_features, planner, events,
+            live_key=live_key, stop_when=watcher.seen, slide=slide,
+        )
+    finally:
+        watcher.stop()
+    robot.robot.WaitIdle(timeout=10)
+    out["log"], out["live"] = run.pop("log"), run.pop("live")
+    stage("approach", t, reason=run["reason"], loop_hz=run["loop_hz"], detections=watcher.history, watcher_error=watcher.error)
+    out["reason"] = run["reason"]
+    if events["stop_recording"]:
+        return out
+
+    return finish_with_asr(
+        robot, teleop, planner, events, key, target, watcher.sighting, detector, service, host, fps, processors,
+        out, t0, stage, tip_now,
+    )
+
+
+def finish_with_asr(
+    robot, teleop, planner, events, key, target, sighting, detector, service, host, fps, processors, out, t0, stage,
+    tip_now,
+) -> dict:
+    """The classical finish of policy_asr and scripted_asr, from wherever the approach left the tip."""
+    from action_state_runtime.contracts import (
+        AnchorRequest,
+        AnchorRole,
+        ExecuteTaskGoal,
+        RoutineKind,
+        TargetKind,
+    )
+
+    um_per_px = planner.calib.mm_per_px * 1000
+    # 2. Handover - or the search, if the policy left the tip out of view.
+    t = time.perf_counter()
+    sighting = sighting or look_for_tip(robot, detector, key)
+    if sighting is None:
+        if not SEARCH:
+            out["failure_stage"] = "view"
+            out["reason"] = "tip never in view"
+            return out
+        out["search_used"] = True
+        try:
+            sighting, info = search_for_tip(robot, teleop, planner, detector, key, fps, processors)
+        except (StageFailedError, RuntimeError) as e:
+            sighting, info = None, {"error": str(e)}
+        stage("search", t, **info)
+        if sighting is None:
+            out["failure_stage"] = "search"
+            out["reason"] = "search did not find the tip"
+            return out
+    p = tip_now()
+    out["time_to_view_s"] = round(time.perf_counter() - t0, 2) if out["search_used"] else round(sighting.t - t0, 2)
+    out["handover"] = {
+        "tip_px": [round(v, 1) for v in sighting.px],
+        "confidence": round(sighting.confidence, 3),
+        "tip_height_um": round(float(p[2] - planner.calib.surface_z_mm) * 1000, 1),
+        "vision_to_target_um": round(float(np.hypot(*np.subtract(sighting.px, target))) * um_per_px, 1),
+    }
+    stage("handover", t, **out["handover"])
+
+    try:
+        attempt = "lower"
+        # 3. Down (or up) to the servo height along the pipette's axis, the corridor every approach
+        # uses: straight down from a pre-touch point can bring the tilted pipette within margin of
+        # the dish wall. The sideways shift this adds (as much as the drop, at ~45 deg) is the
+        # servo's to correct.
+        t = time.perf_counter()
+        axis = planner.kin.tip(np.asarray(robot.robot.GetRtJointPos(), dtype=float))[:3, 2]
+        drop = planner.calib.surface_z_mm + SERVO_HEIGHT_MM - p[2]
+        move_tip_to(robot, teleop, planner, p + drop / axis[2] * axis, DESCENT_SPEED_MM_S, "lower to servo height", fps, processors)
+        stage("lower", t, drop_mm=round(float(drop), 3))
+        if events["stop_recording"]:
+            return out
+
+        attempt = "servo"
+        # 4. ASR's visual servo onto the target pixel.
+        t = time.perf_counter()
+        host.reset()
+        anchor = service.capture_anchor(AnchorRequest(AnchorRole.FOCAL), timeout=60.0)
+        if not anchor.valid:
+            stage("servo", t, anchor=anchor.reason)
+            out["failure_stage"] = "servo"
+            out["reason"] = f"ASR anchor failed: {anchor.reason}"
+            return out
+        handle = service.submit_task(
+            ExecuteTaskGoal(target_kind=TargetKind.PIXEL, target_px=tuple(float(v) for v in target), routine=RoutineKind.POSITION)
+        )
+        if not handle.accepted:
+            raise StageFailedError(f"ASR rejected the goal: {handle.rejection_reason}")
+        try:
+            r = handle.result(timeout=ASR_TIMEOUT_S)
+        except Exception:
+            handle.cancel()
+            r = handle.result(timeout=30.0)
+        out["servo"] = {
+            "converged": r.converged,
+            "reason": r.reason,
+            "steps": r.servo_steps,
+            "final_tip_px": None if r.final_tip_px is None else [round(v, 1) for v in r.final_tip_px],
+            "final_distance_px": None if r.final_distance_px is None else round(float(r.final_distance_px), 2),
+            "anchor_tip_px": None if anchor.visual_tip_px is None else [round(v, 1) for v in anchor.visual_tip_px],
+            "moves": host.moves,
+        }
+        stage("servo", t, converged=r.converged, reason=r.reason, steps=r.servo_steps)
+
+        attempt = "touch"
+        # 5. Straight down onto the dish.
+        t = time.perf_counter()
+        p = tip_now()
+        move_tip_to(
+            robot, teleop, planner,
+            np.array([p[0], p[1], planner.calib.surface_z_mm + planner.lim.touch_offset_mm]),
+            TOUCH_SPEED_MM_S, "touch", fps, processors,
+        )
+        stage("touch", t)
+        out["reason"] = "finished"
+    except StageFailedError as e:
+        out["failure_stage"] = attempt  # the stage that could not be carried out
+        out["reason"] = f"stopped: {e}"
+    return out
 
 
 def human_start_joints(planner, plan) -> np.ndarray:
@@ -546,19 +917,44 @@ def operator_backs_out(teleop, guard, view, robot, obs_proc, key, events) -> Non
 
 
 def main() -> None:
-    if METHOD not in ("policy", "scripted", "expert", "human"):
-        sys.exit(f"METHOD must be policy, scripted, expert or human, not {METHOD!r}")
+    if METHOD not in ("policy", "policy_asr", "scripted", "scripted_asr", "expert", "human"):
+        sys.exit(f"METHOD must be policy, policy_asr, scripted, scripted_asr, expert or human, not {METHOD!r}")
+    asr = METHOD in ("policy_asr", "scripted_asr")
+    learned = METHOD in ("policy", "policy_asr")
+    if any(BASE_OFFSET_MM) and not learned:
+        sys.exit("BASE_OFFSET_MM is for the learned methods (policy, policy_asr).")
+    if asr and (IMAGE_SHIFT_PX or COARSE_ACTION_STEPS or TEMPORAL_ENSEMBLE_COEFF is not None):
+        sys.exit("policy_asr / scripted_asr run whole chunks on unshifted frames: set IMAGE_SHIFT_PX 0, COARSE_ACTION_STEPS and ensembling off.")
     human = METHOD == "human"
     record_auto.DISPLAY_DATA = False  # no Rerun stream from run_corrected_episode
+    # The test set is normal episodes, whatever record_auto was last set to collect (its
+    # StagePlanner plans through record_auto.plan_for).
+    record_auto.RECOVERY = False
+    if METHOD in ("scripted", "scripted_asr"):
+        # Since 2026-11-05 every plan aims at a decoy up to DECOY_MAX_MM off the target (the
+        # expert's image correction closes the gap). The scripted controller has no correction, so
+        # its plans aim at the true target. A vanishing decoy keeps the decoy-era test set: the
+        # true target comes from its own seed stream (planner.plan_with_decoy).
+        record_auto.DECOY_MAX_MM = 1e-6
     init_logging()
     register_third_party_plugins()
-    bench = BenchConfig.load(RIG)
+    try:
+        benches = split_benches(BenchConfig.load(RIG))
+    except RuntimeError as e:
+        sys.exit(f"\nREFUSING TO START: {e}\n")
+    # Every method plans and aims with benches.method: after a physical slide, the pinned pre-slide
+    # pixel <-> XY map with the current dish height. benches.truth (the current calibration) is for
+    # the final measurement only.
+    bench = benches.method
+    truth_calib = benches.truth.calibration()
+    if benches.measurement is not None:
+        logging.info(f"Physical slide in force: {benches.measurement}. Methods keep the pre-slide pixel <-> XY map.")
     try:
         pos = check_focus(bench.section("scope"))
     except FocusMismatchError as e:
         sys.exit(f"\nREFUSING TO START: {e}\n")
     print(f"Focus check passed: K-Cube at {pos:.4f} mm, as calibrated.")
-    policy, pre, post = load_policy(MODEL) if METHOD == "policy" else (None, None, None)
+    policy, pre, post = load_policy(MODEL) if learned else (None, None, None)
 
     planner = build_planner(bench)
     stage, model, hmap = connect_stage(bench, planner.calib)
@@ -567,8 +963,12 @@ def main() -> None:
     fps = planner.lim.fps
 
     # The planned paths keep to the clamps they were recorded under; the policy's are tighter.
-    if HANDOVER and (METHOD != "policy" or COARSE_ACTION_STEPS or TEMPORAL_ENSEMBLE_COEFF is not None):
-        sys.exit("HANDOVER needs METHOD = 'policy' with whole chunks (COARSE_ACTION_STEPS and ensembling off).")
+    if (
+        METHOD == "policy"
+        and HANDOVER
+        and (COARSE_ACTION_STEPS or TEMPORAL_ENSEMBLE_COEFF is not None or any(BASE_OFFSET_MM))
+    ):
+        sys.exit("HANDOVER needs whole chunks (COARSE_ACTION_STEPS and ensembling off) and no BASE_OFFSET_MM.")
     scripted = METHOD in ("scripted", "expert")
     robot = make_robot_from_config(
         rig_config(
@@ -602,6 +1002,7 @@ def main() -> None:
     else:
         teleop = Meca500Scripted(Meca500ScriptedConfig(id="meca500_scripted"))
     tap = ObservationTap(robot, bench.camera_key)
+    tap.video_every = VIDEO_EVERY
     target_cfg = bench.section("target")
     overlay = TargetOverlayStep(camera_key=bench.camera_key, style=bench.target_style())
     teleop_proc, robot_proc, _ = make_default_processors()
@@ -610,6 +1011,7 @@ def main() -> None:
     )
     processors = (teleop_proc, robot_proc, obs_proc)
     obs_features = hw_to_dataset_features(robot.observation_features, OBS_STR, use_video=True)
+    slide = VirtualSlide(planner.kin, BASE_OFFSET_MM) if any(BASE_OFFSET_MM) else None
 
     out_dir = Path("outputs/eval_auto") / f"{session_name()}_{time.strftime('%Y%m%d-%H%M%S')}"
     out_dir.mkdir(parents=True)
@@ -628,6 +1030,32 @@ def main() -> None:
         newline="\n",
     )
     results = []
+
+    service = host = detector = watcher = None
+    if asr:
+        key = bench.camera_key
+        host = Meca500AsrHost(
+            planner,
+            frame_source=lambda: grab(robot, key, 3),
+            joints=lambda: np.asarray(robot.robot.GetRtJointPos(), dtype=float),
+            move=lambda path: (
+                run_plan(robot, teleop, path, np.zeros(len(path)), fps, deaf(), processors),
+                wait_settled(robot, path[-1], SETTLE_TIMEOUT_S),
+            ),
+            surface_z_mm=lambda xy: safety_surface(planner),
+            max_step_mm=ASR_MAX_STEP_MM,
+            max_travel_mm=ASR_MAX_TRAVEL_MM,
+            press_limit_mm=PRESS_LIMIT_MM,
+        )
+        service = make_service(host, ASR_SITE_YAML, out_dir / "asr", converge_px=ASR_CONVERGE_PX)
+        logging.info("Loading the ASR perception package (about a minute the first time)...")
+        init = service.initialize(timeout=600.0)
+        if not init.success:
+            sys.exit(f"ASR did not initialise: {init.reason}")
+        detector = AsrTipDetector(service.runtime, target_cfg["field_centre_px"], target_cfg["field_radius_px"])
+        watcher = TipWatcher(
+            detector, lambda: tap.latest, min_confidence=WATCH_MIN_CONFIDENCE, hits=WATCH_HITS, max_jump_px=WATCH_JUMP_PX
+        )
 
     robot.connect()
     if not human:
@@ -668,6 +1096,11 @@ def main() -> None:
             try:
                 new_xy, plan = stager.plan_episode(SEED_BASE + i)
                 start_q = human_start_joints(planner, plan) if human else plan.start_joints
+                if slide is not None:
+                    # The slid robot starts at the planned joints: the real arm starts where that puts the tip.
+                    start_q = slide.to_real(start_q)
+                    if start_q is None:
+                        raise PlanningError(f"episode {i}: no IK solution for the slid start pose")
                 stager.place(stage_xy)
                 stager.check_parked_arm(start_q, stage_xy, new_xy)
                 try:
@@ -729,11 +1162,18 @@ def main() -> None:
             log_say(f"{METHOD} episode {i}", False)
             t_drive = time.perf_counter()
             tap.start()
-            if METHOD == "policy":
+            if asr:
+                run = run_policy_asr(
+                    robot, teleop, policy, pre, post, obs_proc, obs_features, planner, events,
+                    bench.camera_key, target, watcher, detector, service, host, fps, processors, slide,
+                    live_key=bench.camera_key if SAVE_LIVE_FRAMES else None, plan=plan,
+                )
+            elif METHOD == "policy":
                 run = rollout_episode(
                     robot, policy, pre, post, obs_proc, obs_features, planner, events,
                     live_key=bench.camera_key if SAVE_LIVE_FRAMES else None,
                     min_move_um=HANDOVER_MIN_MOVE_UM if HANDOVER else 0.0,
+                    slide=slide,
                 )
                 if handover_s is not None:
                     run["handover_s"] = handover_s
@@ -747,7 +1187,10 @@ def main() -> None:
                 run = run_human(teleop, guard, view, robot, obs_proc, bench.camera_key, trial, events)
             traj = tap.stop()
             duration_s = round(time.perf_counter() - t_drive, 2)
-            m, final = measure_final(robot, arm, planner, bench, background, target, shift)
+            m, final = measure_final(
+                robot, arm, planner, bench, background, target, shift,
+                calib=dc_replace(truth_calib, surface_z_mm=surface_z),
+            )
             overlay.set_target(None)
             tap.shift = (0, 0)
             save_raw(ep_dir, "final", final)
@@ -756,6 +1199,8 @@ def main() -> None:
             np.savez_compressed(ep_dir / "traj.npz", **traj, **{k: np.asarray(v) for k, v in log.items()})
             live = run.pop("live", [])
             save_live(ep_dir, live, target)
+            save_video(ep_dir, tap.video, target, bench.target_style(), fps / max(VIDEO_EVERY, 1))
+            tap.video = []
 
             row = {
                 "episode": i,
@@ -763,9 +1208,11 @@ def main() -> None:
                 "method": METHOD,
                 "operator": OPERATOR if human else None,
                 "image_shift_px": list(shift),
+                "base_offset_mm": list(BASE_OFFSET_MM),
                 "target_px": [round(float(v), 2) for v in target],
                 "stage_xy_mm": [round(float(v), 4) for v in stage_xy],
                 "surface_z_mm": round(surface_z, 4),
+                "slide": benches.measurement,
                 "reason": run["reason"],
                 "duration_s": duration_s,
                 "steps": len(traj["obs_t"]),

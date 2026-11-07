@@ -1,0 +1,25 @@
+# ActionStateRuntime (Huanyu's ASR) site file for bench 2, read by eval_auto.py (METHOD "policy_asr")
+# through autocollect/asr_bridge.make_service. Overrides ASR's runtime_default.yaml.
+#
+# onnx_package_path: the ViT-B perception package, copied into the ASR clone on this PC (2026-11-06,
+#   hashes verified). The ViT-L "perception" package on the share is stale (hash mismatches).
+# J_initial: image px per metre of robot-base tip motion, x and y (no z column: ASR moves level),
+#   from scope_calibration.json (13.33 um/px). ASR refines it as it moves.
+# site: the Basler frame as eval_auto passes it, 427 wide x 640 high, unrotated.
+# The servo's 3 px convergence threshold is set in code (ASR builds its loop from built-in defaults).
+inference:
+  onnx_package_path: C:/Users/aa24/PhD/ActionStateRuntime/action_state_runtime/weights/perception_vitb
+  cell_rescore_s_det: 0.01
+  cell_confidence_threshold: 0.45
+mapping:
+  J_initial:
+  - - 75356.3828902469
+    - -2189.968126633862
+    - 0.0
+  - - 41.91871812132511
+    - -74737.20842990355
+    - 0.0
+site:
+  calib_width: 427
+  calib_height: 640
+  image_orientation: normal

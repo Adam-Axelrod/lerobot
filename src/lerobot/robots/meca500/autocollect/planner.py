@@ -404,17 +404,19 @@ class Planner:
 
     # ------------------------------------------------------------------ near the dish
 
-    def plan_line(self, q_from, p_to, speed_mm_s: float, name: str = "correction") -> np.ndarray:
+    def plan_line(
+        self, q_from, p_to, speed_mm_s: float, name: str = "correction", max_step_deg: float | None = None
+    ) -> np.ndarray:
         """Straight, slow tip move from ``q_from`` to ``p_to`` keeping the orientation, at the
-        precision-phase joint-step limit; collision-checked. For the recorder's vision correction:
-        a sub-millimetre move between two points near the dish. Raises PlanningError."""
+        precision-phase joint-step limit (or ``max_step_deg``); collision-checked. For the
+        recorder's vision correction: a sub-millimetre move between two points near the dish.
+        Raises PlanningError."""
         q_from = np.asarray(q_from, float)
         t = self.kin.tip(q_from)
         poly = np.vstack([t[:3, 3], np.asarray(p_to, float)])
+        step = self.lim.max_joint_step_precision_deg if max_step_deg is None else max_step_deg
         try:
-            qs = self._time_and_solve(
-                poly, t[:3, :3], t[:3, :3], speed_mm_s, self.lim.max_joint_step_precision_deg, q_from, name
-            )
+            qs = self._time_and_solve(poly, t[:3, :3], t[:3, :3], speed_mm_s, step, q_from, name)
         except _RejectedSampleError as e:
             raise PlanningError(f"{name}: {e}") from e
         qs = np.array(qs)

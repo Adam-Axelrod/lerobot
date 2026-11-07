@@ -266,6 +266,7 @@ class FakeRobot:
         self.robot = arm
         self.planner = planner
         self.model_error_px = model_error_px
+        self.truth = None  # the real camera geometry, if the methods use another (a slid robot)
         self.sent = []
 
     def get_observation(self):
@@ -273,7 +274,7 @@ class FakeRobot:
         q = self.robot.q
         tip = self.planner.kin.tip(q)[:3, 3]
         if tip[2] - self.planner.calib.surface_z_mm < 6:  # blur hides it higher up
-            u, v = self.planner.calib.xy_to_pixel(tip[:2])[0] + self.model_error_px
+            u, v = (self.truth or self.planner.calib).xy_to_pixel(tip[:2])[0] + self.model_error_px
             axis = np.array([1.0, 0.0])
             for s in np.arange(0, 700, 1.0):
                 x, y = int(u + s * axis[0]), int(v + s * axis[1])
@@ -498,6 +499,314 @@ def test_human_session_starts_on_the_key_ends_on_the_key_and_is_measured(monkeyp
     assert holder["robot"].sent == []  # nothing went through the read-only connection
 
 
+class FakeAsrDetector:
+    """Sees the tip where forward kinematics puts it, once it is low and inside the lit field."""
+
+    def __init__(self, planner, robot, centre, radius, noise_px=0.5):
+        self.planner, self.robot = planner, robot
+        self.centre, self.radius = np.asarray(centre, float), float(radius)
+        self.rng = np.random.default_rng(0)
+        self.noise = noise_px
+        self.calls = 0
+
+    def detect(self, rgb):
+        from lerobot.robots.meca500.autocollect.asr_bridge import TipSighting
+
+        self.calls += 1
+        tip = self.planner.kin.tip(self.robot.robot.q)[:3, 3]
+        px = self.planner.calib.xy_to_pixel(tip[:2])[0]
+        if tip[2] - self.planner.calib.surface_z_mm > 6 or np.linalg.norm(px - self.centre) > self.radius:
+            return None
+        px = px + self.rng.normal(0, self.noise, 2)
+        return TipSighting((float(px[0]), float(px[1])), 0.97, __import__("time").perf_counter())
+
+
+class FakeAsrService:
+    """ASR's service contract over the real host adapter: a plain proportional servo on the
+    detector's pixel, every move through Meca500AsrHost.execute_tip_delta."""
+
+    def __init__(self, host, detector_holder, converge_px):
+        self.host, self.holder, self.converge_px = host, detector_holder, converge_px
+        self.runtime = object()
+
+    def initialize(self, timeout=None):
+        return MagicMock(success=True)
+
+    def capture_anchor(self, request, timeout=None):
+        s = self.holder["detector"].detect(None)
+        return MagicMock(valid=s is not None, reason="ok", visual_tip_px=None if s is None else s.px)
+
+    def submit_task(self, goal):
+        from action_state_runtime.contracts import CancelToken, TipMotionCommand
+
+        planner = self.host.planner
+        target = np.asarray(goal.target_px, float)
+        converged, steps, dist = False, 0, None
+        for steps in range(1, 9):
+            s = self.holder["detector"].detect(None)
+            dist = float(np.linalg.norm(target - s.px))
+            if dist <= self.converge_px:
+                converged = True
+                break
+            d_mm = planner.calib.pixel_to_xy(target)[0] - planner.calib.pixel_to_xy(s.px)[0]
+            cmd = TipMotionCommand("g", steps, (d_mm[0] / 1000, d_mm[1] / 1000, 0.0), 1, "positioning")
+            assert self.host.execute_tip_delta(cmd, CancelToken()).success
+        result = MagicMock(
+            converged=converged, reason="converged" if converged else "max_steps", servo_steps=steps,
+            final_tip_px=s.px, final_distance_px=dist,
+        )
+        return MagicMock(accepted=True, result=lambda timeout=None: result)
+
+
+def run_asr_session(monkeypatch, tmp_path, *, offset=(0.0, 0.0), sees=True, method="policy_asr"):
+    """policy_asr with a policy that replays each episode's planned joint path as deltas."""
+    import torch
+
+    class Still:
+        def reset(self):
+            pass
+
+        config = MagicMock(n_action_steps=1)
+
+    eval_auto, holder = run_session(monkeypatch, tmp_path, method, episodes=1, policy=(Still(), Still(), Still()))
+    monkeypatch.setattr(eval_auto, "BASE_OFFSET_MM", offset)
+    monkeypatch.setattr(eval_auto, "EPISODE_TIME_S", 600.0)  # a loaded test machine runs the replay slowly
+    monkeypatch.setattr(eval_auto, "SAVE_LIVE_FRAMES", False)
+    real_plan_episode = eval_auto.StagePlanner.plan_episode
+
+    def plan_episode(self, seed):
+        xy, plan = real_plan_episode(self, seed)
+        holder["deltas"] = list(np.diff(plan.joints, axis=0))
+        holder["flags"] = list(plan.precision[1:])
+        holder["plan"] = plan
+        return xy, plan
+
+    monkeypatch.setattr(eval_auto.StagePlanner, "plan_episode", plan_episode)
+    holder["seen_states"] = []
+
+    def predict_action(frame, *a, **k):
+        __import__("time").sleep(0.01)  # precise_sleep is off: give the watcher thread real time
+        if holder.get("detector") is not None and holder["detector"].detect(None) is not None:
+            __import__("time").sleep(0.3)  # the tip is in view: a real 20 Hz loop leaves the watcher time
+        holder["seen_states"].append(np.asarray(frame["observation.state"][:6], float))
+        if not holder["deltas"]:
+            return torch.tensor([[0, 0, 0, 0, 0, 0, 1.0]])
+        return torch.tensor([[*holder["deltas"].pop(0), holder["flags"].pop(0)]], dtype=torch.float32)
+
+    monkeypatch.setattr(eval_auto, "predict_action", predict_action)
+
+    def make_service(host, site, out, converge_px):
+        return FakeAsrService(host, holder, converge_px)
+
+    def make_detector(runtime, centre, radius):
+        det = FakeAsrDetector(holder["planner"], holder["robot"], centre, radius)
+        if not sees:
+            det.detect = lambda rgb: None
+        holder["detector"] = det
+        return det
+
+    monkeypatch.setattr(eval_auto, "make_service", make_service)
+    monkeypatch.setattr(eval_auto, "AsrTipDetector", make_detector)
+    eval_auto.main()
+    return eval_auto, holder
+
+
+def test_policy_asr_hands_over_when_the_tip_appears_and_servos_onto_the_target(monkeypatch, tmp_path):
+    eval_auto, holder = run_asr_session(monkeypatch, tmp_path)
+    run, rows = read_results(tmp_path)
+    row = rows[0]
+    assert run.name.startswith(f"{eval_auto.EVAL_NAME}_asr_")
+    assert row["method"] == "policy_asr" and row["reason"] == "finished", row
+    assert [s["stage"] for s in row["stages"]] == ["approach", "handover", "lower", "servo", "touch"]
+    assert row["stages"][0]["reason"] == "handover: tip in view"
+    assert not row["search_used"] and row["failure_stage"] is None
+    assert row["servo"]["converged"]
+    assert row["fk_error_um"] < 60 and abs(row["tip_height_um"]) < 20
+    assert row["time_to_view_s"] >= 0 and row["handover"]["tip_height_um"] > 0
+    assert (run / "ep000" / "episode.mp4").stat().st_size > 0
+    # The paper figure from this trial: four frames + tip speed, one column wide, small.
+    import trial_figure
+
+    monkeypatch.setattr(sys, "argv", ["trial_figure.py", str(run), "--episode", "0", "--out", str(tmp_path / "fig.pdf")])
+    trial_figure.main()
+    assert 5_000 < (tmp_path / "fig.pdf").stat().st_size < 300_000
+    holder["fig"] = tmp_path / "fig.pdf"
+
+
+def test_policy_asr_searches_then_reports_where_it_failed(monkeypatch, tmp_path):
+    eval_auto, holder = run_asr_session(monkeypatch, tmp_path, sees=False)
+    _, rows = read_results(tmp_path)
+    row = rows[0]
+    assert row["search_used"] and row["failure_stage"] == "search"
+    search = next(s for s in row["stages"] if s["stage"] == "search")
+    assert search["found"] is False and search["points_tried"] == len(eval_auto.spiral_offsets(1.0, 4.0))
+
+
+def test_virtual_slide_moves_the_real_tip_and_shows_the_policy_the_planned_joints(monkeypatch, tmp_path):
+    eval_auto, holder = run_asr_session(monkeypatch, tmp_path, offset=(2.0, 0.0))
+    run, rows = read_results(tmp_path)
+    assert "_slide2x0_" in run.name and rows[0]["base_offset_mm"] == [2.0, 0.0]
+    assert holder["plan"].recovery is None  # the test set, not whatever record_auto collects
+    # The policy's first view is the planned start, while the real arm started 2 mm along x.
+    plan, kin = holder["plan"], holder["planner"].kin
+    np.testing.assert_allclose(holder["seen_states"][0], plan.start_joints, atol=1e-3)
+    with np.load(run / "ep000" / "traj.npz") as z:
+        real_start = z["q_cmd"][0]
+    shift = kin.tip(real_start)[:3, 3] - kin.tip(plan.joints[1])[:3, 3]
+    np.testing.assert_allclose(shift, [2.0, 0.0, 0.0], atol=1e-3)
+    # The replayed plan now lands 2 mm off; the servo, working in the real image, brings it back.
+    assert rows[0]["reason"] == "finished" and rows[0]["fk_error_um"] < 60
+    assert rows[0]["servo"]["converged"] and len(rows[0]["servo"]["moves"]) >= 2
+    assert rows[0]["handover"]["vision_to_target_um"] > 1000
+
+
+def test_scripted_asr_baseline_runs_the_plan_to_pretouch_then_the_same_finish(monkeypatch, tmp_path):
+    eval_auto, holder = run_asr_session(monkeypatch, tmp_path, method="scripted_asr")
+    run, rows = read_results(tmp_path)
+    row = rows[0]
+    assert run.name.startswith("scripted_asr_") and row["method"] == "scripted_asr"
+    # The pre-touch point can leave the tip outside the lit field: then the search runs first.
+    stages = [s["stage"] for s in row["stages"]]
+    assert [s for s in stages if s != "search"] == ["approach", "handover", "lower", "servo", "touch"]
+    assert row["search_used"] == ("search" in stages)
+    assert holder["seen_states"] == []  # no policy was asked anything
+    # aimed at the true target, not a decoy (the scripted methods have no image correction)
+    assert getattr(holder["plan"], "decoy_px", None) is None or np.allclose(holder["plan"].decoy_px, holder["plan"].target_px, atol=0.01)
+    assert row["reason"] == "finished" and row["fk_error_um"] < 60
+
+
+def test_apply_slide_measures_the_slide_from_the_calibrations_and_moves_the_scene(monkeypatch, tmp_path):
+    import shutil
+
+    import apply_slide
+
+    real = BenchConfig.load("meca500_basler")
+    shutil.copy(real.calibration_path(), tmp_path / real.calibration_path().name)
+    calib_after = json.loads(real.calibration_path().read_text())
+    before = dict(calib_after)
+    before["px_to_xy"] = [row[:] for row in calib_after["px_to_xy"]]
+    before["px_to_xy"][0][2] += 2.0  # before the slide, every pixel sat 2 mm further along robot +x:
+    before["px_to_xy"][1][2] -= 1.0  # the base has since moved +2, -1 mm
+    (tmp_path / "before.json").write_text(json.dumps(before))
+
+    bench = BenchConfig.load("meca500_basler")
+    object.__setattr__(bench, "root", tmp_path)
+    monkeypatch.setattr(apply_slide.BenchConfig, "load", lambda rig: bench)
+    monkeypatch.setattr(sys, "argv", ["apply_slide.py", "--before", str(tmp_path / "before.json")])
+    apply_slide.main()
+    m = json.loads((tmp_path / "slide_measurement.json").read_text())
+    np.testing.assert_allclose(m["slide_mm"], [2.0, -1.0], atol=1e-6)
+    assert abs(m["rotation_deg"]) < 1e-6
+    t = bench.registration_transform()
+    np.testing.assert_allclose(t[:3, 3], [-2.0, 1.0, 0.0], atol=1e-9)  # the scene moved the other way
+    monkeypatch.setattr(sys, "argv", ["apply_slide.py", "--reset"])
+    apply_slide.main()
+    assert bench.registration_transform() is None
+
+
+def slid_bench(tmp_path, slide_mm=(1.0, 0.0)):
+    """A copy of the real bench after a physical slide of ``slide_mm``: the normal files are the
+    re-measured (true) ones; the pinned calibration is from before the slide, and its dish height
+    is 40 um stale (drift since), which the methods must NOT use."""
+    import shutil
+
+    from lerobot.robots.meca500.autocollect.slide import MEASUREMENT, PINNED_CALIBRATION
+
+    real = BenchConfig.load("meca500_basler")
+    root = tmp_path / "benches" / "meca500_basler"
+    shutil.copytree(real.root, root, ignore=shutil.ignore_patterns("*.bak.json", "preview.*", "beads", "*.bad-*"))
+    d = np.asarray(slide_mm, float)
+    before = json.loads(real.calibration_path().read_text())
+    before["px_to_xy"][0][2] += d[0]  # before the slide, each pixel sat d further along the robot axes
+    before["px_to_xy"][1][2] += d[1]
+    before["surface_z_mm"] += 0.040
+    (root / PINNED_CALIBRATION).write_text(json.dumps(before))
+    t = np.eye(4)
+    t[:2, 3] = -d
+    (root / "registration.json").write_text(json.dumps({"t_robot_cad": t.tolist(), "apply": True}))
+    (root / MEASUREMENT).write_text(json.dumps({"slide_mm": d.tolist(), "rotation_deg": 0.0, "surface_z_change_um": 0.0}))
+    return root
+
+
+def test_split_benches_pins_the_methods_to_the_pre_slide_calibration(tmp_path):
+    from lerobot.robots.meca500.autocollect.slide import PINNED_CALIBRATION, split_benches
+
+    real = BenchConfig.load("meca500_basler")
+    assert split_benches(real).method is real  # the original position: one bench
+    root = slid_bench(tmp_path)
+    b = split_benches(BenchConfig.load("meca500_basler", benches_dir=root.parent))
+    centre = np.array([213.0, 319.5])
+    shift = b.method.calibration().pixel_to_xy(centre)[0] - b.truth.calibration().pixel_to_xy(centre)[0]
+    np.testing.assert_allclose(shift, [1.0, 0.0], atol=1e-9)
+    # in-plane map pinned, height current
+    assert b.method.calibration().surface_z_mm == b.truth.calibration().surface_z_mm
+    assert b.method.dish_map_path() == b.truth.dish_map_path()
+    assert b.method.registration_transform() is not None  # the methods' collision model still moved
+    (root / PINNED_CALIBRATION).unlink()  # half a slide state is refused, not guessed at
+    with pytest.raises(RuntimeError):
+        split_benches(BenchConfig.load("meca500_basler", benches_dir=root.parent))
+
+
+def test_after_a_physical_slide_scripted_aims_with_the_old_calibration_and_is_measured_with_the_new(monkeypatch, tmp_path):
+    """The point of the slide test: scripted is not recalibrated, so it misses by the slide - and
+    the final measurement, on the true calibration, says so."""
+    import eval_auto
+
+    root = slid_bench(tmp_path, (1.0, 0.0))
+    (tmp_path / "run").mkdir()
+    load = BenchConfig.load  # the real loader, before run_session replaces it on the class
+    eval_auto_mod, holder = run_session(monkeypatch, tmp_path / "run", "scripted", episodes=1)
+    monkeypatch.setattr(eval_auto.BenchConfig, "load", lambda rig, **kw: load(rig, benches_dir=root.parent))
+    real_make = eval_auto.make_robot_from_config
+
+    def make_robot(cfg):
+        robot = real_make(cfg)
+        robot.truth = load("meca500_basler", benches_dir=root.parent).calibration()
+        return robot
+
+    monkeypatch.setattr(eval_auto, "make_robot_from_config", make_robot)
+    eval_auto.main()
+    _, rows = read_results(tmp_path / "run")
+    row = rows[0]
+    assert row["slide"]["slide_mm"] == [1.0, 0.0]
+    assert row["fk_error_um"] == pytest.approx(1000, abs=60)
+    assert row["vision_error_um"] == pytest.approx(1000, abs=80)
+    assert abs(row["tip_height_um"]) < 20  # touched the current dish, not the stale pinned height
+
+
+def test_virtual_slide_round_trips():
+    import record_auto
+
+    from lerobot.robots.meca500.autocollect.asr_bridge import VirtualSlide
+
+    planner = record_auto.build_planner(BenchConfig.load("meca500_basler"))
+    q = planner.sample_episode(5_000_000).start_joints
+    slide = VirtualSlide(planner.kin, (2.0, -4.0))
+    real = slide.to_real(q)
+    np.testing.assert_allclose(planner.kin.tip(real)[:3, 3] - planner.kin.tip(q)[:3, 3], [2, -4, 0], atol=1e-3)
+    np.testing.assert_allclose(planner.kin.tip(real)[:3, :3], planner.kin.tip(q)[:3, :3], atol=1e-5)
+    np.testing.assert_allclose(slide.to_virtual(real), q, atol=1e-3)
+
+
+def test_tip_watcher_needs_consecutive_confident_sightings():
+    import time
+
+    from lerobot.robots.meca500.autocollect.asr_bridge import TipSighting, TipWatcher
+
+    seq = iter([None, (10, 10, 0.95), (300, 300, 0.6), (50, 50, 0.9), (55, 52, 0.92)] + [None] * 1000)
+
+    class Det:
+        def detect(self, rgb):
+            s = next(seq)
+            return None if s is None else TipSighting((s[0], s[1]), s[2], time.perf_counter())
+
+    w = TipWatcher(Det(), lambda: np.zeros((4, 4, 3), np.uint8), min_confidence=0.8, hits=2, max_jump_px=40)
+    w.start()
+    assert w.seen.wait(2.0)
+    w.stop()
+    assert w.sighting.px == (55, 52) and len(w.history) == 5
+
+
 def test_human_start_keeps_the_position_and_takes_the_touch_orientation():
     import eval_auto
     import record_auto
@@ -589,6 +898,49 @@ def test_check_frames_draws_the_scale_round_the_target(tmp_path):
     assert "not detected" in check_frames.trial_label(row)
     sheet = check_frames.contact_sheet([out, out, out], columns=2)
     assert sheet.shape == (2 * size, 2 * size, 3)
+
+
+def test_scoring_reports_policy_asr_with_and_without_the_search(tmp_path):
+    import score_eval
+
+    rows = [
+        base_row(0, 20.0, reason="finished") | {"search_used": False, "failure_stage": None},
+        base_row(1, 30.0, reason="finished") | {"search_used": True, "failure_stage": None},
+        base_row(2, None, reason="search did not find the tip") | {"search_used": True, "failure_stage": "search"},
+    ]
+    run = make_run(tmp_path, "x_asr_20261107-100000", rows)
+    trials = [score_eval.score_trial(r, r["_verdict"], None) for r in score_eval.load_run(run)]
+    assert score_eval.summarise(trials)["successes"] == 2
+    without = [score_eval.without_search(t) for t in trials]
+    assert score_eval.summarise(without)["successes"] == 1
+    assert [t["failure_stage"] for t in without] == [None, "view", "view"]
+
+
+def test_scoring_prints_latex_rows_and_keeps_slides_apart(tmp_path, monkeypatch, capsys):
+    import score_eval
+
+    def row(ep, err, search=False, fail=None, slide=None, view=True):
+        stages = [{"stage": "approach"}] + ([{"stage": "handover"}] if view else [])
+        return base_row(ep, err, reason="finished" if fail is None else "search did not find the tip") | {
+            "search_used": search, "failure_stage": fail, "stages": stages,
+            **({"slide": {"slide_norm_mm": slide}} if slide else {}),
+        }
+
+    a = make_run(tmp_path, "m_asr_20261108-100000", [row(0, 20.0), row(1, 80.0, search=True), row(2, None, search=True, fail="search", view=False)])
+    b = make_run(tmp_path, "m_asr_20261108-140000", [row(0, 30.0, slide=2.03), row(1, 300.0, slide=2.03)])
+    monkeypatch.setattr(sys, "argv", ["score_eval.py", str(a), str(b)])
+    score_eval.main()
+    out = capsys.readouterr().out
+    main_rows = [line for line in out.splitlines() if line.startswith("m_asr") and "&" in line]
+    # 0 mm and the 2 mm slide are separate rows, though the session name is the same
+    assert main_rows[0].startswith("m_asr & 67 & 0 & 33 & 67 & 50 [35, 65] &")
+    assert main_rows[0].rstrip().split("  %")[0].endswith("\\\\")
+    assert main_rows[1].startswith("m_asr without search & 33 & 0 & 33 & 33 & 20")
+    assert any(r.startswith("m_asr @ 2.0 mm & 100 & 0 & 50 & 50") for r in main_rows)
+    moved = [line for line in out.splitlines() if line.startswith("m_asr & 33 & 50 & 50 & 165")]
+    assert len(moved) == 1  # success % and median at 0 mm, then at 2 mm
+    assert "failed at {'approach': 0, 'search': 1, 'lower': 0, 'servo': 0, 'touch': 0}" in out
+    assert "without search {'approach': 2, 'search': 0" in out
 
 
 def test_scoring_reads_a_run_from_before_the_observation_tap(tmp_path):

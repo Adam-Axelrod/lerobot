@@ -1,65 +1,89 @@
 # Next at the bench
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
-**Last updated:** 2026-11-05 (paper order)
+**Last updated:** 2026-11-07 (new plan: learned approach + Huanyu's controller)
 
-## Now: record the decoy dataset (Claude is running it)
-**The first ACT test failed: 0 of 20 within 50 um, median 2.0 mm** (2026-11-05,
-`outputs\eval_auto\basler_stage_touch_2026-11_delta_act_20261105-121850`). That is the paper's
-"ACT, no decoys" row; it ran on the fixed rollout code, so it does not need rerunning. Probes show why
-it failed: the expert aimed every path at the target, so the joint state at the pre-touch point gave
-the target away; the policy read the marker to set off but not to finish. `record_auto.py` now plans each path
-to a DECOY up to 1.6 mm from the target while the marker stays on the true target; the pre-touch
-correction then closes the gap in the recorded final approach, so only the image says where to go.
+## The plan (since 2026-11-06)
+The paper's system is now a **learned policy that brings the pipette under the microscope, then hands
+over to Huanyu's classical controller** (ActionStateRuntime, ASR). In `scripts\meca500\eval_auto.py`
+this is `METHOD = "policy_asr"`. Each trial goes through these stages, all logged:
+1. **Approach.** The approach policy (ACT retrained on decoys + recovery episodes) drives while
+   Huanyu's tip detector watches every frame.
+2. **Handover.** The policy stops the moment the detector sees the tip twice in a row.
+3. **Search, only if needed.** If the policy ends with the tip out of view, the arm searches in a spiral
+   out to 4 mm from where the policy stopped, 1 mm above the dish. Results are reported with and without it.
+4. **Lower.** The tip moves along the pipette to 0.15 mm above the dish.
+5. **Servo.** ASR's visual servo moves the tip level onto the ring, stopping within 3 px (40 um).
+6. **Touch.** The tip goes straight down onto the dish.
 
-1. **Batch 1** (`basler_stage_touch_decoy_2026-11`, 50 episodes) is recording from 15:20 on 2026-11-05.
-   While watching: each episode pauses two or three times near the dish while the tip is detected;
-   after the first pause the tip moves sideways by up to 1.6 mm before descending. Both are intended.
-   A pause followed by the arm leaving without touching means an episode was discarded; the next
-   attempt uses a new target. **To stop early press Esc** - never close the window or kill the
-   process: the dataset is only finalised on a clean exit.
-2. **Batch 2:** E0 height check, then `RESUME = True` and `record_auto.py` again (about 45 min).
-3. Claude converts to deltas and trains **ACT model A**: the same settings as the first ACT, so the
-   comparison isolates the decoys. A separately labelled model B (precision-step loss weight and
-   joint-state dropout) is optional; Claude will ask first.
+Everything ran end to end without the arm on 2026-11-07: simulated sessions, plus Huanyu's real
+detector and servo on real frames. **It has not moved the real arm yet.**
 
-## Next: the paper's results table (ISMR deadline 10 Nov; last bench day Sun 8 Nov)
-Work down this list in order and stop when time runs out. All of it uses `scripts\meca500\eval_auto.py`:
-set the values in its CONFIG block, run it, and send Claude the folder name it prints. Do the **E0
-height check** before each session. Every run uses the same seeds (`SEED_BASE = 5_000_000`), so every
-method gets the same targets. **If a recalibration is needed, tell Claude:** it can change the test
-set, and `score_eval` refuses mismatched targets.
+## Now: the bench session, in this order (Adam at the bench; Claude messages before the arm moves)
+Every session uses `scripts\meca500\eval_auto.py`. Set its CONFIG block, run
+`.venv\Scripts\python.exe scripts\meca500\eval_auto.py`, and send Claude the folder name printed at the
+end. All rows use the same targets (`SEED_BASE = 5_000_000`). Do the **E0 height check** before each
+session (`auto_calibrate.py` with `HEIGHT_CHECK_ONLY = True`) and close Kinesis.
+Loading Huanyu's model adds about a minute at the start of each `*_asr` session.
 
-**Do not use the older Diffusion, ACT-50 or ACT-100 models for the table:** they were trained on the
-non-decoy dataset and have the same shortcut.
+**Before every session:** `.venv\Scripts\python.exe scripts\meca500\preflight.py` must end with **GO**.
+It is read-only, and the arm does not move. It checks the config, the slide state, the calibration
+files, the model, Huanyu's detector, the focus, the robot connection, the camera, and that the
+detector sees nothing with the arm at home. It printed GO on 2026-11-07.
 
-| # | Row | Set in CONFIG | Time |
-|---|---|---|---|
-| 1 | **Go/no-go: ACT on decoys (model A)** | `METHOD = "policy"`, `IMAGE_SHIFT_PX = 0`, `MODEL` and `EVAL_NAME` for model A | ~40 min |
-| 2 | Automatic collection, from its logs | Nothing to run on the bench: see below | - |
-| 3 | Scripted controller | `METHOD = "scripted"` | ~40 min |
-| 4a | ACT on decoys, small knock | `METHOD = "policy"`, `IMAGE_SHIFT_PX = 16` | ~40 min |
-| 4b | ACT on decoys, big knock | `METHOD = "policy"`, `IMAGE_SHIFT_PX = 58` | ~40 min |
-| 4c | Scripted, both knocks | `METHOD = "scripted"`, `NUM_EPISODES = 10`, `IMAGE_SHIFT_PX` 16, then 58 | ~40 min |
-| 4d | Automatic collection, both knocks | `METHOD = "expert"`, `NUM_EPISODES = 10`, `IMAGE_SHIFT_PX` 16, then 58 | ~40 min |
-| 5 | You on the SpaceMouse | `METHOD = "human"`, `OPERATOR = "experienced"` (start with 2-3 trials) | ~1 h |
-| 6 | Diffusion, retrained on decoys | `METHOD = "policy"`, `MODEL` and `EVAL_NAME` for that model | ~45 min |
-| 7 | ACT on 50 decoy demos (data scaling; 200 only if 100 looks close) | `METHOD = "policy"`, `MODEL` and `EVAL_NAME` | ~45 min |
-| 8, 9 | Other operators, only if time allows | `METHOD = "human"`, `OPERATOR = "embryology"`, `"novice1"`, ... (at least 3 novices) | ~1 h each |
+**Done without the arm (2026-11-07):** a no-motion check of Huanyu's detector on the live feed (arm at
+home, 20 frames, no false detections, 0.25 s per frame), and simulated sessions of every stage.
 
-**After row 1, stop if ACT misses most targets** and tell Claude before running anything else. Claude
-also reruns the ring-moving probe on model A to check it now reads the image.
-Skipped unless something changes: ACT with precision off (only if `clamped_steps` shows the flag
-matters), and Huanyu's visual servoing (only if he offers).
+| # | Robot position | Row | Set in CONFIG | Trials | Time |
+|---|---|---|---|---|---|
+| 1 | 0 mm | **Cautious first trials, hand on the e-stop** | `METHOD = "policy_asr"`, `NUM_EPISODES = 3` | 3 | ~10 min |
+| 2 | 0 mm | **Our system** | `METHOD = "policy_asr"`, `NUM_EPISODES = 20` (or `FIRST_EPISODE = 3` to carry on from row 1) | 20 | ~40 min |
+| 3 | 0 mm | Scripted + Huanyu's servo | `METHOD = "scripted_asr"`, `NUM_EPISODES = 20` | 20 | ~30 min |
+| 4 | 0 mm | Scripted alone | `METHOD = "scripted"`, `NUM_EPISODES = 20` | 20 | ~20 min |
+| 5 | 2 mm | Slide, then rows 2, 3, 4 and automatic collection (`METHOD = "expert"`) | `NUM_EPISODES = 10` each | 4 x 10 | ~2 h incl. slide |
+| 6 | 4 mm | Same as row 5 | `NUM_EPISODES = 10` each | 4 x 10 | ~2 h incl. slide |
+| 7 | 0 mm | Only if time is left: "ACT, no decoys" on the current targets | `METHOD = "policy"`, that model | 20 | ~40 min |
 
-Set `IMAGE_SHIFT_PX` back to 0 after the knock rows. A session that stops early can carry on: set
-`FIRST_EPISODE` to the next trial number.
+**What to watch in row 1:**
+- The arm stops as soon as the tip appears under the microscope.
+- A slow move down, then small level moves near the ring, then a slow touch.
 
-**Row 2.** On the PC that has the dataset:
-`.venv\Scripts\python.exe scripts\meca500\score_eval.py --dataset <path to basler_stage_touch_decoy_2026-11>`.
-Discarded attempts count as failures: batch 2 onwards logs them in the dataset's
-`autocollect_discards.jsonl`; batch 1's come from `outputs\record_decoy_batch1b.log`. Send Claude the line.
+**Press Esc or the e-stop if the tip presses or bends, or if a move heads for the dish wall or the
+lamp.** If the policy ends with the tip out of view, the arm searches in a spiral 1 mm above the dish:
+that is intended.
 
+`BASE_OFFSET_MM` stays `(0.0, 0.0)` for every row here; it is the software slide, for checks only.
+
+## The physical slide (rows 5 and 6)
+The robot is slid on the table relative to the microscope. The policy is not told; the safety model
+is. Slide **sideways, parallel to the front edge of the microscope**, so the arm is no closer to the
+lamp. Use the same direction for 2 and 4 mm.
+1. **Just before sliding: E0 height check** (`auto_calibrate.py` with `HEIGHT_CHECK_ONLY = True`).
+   The height change the slide measurement reports is then mostly the slide, not hours of dish drift.
+   Mark the base's position on the table (tape at two corners).
+2. **Slide:** arm at home, power stays on. Loosen the base clamps, slide by 2 mm (then 4 mm from the
+   original position) against a ruler or feeler gauge, re-clamp. Note the direction and the ruler reading.
+3. **Re-calibrate:** `auto_calibrate.py` with `HEIGHT_CHECK_ONLY = False` and `START_ABOVE_DISH_MM = 6.0`.
+   It finds the tip with its own spiral search and re-measures the scope calibration and the dish
+   height map. It saves the pre-slide calibration as the newest `scope_calibration.*.bak.json`. Set
+   `START_ABOVE_DISH_MM` back to 4.0 afterwards.
+4. **Measure the slide and move the safety model:**
+   `.venv\Scripts\python.exe scripts\meca500\apply_slide.py --before <that newest scope_calibration .bak.json>`.
+   It prints the measured slide (x, y in mm), its rotation, and the dish height change (with how many
+   minutes passed between the two calibrations). It moves every obstacle by the slide. Send Claude the
+   output; it goes in the paper with your ruler reading.
+   **The methods keep the pre-slide in-plane calibration.** apply_slide pins it as
+   `scope_calibration.pinned.json`. Every method aims with its pixel <-> XY map: the policy,
+   scripted, scripted + servo and the expert. The dish **height** comes from the current calibration
+   and dish map, as after every session's E0 check: the slide tests in-plane registration. The new
+   in-plane calibration is used only for the measured slide, the moved obstacles and the final FK
+   measurement. `eval_auto.py` and `preflight.py` refuse to start if the slide files don't match.
+   Before each later session at this position, the E0 height check runs as usual.
+5. Run the sessions of row 5 (or 6).
+6. **Before the next slide or when done:** slide back to the tape marks,
+   `apply_slide.py --reset`, and recalibrate as in step 3.
+
+## You on the SpaceMouse (not in the current order; only if time is left)
 **Human trials (first time: try 2-3 trials with `NUM_EPISODES = 3` and a hand on the e-stop).** This
 mode has only been tested without the arm.
 - Plug in the SpaceMouse. The arm moves to each start by itself, then a window shows the microscope
