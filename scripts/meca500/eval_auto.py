@@ -92,6 +92,7 @@ from lerobot.processor import (
     transition_to_observation,
 )
 from lerobot.robots.meca500.autocollect.asr_bridge import (
+    GPU_LOCK,
     AsrTipDetector,
     Meca500AsrHost,
     TipWatcher,
@@ -415,7 +416,8 @@ def rollout_episode(
             live.append((step, raw[live_key].copy(), [float(raw[f"joint_{j + 1}.pos"]) for j in range(6)]))
         obs = obs_proc(raw)
         frame = build_dataset_frame(obs_features, obs, prefix=OBS_STR)
-        action = predict_action(frame, policy, torch.device(DEVICE), pre, post, False, TASK, robot.name)
+        with GPU_LOCK:  # never alongside the tip watcher's GPU work (asr_bridge.GPU_LOCK)
+            action = predict_action(frame, policy, torch.device(DEVICE), pre, post, False, TASK, robot.name)
         a = action.squeeze(0).float().cpu().numpy()
         precise = bool(a[6] > 0.5)
         ever_precise |= precise

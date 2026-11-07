@@ -34,6 +34,12 @@ from .planner import Planner, PlanningError
 # is 30 px, set for a 4x-objective cell-picking task; at our scale that is 0.4 mm.
 DEFAULT_CONVERGE_PX = 3.0
 
+# One GPU user at a time: the ACT policy (torch, control loop) and ASR's detector (onnxruntime,
+# TipWatcher thread) deadlocked when they ran CUDA work concurrently (2026-11-07 12:21: both
+# threads stuck mid-kernel for 33 min, the arm holding its last pose). Every GPU call in eval_auto
+# and the detector takes this lock.
+GPU_LOCK = threading.Lock()
+
 
 @dataclass
 class TipSighting:
@@ -55,12 +61,11 @@ class AsrTipDetector:
         self.runtime = runtime
         self.centre = np.asarray(field_centre_px, dtype=float)
         self.radius = float(field_radius_px) + float(field_margin_px)
-        self._lock = threading.Lock()
 
     def detect(self, rgb: np.ndarray) -> TipSighting | None:
         bgr = np.ascontiguousarray(rgb[..., ::-1])
         t = time.perf_counter()
-        with self._lock:  # one inference at a time, whichever thread asks
+        with GPU_LOCK:  # one GPU user at a time, whichever thread asks
             record = self.runtime.infer_affordances(image=bgr, phase="pickup", save_json=False)
         best = None
         for c in (record.get("affordances") or {}).get("tip_candidates") or []:
