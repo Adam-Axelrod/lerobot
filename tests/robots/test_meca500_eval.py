@@ -571,6 +571,9 @@ def run_asr_session(monkeypatch, tmp_path, *, offset=(0.0, 0.0), sees=True, meth
     eval_auto, holder = run_session(monkeypatch, tmp_path, method, episodes=1, policy=(Still(), Still(), Still()))
     monkeypatch.setattr(eval_auto, "BASE_OFFSET_MM", offset)
     monkeypatch.setattr(eval_auto, "EPISODE_TIME_S", 600.0)  # a loaded test machine runs the replay slowly
+    # The fake detector reports the free end itself: no ASR tip offset in this world.
+    (tmp_path / "asr_tip_offset.json").write_text(json.dumps({"offset_px": [0.0, 0.0], "n": 0}))
+    monkeypatch.setattr(eval_auto, "ASR_TIP_OFFSET_FILE", str(tmp_path / "asr_tip_offset.json"))
     monkeypatch.setattr(eval_auto, "SAVE_LIVE_FRAMES", False)
     real_plan_episode = eval_auto.StagePlanner.plan_episode
 

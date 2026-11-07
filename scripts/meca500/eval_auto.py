@@ -208,6 +208,12 @@ ASR_SITE_YAML = "assets/benches/meca500_basler/asr_site.yaml"
 # The servo stops within this many px of the target (13.3 um/px). ASR's own default is 30 px.
 ASR_CONVERGE_PX = 3.0
 ASR_TIMEOUT_S = 120.0
+# ASR's tip point is not the pipette's free end: it sits back along the shaft (2026-11-07 bench:
+# the servo converged on ASR's point and left the free end ~340 um short). The target handed to
+# ASR is the ring plus this offset (ASR px - free-end px at the servo height), measured by
+# scripts/meca500/asr_tip_offset.py into the bench's asr_tip_offset.json. Required for *_asr.
+ASR_TIP_OFFSET_FILE = "assets/benches/meca500_basler/asr_tip_offset.json"
+ASR_TIP_OFFSET_PX = (0.0, 0.0)  # set from ASR_TIP_OFFSET_FILE in main()
 # Handover: this many detections in a row at or above this confidence, within WATCH_JUMP_PX of
 # each other. On the 2026-11-05/06 rollout frames the tip scored 0.8-1.0 once in view; the only
 # stray detections (single frames, tip out of view) scored 0.63-0.68.
@@ -677,7 +683,7 @@ def search_for_tip(robot, teleop, planner, detector, key, fps, processors) -> tu
 
 def run_policy_asr(
     robot, teleop, policy, pre, post, obs_proc, obs_features, planner, events, key, target,
-    watcher, detector, service, host, fps, processors, slide, live_key, plan=None,
+    watcher, detector, service, host, fps, processors, slide, live_key, plan=None, background=None,
 ) -> dict:
     """METHOD "policy_asr": the learned approach, the handover, then the classical finish.
 
@@ -707,7 +713,10 @@ def run_policy_asr(
         watcher.sighting = None
         if events["stop_recording"]:
             return out
-        return finish_with_asr(robot, teleop, planner, events, key, target, None, detector, service, host, fps, processors, out, t0, stage, tip_now)
+        return finish_with_asr(
+            robot, teleop, planner, events, key, target, None, detector, service, host, fps, processors, out, t0,
+            stage, tip_now, background,
+        )
     watcher.start()
     try:
         run = rollout_episode(
@@ -725,13 +734,13 @@ def run_policy_asr(
 
     return finish_with_asr(
         robot, teleop, planner, events, key, target, watcher.sighting, detector, service, host, fps, processors,
-        out, t0, stage, tip_now,
+        out, t0, stage, tip_now, background,
     )
 
 
 def finish_with_asr(
     robot, teleop, planner, events, key, target, sighting, detector, service, host, fps, processors, out, t0, stage,
-    tip_now,
+    tip_now, background=None,
 ) -> dict:
     """The classical finish of policy_asr and scripted_asr, from wherever the approach left the tip."""
     from action_state_runtime.contracts import (
@@ -795,8 +804,10 @@ def finish_with_asr(
             out["failure_stage"] = "servo"
             out["reason"] = f"ASR anchor failed: {anchor.reason}"
             return out
+        # ASR servos ITS tip point: aim it ASR_TIP_OFFSET_PX from the ring so the free end lands on it.
+        asr_target = np.asarray(target, dtype=float) + np.asarray(ASR_TIP_OFFSET_PX, dtype=float)
         handle = service.submit_task(
-            ExecuteTaskGoal(target_kind=TargetKind.PIXEL, target_px=tuple(float(v) for v in target), routine=RoutineKind.POSITION)
+            ExecuteTaskGoal(target_kind=TargetKind.PIXEL, target_px=tuple(float(v) for v in asr_target), routine=RoutineKind.POSITION)
         )
         if not handle.accepted:
             raise StageFailedError(f"ASR rejected the goal: {handle.rejection_reason}")
@@ -812,8 +823,20 @@ def finish_with_asr(
             "final_tip_px": None if r.final_tip_px is None else [round(v, 1) for v in r.final_tip_px],
             "final_distance_px": None if r.final_distance_px is None else round(float(r.final_distance_px), 2),
             "anchor_tip_px": None if anchor.visual_tip_px is None else [round(v, 1) for v in anchor.visual_tip_px],
+            "asr_target_px": [round(float(v), 2) for v in asr_target],
+            "tip_offset_px": list(ASR_TIP_OFFSET_PX),
             "moves": host.moves,
         }
+        if background is not None:
+            # The residual at the servo height, by our own free-end detector (no move): the
+            # number reported next to the final distance.
+            free = detect_tip(grab(robot, key), background)
+            if free is not None:
+                out["servo"]["free_end_px"] = [round(float(v), 2) for v in free.px]
+                out["servo"]["free_end_to_target_um"] = round(
+                    float(np.hypot(*np.subtract(free.px, target))) * planner.calib.mm_per_px * 1000, 1
+                )
+                out["servo"]["free_end_score"] = round(float(free.score), 2)
         stage("servo", t, converged=r.converged, reason=r.reason, steps=r.servo_steps)
 
         attempt = "touch"
@@ -1033,6 +1056,13 @@ def main() -> None:
 
     service = host = detector = watcher = None
     if asr:
+        global ASR_TIP_OFFSET_PX
+        off_path = Path(ASR_TIP_OFFSET_FILE)
+        if not off_path.exists():
+            sys.exit(f"{off_path} not found: run scripts/meca500/asr_tip_offset.py (ASR's tip point vs the free end) first.")
+        off = json.loads(off_path.read_text(encoding="utf-8"))
+        ASR_TIP_OFFSET_PX = tuple(float(v) for v in off["offset_px"])
+        logging.info(f"ASR tip offset {ASR_TIP_OFFSET_PX} px (n={off.get('n')}, measured {off.get('measured_at')}).")
         key = bench.camera_key
         host = Meca500AsrHost(
             planner,
@@ -1166,7 +1196,7 @@ def main() -> None:
                 run = run_policy_asr(
                     robot, teleop, policy, pre, post, obs_proc, obs_features, planner, events,
                     bench.camera_key, target, watcher, detector, service, host, fps, processors, slide,
-                    live_key=bench.camera_key if SAVE_LIVE_FRAMES else None, plan=plan,
+                    live_key=bench.camera_key if SAVE_LIVE_FRAMES else None, plan=plan, background=background,
                 )
             elif METHOD == "policy":
                 run = rollout_episode(
