@@ -84,7 +84,7 @@ USER = "AdamAxelrod"
 NAME = "basler_stage_touch_recovery_2026-11"  # one dataset per rig and target style - never mix
 TASK = "move_pipette_to_target"
 NUM_EPISODES = 50
-RESUME = False  # append to an existing local dataset of the same NAME
+RESUME = True  # append to an existing local dataset of the same NAME
 PUSH_TO_HUB = False
 DISPLAY_DATA = True
 
@@ -136,7 +136,7 @@ RECOVERY_START_FRAC = (0.5, 1.0)
 # "offcourse" (above) or "hover" (planner.plan_hover): the tip starts RECOVERY_HOVER_MM straight
 # above the ring and the recording is a vertical descent to the touch. The 2026-11-06 handover
 # policies stopped with the tip's image on the ring 0.45-1.5 mm up, a state no demo contains.
-RECOVERY_KIND = "offcourse"
+RECOVERY_KIND = "hover"
 RECOVERY_HOVER_MM = (0.5, 2.5)
 
 # Vision correction of the final approach (see autocollect/correction.py). Open loop the tip
