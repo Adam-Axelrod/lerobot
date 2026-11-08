@@ -91,21 +91,24 @@ def guard_at_height(height_mm, clearance_mm=10.0):
 def test_guard_limits_descent_by_height_and_stops_at_the_floor():
     q = np.zeros(6)
     fast = np.array([3.0, 4.0, -50.0])
-    np.testing.assert_allclose(guard_at_height(20.0).filter(q, fast), fast)  # far above: unlimited
-    np.testing.assert_allclose(guard_at_height(1.0).filter(q, fast)[2], -5.0)
+    np.testing.assert_allclose(guard_at_height(60.0).filter(q, fast), fast)  # far above: unlimited
+    np.testing.assert_allclose(guard_at_height(1.0).filter(q, fast)[2], -1.0)
     np.testing.assert_allclose(guard_at_height(0.001).filter(q, fast)[2], -0.1)  # still arrives
     on_dish = guard_at_height(0.0)
     v = on_dish.filter(q, fast)
     np.testing.assert_allclose(v, [3.0, 4.0, 0.0])  # sideways still allowed
     assert on_dish.floor_hit
-    below = guard_at_height(-0.05)
-    assert below.filter(q, fast)[2] == 0
+    touching = guard_at_height(-0.01)  # contact within the map's noise: held, not lifted
+    assert touching.filter(q, fast)[2] == 0
+    below = guard_at_height(-0.46)  # pressed in (2026-11-08): lifted back, whatever is asked
+    np.testing.assert_allclose(below.filter(q, fast)[2], 0.46)
     assert below.filter(q, np.array([0.0, 0.0, 2.0]))[2] == 2.0  # can always lift off
 
 
 def test_guard_never_lets_the_descent_speed_outrun_the_stale_joint_reading():
     """Worst case over a descent at full coarse command: the overshoot past the floor stays tiny."""
-    z, dt, latency = 10.0, 0.005, 0.03
+    # 0.25 s: the delay the 2026-11-08 press implies (k = 5 /s overshot by 0.46 mm), with margin.
+    z, dt, latency = 10.0, 0.005, 0.25
     history = [z] * int(latency / dt)
     guard = guard_at_height(0.0)
     tip = np.eye(4)
