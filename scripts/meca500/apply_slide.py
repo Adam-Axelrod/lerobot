@@ -23,8 +23,12 @@ The height change it reports is the slide's own (base tilt) plus the dish's drif
 was measured. Run the height check just before sliding, so that --before is minutes old and the
 change is mostly the slide; slide_measurement.json records how old --before was.
 
-The slide must be (nearly) a pure translation: it refuses a rotation over MAX_ROTATION_DEG, since
-the scene would then pivot about the robot base, which a 3-6 mm slide should not do.
+The obstacles are moved by the translation only, exact at the microscope where the arm works
+closest to them. The rotation is reported but NOT registered: it comes from the change in the
+calibration's heading, and full calibrations with the robot never moved scatter by about 1 deg
+(-1.09 to +0.03 deg, 2026-10-14..11-04), because the field is only ~5 mm across. Registering it
+would turn that noise into 2-4 mm out at the robot base. MAX_ROTATION_DEG only refuses a rotation
+too large to be noise (2026-11-08: a clamped slide by hand gave -0.60 deg).
 """
 
 import argparse
@@ -41,7 +45,7 @@ from lerobot.robots.meca500.autocollect.calibration import ScopeCalibration
 from lerobot.robots.meca500.autocollect.slide import MEASUREMENT, PINNED_CALIBRATION
 
 RIG = "meca500_basler"
-MAX_ROTATION_DEG = 0.5
+MAX_ROTATION_DEG = 1.5
 
 
 def main() -> None:

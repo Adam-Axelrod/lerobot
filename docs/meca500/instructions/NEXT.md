@@ -1,7 +1,7 @@
 # Next at the bench
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
-**Last updated:** 2026-11-08 (one physical 2 mm slide today)
+**Last updated:** 2026-11-08 (physical slide done; base re-seated 1.5 mm off)
 
 ## The plan (since 2026-11-06)
 The paper's system is now a **learned policy that brings the pipette under the microscope, then hands
@@ -19,76 +19,40 @@ this is `METHOD = "policy_asr"`. Each trial goes through these stages, all logge
 Everything ran end to end without the arm on 2026-11-07: simulated sessions, plus Huanyu's real
 detector and servo on real frames. **It has not moved the real arm yet.**
 
-## Now: the physical 2 mm slide (Sun 8 Nov, the last bench day)
-Decided 2026-11-08: the paper is framing A for ISMR, and this run removes its "software slide"
-caveat at 2 mm. Seeds 0-9 (`SEED_BASE = 5_000_000`), as in the software slides. 4 mm is not
-repeated physically.
+## Now: no bench work outstanding (physical slide done 2026-11-08)
+The physical slide ran on 2026-11-08 and the base is back in its screw holes. Nothing on the arm is
+outstanding for the ISMR paper (framing A). Still open, no arm needed: Adam's by-eye verdicts on the
+`epNNN/final_overlay.png` of the three physical-slide runs (`verdicts.json`, see score_eval.py).
 
-**Who does what:** you do everything physical and keep a hand on the e-stop. Claude sets every
-CONFIG block and runs every script on this PC, and tells you before each arm motion. Answer
-Claude's "ready?" only when the step before it is done.
+**What happened, for the paper:**
+- **The slide.** It was done by hand with the clamps on, and measured 1.32 mm at the microscope:
+  d = (-1.00, -0.87) mm.
+- **The rotation** reads -0.6 deg but is not resolvable: no-slide calibrations scatter by about 1 deg
+  in heading. Only the translation moved the safety model.
+- **The pipette** got bent slightly. The tip in the flange frame moved by about 0.3-0.55 mm (pivot
+  fits); the ASR tip offset was re-measured as (+1.5, +19.9) px.
+- **Incidents, none affecting the data:**
+  - the illuminator column was bumped and re-fixed;
+  - the focus K-Cube was power-cycled by accident, so its counter restarted at 0 and `focus_mm` is now
+    0.0 (same physical focus);
+  - the BBD302 needed a power cycle.
+- **Results at 1.3 mm** (score_eval, no by-eye verdicts yet):
 
-**Press the e-stop (or Esc in the script's window) if:**
-- the tip presses or bends;
-- a move heads for the dish wall or the lamp;
-- anything is loose after re-clamping.
+  | Session | Within 50 um | Median | Run |
+  |---|---|---|---|
+  | scripted alone | 0/10 | 1324 um | `scripted_20261108-145531` |
+  | scripted_asr | 6/10 | 38 um | `scripted_asr_20261108-142822` |
+  | policy_asr | 7/10 | 34 um | `basler_stage_touch_decoyrec_2026-11_delta_act_asr_20261108-144107` |
 
-A spiral search 1 mm above the dish is intended.
+  The policy's approach used the old tip model.
 
-### Steps
-1. **Set up (you).**
-   - Close Kinesis and the pylon Viewer.
-   - The microscope lamp is on and the arm is at home.
-   - The focus K-Cube is powered. Don't touch it.
-2. **Height check (Claude, about 3 min, the arm moves).**
-   - `auto_calibrate.py` with `HEIGHT_CHECK_ONLY = True` runs. It should end with `HEIGHT CHECK COMPLETE`.
-   - Its calibration is the "before" for the slide measurement, so nothing may move between this
-     step and step 4 except the robot base.
-3. **Mark the base (you).** Put tape at two corners of the robot base on the table, and a ruler or
-   feeler gauge against the base's side that faces the slide direction.
-4. **Slide (you).**
-   - The arm stays at home and the power stays on.
-   - Loosen the base clamps.
-   - Slide the base **2 mm towards robot +y**. Standing behind the robot (cable side) facing along
-     robot +x, the microscope's optical axis is about 238 mm ahead and 85 mm to your right; +y is to
-     your **left**. It is also parallel to the microscope's front edge: no closer to the lamp.
-   - Keep it straight: don't twist the base.
-   - Re-clamp firmly.
-   - Tell Claude the ruler reading and the direction.
-5. **Recalibrate (Claude, the arm moves).**
-   - `auto_calibrate.py` runs in full mode (`HEIGHT_CHECK_ONLY = False`, `START_ABOVE_DISH_MM = 6.0`).
-     It finds the tip with its own spiral search, then re-measures the scope calibration and the
-     dish height map.
-   - Watch the first descent; the tip starts 6 mm above the dish.
-6. **Measure the slide (Claude, no motion).**
-   - `apply_slide.py --before <the step 2 calibration>` prints the measured slide (x, y), its
-     rotation and the height change, and moves the safety model by it.
-   - Expect about (0, +2) mm and a rotation under 0.5 deg. If it reports a rotation over 0.5 deg,
-     re-seat the base squarely (Claude says so) and repeat steps 4-6.
-   - Methods keep the pre-slide pixel <-> XY map (`scope_calibration.pinned.json`); the policy is
-     told nothing.
-7. **Preflight (Claude, no motion).** `preflight.py` must end with **GO**.
-8. **Trials (Claude runs them, you watch with a hand on the e-stop).** The height check runs before
-   each session.
-
-   | # | Session | Trials | Time |
-   |---|---|---|---|
-   | a | Scripted + Huanyu's servo (`scripted_asr`) | 10 | ~15 min |
-   | b | Our system (`policy_asr`, the deployed decoyrec ACT) | 10 | ~25 min |
-   | c | Only if time is left: scripted alone (`scripted`); it should miss by about 2 mm | 10 | ~10 min |
-9. **Slide back (you, then Claude).**
-   - Arm at home. You loosen the clamps, slide back to the tape marks and re-clamp.
-   - Claude runs `apply_slide.py --reset`, then the full recalibration as in step 5, then sets
-     `START_ABOVE_DISH_MM` back to 4.0.
-
-`BASE_OFFSET_MM` stays `(0.0, 0.0)`. That is the software slide; it is refused on top of a physical one.
-`eval_auto.py` and `preflight.py` refuse to start if the slide files don't agree with each other.
-
-### Done without the arm for this (2026-11-08)
-- On a copy of the bench files in a synthetic +2 mm post-slide state: all 10 seeds plan
-  collision-free for both methods, and so does the transit from home.
-- At -2 mm the scripted plans also pass, so a slide the wrong way is still safe.
-- `apply_slide.py` measured the synthetic slide correctly.
+**The base did not return to its old place.** Screwed back into its original holes, it sits
+1.49 mm (+0.55, +1.38) from where it was before the slide, at the microscope (hole clearance).
+- The bench is recalibrated there (2026-11-08 15:24) and consistent: scripted runs, collection and
+  the servo are fine.
+- **The learned policies were trained at the old position.** Any new policy run sees about 1.5 mm
+  of offset. Re-seat the base and recalibrate, or collect new data (follow-up paper D), before
+  comparing a policy with the 0 mm rows.
 
 ## You on the SpaceMouse (not in the current order; only if time is left)
 **Human trials (first time: try 2-3 trials with `NUM_EPISODES = 3` and a hand on the e-stop).** This

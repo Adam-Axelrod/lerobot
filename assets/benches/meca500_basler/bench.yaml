@@ -37,8 +37,8 @@ obstacles:
   boxes:
     - {name: acrylic_plate, center: [237.5, -85.5, 23.83], size: [78, 118, 2], moves_with_stage: true}
   cylinders:
-    - {name: dish_floor, base: [241.2, -99.8, 26.55], radius: 30, height: 2, moves_with_stage: true}
-    - {name: dish_wall, base: [241.2, -99.8, 26.55], radius: 30, inner_radius: 24, height: 10, moves_with_stage: true}
+    - {name: dish_floor, base: [241.2, -99.8, 26.40], radius: 30, height: 2, moves_with_stage: true}
+    - {name: dish_wall, base: [241.2, -99.8, 26.40], radius: 30, inner_radius: 24, height: 10, moves_with_stage: true}
 
 tool:
   # Holder + pipette as one STL in the FLANGE frame (Meca FRF: origin on the flange face,
@@ -55,7 +55,7 @@ tool:
   # because J4 and J6 are collinear there.
   # (Huanyu's basler_pipette_2026-09-16 demos used a DIFFERENT pipette: their end poses
   # imply a tip ~118 mm out, so they say nothing about this one.)
-  tip_pose_in_flange: [104.96, -5.12, 67.43, 38.81, 86.24, -38.75]
+  tip_pose_in_flange: [104.98, -4.8, 67.35, 38.81, 86.24, -38.75]
   # Tool points closer than this to the tip are not collision-checked: the tip touches
   # the dish by design.
   tip_exempt_mm: 10
@@ -68,7 +68,7 @@ tool:
   # Measured tip position in the FRF (mm), written by calibrate_tip.py. Overrides the CAD tip:
   # the import shifts the CAD pipette so its tip lands here. Re-measure after EVERY pipette
   # change - pulled glass pipettes differ in length and seat differently - or a bend.
-  measured_tip_in_flange: [104.96, -5.12, 67.43]
+  measured_tip_in_flange: [104.98, -4.80, 67.35]
 
 safety:
   link_margin_mm: 15        # clearance required for the arm links
@@ -100,7 +100,10 @@ scope:
   focus_kcube_serial: "26006298"
   # 2026-11-03: refocused on the dish bottom on the acrylic holder (dish ~16 mm higher).
   # Was 24.08851 for the dish down in the stage opening.
-  focus_mm: 4.0
+  # 2026-11-08: the K-Cube was switched off and on by accident (no homing, knob untouched), so its
+  # counter restarted at 0 at the same physical focus (was 4.0). The full auto_calibrate after the
+  # physical slide re-measured the dish height.
+  focus_mm: 0.0
   # The dish stage: MLS203 on a BBD302 (serial 103476364), homed 2026-10-27. Travel is
   # 110 x 75 mm, so (55, 37.5) is the middle of its travel.
   stage_serial: "103476364"
