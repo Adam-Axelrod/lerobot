@@ -164,6 +164,8 @@ _COMPLEMENTARY_KEYS = (
     "messages",
     "message_streams",
     "target_message_indices",
+    # Meca500: per-frame joint change per mm of base slide, for ACT's state_slide_mm (training only).
+    "slide_basis",
     # Text-generation request keys: carried into complementary_data so a prompt-formatting
     # processor step can read the kind and rewrite QUERY_TEXT.
     QUERY_KIND,

@@ -101,7 +101,7 @@ def main() -> None:
         detail = ev.MODEL
         if ok:
             ds = json.loads((p / "train_config.json").read_text(encoding="utf-8"))["dataset"]["repo_id"]
-            ok, detail = ds.endswith("_delta"), f"{ev.MODEL} (trained on {ds})"
+            ok, detail = ds.removesuffix("_sb").endswith("_delta"), f"{ev.MODEL} (trained on {ds})"
         check("MODEL present, delta-trained", ok, detail)
     runtime = None
     if asr:

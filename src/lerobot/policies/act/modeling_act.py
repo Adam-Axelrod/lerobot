@@ -142,6 +142,15 @@ class ACTPolicy(PreTrainedPolicy):
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
         cfg = self.config
+        if self.training and OBS_STATE in batch and cfg.state_slide_mm > 0:
+            batch = dict(batch)
+            state = batch[OBS_STATE]
+            basis = torch.as_tensor(batch["slide_basis"]).reshape(state.shape[0], -1, 2).to(state.device, state.dtype)
+            r = cfg.state_slide_mm * torch.rand(state.shape[0], device=state.device).sqrt()
+            a = 2 * torch.pi * torch.rand(state.shape[0], device=state.device)
+            d = torch.stack([r * a.cos(), r * a.sin()], -1).to(state.dtype)
+            std = torch.as_tensor(cfg.state_slide_std, dtype=state.dtype, device=state.device)
+            batch[OBS_STATE] = state - (basis @ d.unsqueeze(-1)).squeeze(-1) / std
         if self.training and OBS_STATE in batch and (cfg.state_noise_std > 0 or cfg.state_dropout > 0):
             batch = dict(batch)
             state = batch[OBS_STATE]

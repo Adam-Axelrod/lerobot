@@ -143,6 +143,13 @@ SHIFT_AUGMENT_FRACTION = 0.0
 # episode's target_px from autocollect_episodes.jsonl). 0 = off. Labels do not follow a shifted
 # image, so it is refused together with SHIFT_AUGMENT_FRACTION.
 RING_AUX_WEIGHT = 0.0
+# ACT only: slide the robot base by a random d (|d| up to this many mm, robot x/y) in each
+# training sample's joint state, so the joints stop saying where the tip is over the dish and
+# only the image does (policy_asr lost to scripted + servo under a 2-4 mm slide, 2026-11-07).
+# Needs a dataset with a slide_basis column (scripts/meca500/add_slide_basis.py). 0 = off.
+STATE_SLIDE_MM = 0.0
+# Start from these weights (a pretrained_model dir) instead of from scratch: a fine-tune. None = off.
+INIT_FROM: str | None = None
 
 # --- Random subset of the dataset ---
 # 1.0 = train on every episode. e.g. 0.5 = a random half of the episodes.
@@ -380,15 +387,31 @@ def build_policy_config() -> PreTrainedConfig:
 
     model_repo_id = f"{HF_USER}/{RUN_NAME}_{ARCHITECTURE}"
     extra = ring_aux_kwargs() if RING_AUX_WEIGHT > 0 else {}
+    if STATE_SLIDE_MM > 0:
+        extra |= state_slide_kwargs()
     # input_features/output_features left as the empty defaults => inferred from
     # the dataset in make_policy, which includes every action channel.
-    return policy_cls(
+    cfg = policy_cls(
         device=DEVICE,
         push_to_hub=PUSH_TO_HUB,
         repo_id=model_repo_id,  # always set: required by validate() even when not pushing
         **POLICY_KWARGS,
         **extra,
     )
+    if INIT_FROM:
+        cfg.pretrained_path = Path(INIT_FROM)
+        print(f"[init] fine-tuning from {INIT_FROM}")
+    return cfg
+
+
+def state_slide_kwargs() -> dict:
+    """ACT's state_slide_mm and the per-joint state std it normalises the slide by."""
+    meta = LeRobotDatasetMetadata(f"{USER}/{NAME}")
+    if ARCHITECTURE != "act" or "slide_basis" not in meta.features:
+        raise SystemExit("STATE_SLIDE_MM needs ARCHITECTURE='act' and a dataset from add_slide_basis.py.")
+    std = [float(v) for v in np.asarray(meta.stats["observation.state"]["std"]).reshape(-1)]
+    print(f"[slide] state slide up to {STATE_SLIDE_MM} mm; state std (deg) {np.round(std, 2).tolist()}")
+    return {"state_slide_mm": STATE_SLIDE_MM, "state_slide_std": std}
 
 
 def ring_aux_kwargs() -> dict:

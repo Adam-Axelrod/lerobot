@@ -135,6 +135,13 @@ class ACTConfig(PreTrainedConfig):
     # confusion" in imitation learning, de Haan et al. 2019). Inference never corrupts the state.
     state_noise_std: float = 0.0
     state_dropout: float = 0.0
+    # Training-time slide of the robot base: each sample's joint state becomes the joints that
+    # would put the tip a random d away (|d| uniform over a disc of this radius, mm, robot x/y),
+    # q - B d, with B the frame's "slide_basis" column (scripts/meca500/add_slide_basis.py, deg
+    # per mm) and state_slide_std the dataset's per-joint state std (deg) to normalise it. The
+    # joints then no longer say where the tip is over the dish; the image does. 0 = off.
+    state_slide_mm: float = 0.0
+    state_slide_std: list | None = None
     # Auxiliary ring-localisation loss for image-only policies. Each image token of the encoder
     # output (first camera) gets a score; a softmax over the tokens gives an expected (u, v) that
     # is trained by L1 towards the episode's drawn target, ring_aux_uv[episode_index], in [-1, 1]

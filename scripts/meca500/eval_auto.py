@@ -127,7 +127,7 @@ from lerobot.utils.utils import init_logging, log_say
 RIG = "meca500_basler"
 # Which row this session fills: "policy", "policy_asr", "scripted", "scripted_asr", "expert" or "human"
 # (see the docstring).
-METHOD = "expert"
+METHOD = "policy_asr"
 # Pixels to shift every frame by (12.85 um/px), simulating a knocked camera. 0 is a normal run.
 # 16 px (~0.2 mm) is inside the expert's 0.5 mm correction cap; 58 px (~0.75 mm) is beyond it.
 IMAGE_SHIFT_PX = 0
@@ -142,7 +142,7 @@ FIRST_EPISODE = 0
 MODEL = "outputs/train/basler_stage_touch_decoyrec_2026-11_delta/checkpoints/100000/pretrained_model"
 EVAL_NAME = "basler_stage_touch_decoyrec_2026-11_delta_act"  # names the "policy" results folder; see session_name()
 TASK = "move_pipette_to_target"
-NUM_EPISODES = 10  # software slide 2 and 4 mm done 2026-11-07; back to no slide
+NUM_EPISODES = 10  # state-slide fine-tune at 4 mm done 2026-11-08 (2/10, worse); back to no slide
 # Training episodes used seeds 1_000_000 + episode index: this range shares none of them.
 SEED_BASE = 5_000_000
 # Longest demonstration in basler_stage_touch_dataset_2026-11 is 36.9 s (median 21.8 s).
@@ -353,7 +353,8 @@ def load_policy(model: str):
         cfg.temporal_ensemble_coeff = TEMPORAL_ENSEMBLE_COEFF
         cfg.n_action_steps = 1
     train_cfg = json.loads((path / "train_config.json").read_text(encoding="utf-8"))
-    dataset = train_cfg["dataset"]["repo_id"]
+    # add_slide_basis.py's copies (_sb) add a training-only column to the same delta dataset.
+    dataset = train_cfg["dataset"]["repo_id"].removesuffix("_sb")
     if not dataset.endswith("_delta"):
         sys.exit(f"{model} was trained on {dataset}, not a delta dataset: this script sends deltas.")
     policy = get_policy_class(cfg.type).from_pretrained(path, config=cfg)

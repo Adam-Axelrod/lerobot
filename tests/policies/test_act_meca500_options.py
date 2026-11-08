@@ -74,3 +74,26 @@ def test_state_corruption_only_in_training():
     noisy.train()
     noisy.forward(_batch())
     assert not torch.allclose(noisy.model.seen_state, torch.ones(1, 3))
+
+
+def test_state_slide_moves_the_state_along_the_basis_within_the_radius():
+    # joint 0 moves 1 deg per mm of x, joint 1 2 deg per mm of y; state std 2 deg for both
+    basis = torch.tensor([[1.0, 0.0], [0.0, 2.0]]).reshape(1, 4).repeat(512, 1)
+    batch = {
+        ACTION: torch.zeros(512, 4, 2),
+        "action_is_pad": torch.zeros(512, 4, dtype=torch.bool),
+        OBS_STATE: torch.zeros(512, 2),
+        "slide_basis": basis,
+    }
+    policy = _policy(state_slide_mm=3.0, state_slide_std=[2.0, 2.0])
+    policy.model = _FixedModel(torch.zeros(512, 4, 2))
+    policy.train()
+    policy.forward(batch)
+    dx = -policy.model.seen_state[:, 0] * 2.0 / 1.0  # back to mm
+    dy = -policy.model.seen_state[:, 1] * 2.0 / 2.0
+    radius = (dx**2 + dy**2).sqrt()
+    assert radius.max() <= 3.0 + 1e-5 and radius.max() > 2.5
+    assert dx.std() > 0.5 and dy.std() > 0.5  # both directions, not one axis
+    policy.eval()
+    policy.forward(batch)
+    assert torch.all(policy.model.seen_state == 0)  # inference never slides
