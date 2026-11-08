@@ -142,9 +142,9 @@ FIRST_EPISODE = 0
 MODEL = "outputs/train/basler_stage_touch_decoyrec_2026-11_delta/checkpoints/100000/pretrained_model"
 EVAL_NAME = "basler_stage_touch_decoyrec_2026-11_delta_act"  # names the "policy" results folder; see session_name()
 TASK = "move_pipette_to_target"
-NUM_EPISODES = 3  # human practice first (OPERATOR "practice"), then 20 as "experienced"
+NUM_EPISODES = 20  # experienced operator (Adam), 2026-11-08; practice ran as OPERATOR "practice" on SEED_BASE 5_900_000
 # Training episodes used seeds 1_000_000 + episode index: this range shares none of them.
-SEED_BASE = 5_900_000  # PRACTICE targets; set back to 5_000_000 for the scored "experienced" trials
+SEED_BASE = 5_000_000
 # Longest demonstration in basler_stage_touch_dataset_2026-11 is 36.9 s (median 21.8 s).
 EPISODE_TIME_S = 45.0
 
@@ -246,7 +246,7 @@ ASR_MAX_STEP_MM = 5.0
 ASR_MAX_TRAVEL_MM = 5.0
 
 # --- METHOD = "human" ---
-OPERATOR = "practice"  # names the results folder: "experienced", "novice1", "embryology", ...
+OPERATOR = "experienced"  # names the results folder: "experienced", "novice1", "embryology", ...
 HUMAN_TIME_S = 120.0  # as in record_microscope.py
 # The SpaceMouse gains of teleoperate_microscope.py and record_microscope.py.
 GAIN_TR = 50.0

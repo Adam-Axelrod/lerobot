@@ -78,7 +78,7 @@ def test_observation_tap_shifts_every_reader_and_logs_only_while_started():
 # ------------------------------------------------------------------ the SpaceMouse guard
 
 
-def guard_at_height(height_mm, clearance_mm=10.0):
+def guard_at_height(height_mm, clearance_mm=100.0):
     planner = MagicMock()
     tip = np.eye(4)
     tip[2, 3] = 25.0 + height_mm
@@ -120,6 +120,26 @@ def test_guard_never_lets_the_descent_speed_outrun_the_stale_joint_reading():
         history = [*history[1:], z]
     assert z > -0.02  # um scale, inside the policy's 0.1 mm press limit
     assert z < 0.01  # and it does reach the dish
+
+
+def test_guard_slows_near_an_obstacle_so_a_late_stop_cannot_overshoot_the_trip():
+    """Driving straight at an obstacle at full coarse speed, with the arm answering 0.25 s late."""
+    dt, latency = 0.005, 0.25
+    planner = MagicMock()
+    tip = np.eye(4)
+    tip[2, 3] = 100.0  # far above the dish: only the obstacle matters
+    planner.kin.tip.return_value = tip
+    planner.calib.surface_z_mm = 0.0
+    d = 30.0  # clearance to the obstacle, mm
+    history = [d] * int(latency / dt)
+    planner.checker.clearance.side_effect = lambda q: Clearance(history[0], "tool", "illuminator")
+    guard = OperatorGuard(planner, clearance_period_s=0.0)
+    for _ in range(4000):
+        v = guard.filter(np.zeros(6), np.array([50.0, 0.0, 0.0]))  # full coarse, towards it
+        d -= float(np.linalg.norm(v)) * dt
+        history = [*history[1:], d]
+    assert d > guard.trip_below_mm - 0.3  # stops at the trip point, not mm past it
+    np.testing.assert_allclose(guard_at_height(20.0, clearance_mm=40.0).filter(np.zeros(6), np.array([50.0, 0, 0])), [50.0, 0, 0])
 
 
 def test_guard_trips_on_the_collision_model_and_holds_until_reset():

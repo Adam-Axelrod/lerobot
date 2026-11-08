@@ -16,6 +16,10 @@ or a policy command gets. The guard runs in its velocity loop:
   so it runs at ``clearance_period_s``, not on every cycle. A person cannot rotate, and on 1 of 40
   test seeds the fixed-orientation route via the planner's gate point came 0.73 mm inside the
   5 mm tool margin, so the trip point allows 1 mm: about 4 mm of real clearance remains.
+  The trip alone is late at coarse speed for the same reason as the floor: on 2026-11-08 a trip
+  set for -1 mm stopped at -2.7 mm by the illuminator. So the speed is also limited in proportion
+  to the clearance left before the trip point (``clearance_gain_per_s``), and the arm slows as it
+  closes on an obstacle instead of relying on the stop.
 """
 
 from __future__ import annotations
@@ -34,6 +38,8 @@ class OperatorGuard:
         clearance_period_s: float = 0.05,
         trip_below_mm: float = -1.0,
         lift_below_mm: float = 0.02,
+        clearance_gain_per_s: float = 1.5,
+        min_speed_mm_s: float = 0.5,
         max_lift_mm_s: float = 0.5,
     ):
         self.planner = planner  # read live: the stage move changes its dish and surface height
@@ -42,6 +48,9 @@ class OperatorGuard:
         self.clearance_period_s = clearance_period_s
         self.trip_below_mm = trip_below_mm
         self.lift_below_mm = lift_below_mm
+        self.clearance_gain_per_s = clearance_gain_per_s
+        self.min_speed_mm_s = min_speed_mm_s
+        self._clearance_mm = float("inf")
         self.max_lift_mm_s = max_lift_mm_s
         self.check_clearance = True
         self.tripped: str | None = None
@@ -52,6 +61,7 @@ class OperatorGuard:
         self.tripped = None
         self.floor_hit = False
         self._next_check = 0.0
+        self._clearance_mm = float("inf")
 
     def height_mm(self, q) -> float:
         return float(self.planner.kin.tip(np.asarray(q, float))[2, 3] - self.planner.calib.surface_z_mm)
@@ -64,12 +74,18 @@ class OperatorGuard:
         if self.check_clearance and now >= self._next_check:
             self._next_check = now + self.clearance_period_s
             clear = self.planner.checker.clearance(np.asarray(q, float))
+            self._clearance_mm = float(clear.min_mm)
             if clear.min_mm < self.trip_below_mm:
                 self.tripped = (
                     f"stopped: {clear.where} within margin of {clear.obstacle} ({clear.min_mm:.1f} mm)"
                 )
                 return np.zeros(3)
         v = np.array(v_mm_s, dtype=float)
+        if self.check_clearance:
+            cap = max(self.clearance_gain_per_s * (self._clearance_mm - self.trip_below_mm), self.min_speed_mm_s)
+            speed = float(np.linalg.norm(v))
+            if speed > cap:
+                v *= cap / speed
         height = self.height_mm(q)
         if height < -self.lift_below_mm:
             self.floor_hit = True
