@@ -1,7 +1,7 @@
 # Next at the bench
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
-**Last updated:** 2026-11-08 (physical slide done; base re-seated 1.5 mm off)
+**Last updated:** 2026-11-08 (physical slide and experienced-operator trials done)
 
 ## The plan (since 2026-11-06)
 The paper's system is now a **learned policy that brings the pipette under the microscope, then hands
@@ -19,15 +19,20 @@ this is `METHOD = "policy_asr"`. Each trial goes through these stages, all logge
 Everything ran end to end without the arm on 2026-11-07: simulated sessions, plus Huanyu's real
 detector and servo on real frames. **It has not moved the real arm yet.**
 
-## Now: experienced-operator trials (2026-11-08, Adam on the SpaceMouse)
-Follow "You on the SpaceMouse" below; Claude sets the CONFIG and launches each session.
-1. A height check, then **3 practice trials** on their own targets: `OPERATOR = "practice"`,
-   `SEED_BASE = 5_900_000`, `NUM_EPISODES = 3`. They are not scored.
-2. **20 scored trials** on the test targets: `OPERATOR = "experienced"`, `SEED_BASE = 5_000_000`,
-   `NUM_EPISODES = 20`. That is about 50 min, at up to 120 s per trial plus the moves between them.
+## Now: no bench work outstanding (operator trials done 2026-11-08)
+**Experienced operator (Adam), 20 trials:**
+- 12/20 within 50 um, 16/20 within 100 um, median 40 um, 29 s per trial.
+- 2 collisions: guard stops by the illuminator in the first 5 s, both from starts with about 5 mm
+  of clearance. Nothing touched.
+- Run: `human_experienced_20261108-171553`. The 5 practice trials are in `human_practice_*`
+  (not scored).
 
-The robot's re-seated position (below) doesn't matter here: the operator aims by the image, and
-the guard uses the current calibration.
+**Guard fixes made during practice:**
+- Practice pressed the tip 0.46 mm into the dish, and a stop by the illuminator came 1.7 mm late.
+- The SpaceMouse guard now slows the descent near the dish and slows the arm near obstacles
+  (`operator_guard.py`). All 20 scored trials ran with the fix.
+
+**Still open, no arm needed:** by-eye checks of the 20 final frames if the paper wants them.
 
 ## Earlier today: physical slide done (2026-11-08)
 The physical slide ran on 2026-11-08 and the base is back in its screw holes. Nothing on the arm is
