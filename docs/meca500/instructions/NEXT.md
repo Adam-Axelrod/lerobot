@@ -19,61 +19,76 @@ this is `METHOD = "policy_asr"`. Each trial goes through these stages, all logge
 Everything ran end to end without the arm on 2026-11-07: simulated sessions, plus Huanyu's real
 detector and servo on real frames. **It has not moved the real arm yet.**
 
-## Now: one physical 2 mm slide (Sun 8 Nov, the last bench day)
-Decided 2026-11-08: the paper is framing A (servoing absorbs the calibration error; learning does
-not) for ISMR, and this run replaces its "software slide" caveat at 2 mm. Rows at 0 mm and the
-software slides at 2 and 4 mm are done; 4 mm is not repeated physically.
+## Now: the physical 2 mm slide (Sun 8 Nov, the last bench day)
+Decided 2026-11-08: the paper is framing A for ISMR, and this run removes its "software slide"
+caveat at 2 mm. Seeds 0-9 (`SEED_BASE = 5_000_000`), as in the software slides. 4 mm is not
+repeated physically.
 
-Every session uses `scripts\meca500\eval_auto.py` (Claude sets its CONFIG block). All use the same
-targets (`SEED_BASE = 5_000_000`, seeds 0-9). **Before every session:** the E0 height check
-(`auto_calibrate.py` with `HEIGHT_CHECK_ONLY = True`), close Kinesis, then
-`.venv\Scripts\python.exe scripts\meca500\preflight.py` must end with **GO**.
+**Who does what:** you do everything physical and keep a hand on the e-stop. Claude sets every
+CONFIG block and runs every script on this PC, and tells you before each arm motion. Answer
+Claude's "ready?" only when the step before it is done.
 
-| # | What | Set in CONFIG | Trials | Time |
-|---|---|---|---|---|
-| 1 | The slide, steps 1-4 below | - | - | ~45 min |
-| 2 | Scripted + Huanyu's servo | `METHOD = "scripted_asr"`, `NUM_EPISODES = 10` | 10 | ~15 min |
-| 3 | Our system | `METHOD = "policy_asr"`, `NUM_EPISODES = 10` | 10 | ~25 min |
-| 4 | Only if time is left: scripted alone (should miss by about the slide) | `METHOD = "scripted"`, `NUM_EPISODES = 10` | 10 | ~10 min |
-| 5 | Slide back, step 6 below | - | - | ~30 min |
+**Press the e-stop (or Esc in the script's window) if:**
+- the tip presses or bends;
+- a move heads for the dish wall or the lamp;
+- anything is loose after re-clamping.
 
-**Press Esc or the e-stop if the tip presses or bends, or if a move heads for the dish wall or the
-lamp.** A spiral search 1 mm above the dish after the policy is intended.
-`BASE_OFFSET_MM` stays `(0.0, 0.0)`: that is the software slide; it is refused on top of a physical one.
+A spiral search 1 mm above the dish is intended.
 
-## The physical slide
-The robot is slid on the table relative to the microscope. The policy is not told; the safety model
-is. Slide **sideways, parallel to the front edge of the microscope**, so the arm is no closer to the
-lamp: towards robot **+y**, the direction the software slides used. Standing behind the robot
-(cable side) facing along robot +x, the microscope's optical axis is ~238 mm ahead and ~85 mm to
-your right, and +y is to your **left**; it is also the way the dish moves
-when the stage's X reading goes **down** (stage +X = robot -y). If apply_slide then reports the
-slide as about (0, -2) it went the other way: that is still a valid 2 mm slide, it just doesn't
-match the software slide's direction (the planning check, below, cleared both).
-1. **Just before sliding: E0 height check** (`auto_calibrate.py` with `HEIGHT_CHECK_ONLY = True`).
-   The height change the slide measurement reports is then mostly the slide, not hours of dish drift.
-   Mark the base's position on the table (tape at two corners).
-2. **Slide:** arm at home, power stays on. Loosen the base clamps, slide by 2 mm against a ruler or
-   feeler gauge, re-clamp. Note the direction and the ruler reading.
-3. **Re-calibrate:** `auto_calibrate.py` with `HEIGHT_CHECK_ONLY = False` and `START_ABOVE_DISH_MM = 6.0`.
-   It finds the tip with its own spiral search and re-measures the scope calibration and the dish
-   height map. It saves the pre-slide calibration as the newest `scope_calibration.*.bak.json`. Set
-   `START_ABOVE_DISH_MM` back to 4.0 afterwards.
-4. **Measure the slide and move the safety model:**
-   `.venv\Scripts\python.exe scripts\meca500\apply_slide.py --before <that newest scope_calibration .bak.json>`.
-   It prints the measured slide (x, y in mm), its rotation, and the dish height change (with how many
-   minutes passed between the two calibrations). It moves every obstacle by the slide. Send Claude the
-   output; it goes in the paper with your ruler reading.
-   **The methods keep the pre-slide in-plane calibration.** apply_slide pins it as
-   `scope_calibration.pinned.json`. Every method aims with its pixel <-> XY map: the policy,
-   scripted, scripted + servo and the expert. The dish **height** comes from the current calibration
-   and dish map, as after every session's E0 check: the slide tests in-plane registration. The new
-   in-plane calibration is used only for the measured slide, the moved obstacles and the final FK
-   measurement. `eval_auto.py` and `preflight.py` refuse to start if the slide files don't match.
-   Before each later session at this position, the E0 height check runs as usual.
-5. Run the sessions (rows 2-4 of the table above).
-6. **When done:** slide back to the tape marks, `apply_slide.py --reset`, and recalibrate as in
-   step 3 (then `START_ABOVE_DISH_MM` back to 4.0).
+### Steps
+1. **Set up (you).**
+   - Close Kinesis and the pylon Viewer.
+   - The microscope lamp is on and the arm is at home.
+   - The focus K-Cube is powered. Don't touch it.
+2. **Height check (Claude, about 3 min, the arm moves).**
+   - `auto_calibrate.py` with `HEIGHT_CHECK_ONLY = True` runs. It should end with `HEIGHT CHECK COMPLETE`.
+   - Its calibration is the "before" for the slide measurement, so nothing may move between this
+     step and step 4 except the robot base.
+3. **Mark the base (you).** Put tape at two corners of the robot base on the table, and a ruler or
+   feeler gauge against the base's side that faces the slide direction.
+4. **Slide (you).**
+   - The arm stays at home and the power stays on.
+   - Loosen the base clamps.
+   - Slide the base **2 mm towards robot +y**. Standing behind the robot (cable side) facing along
+     robot +x, the microscope's optical axis is about 238 mm ahead and 85 mm to your right; +y is to
+     your **left**. It is also parallel to the microscope's front edge: no closer to the lamp.
+   - Keep it straight: don't twist the base.
+   - Re-clamp firmly.
+   - Tell Claude the ruler reading and the direction.
+5. **Recalibrate (Claude, the arm moves).**
+   - `auto_calibrate.py` runs in full mode (`HEIGHT_CHECK_ONLY = False`, `START_ABOVE_DISH_MM = 6.0`).
+     It finds the tip with its own spiral search, then re-measures the scope calibration and the
+     dish height map.
+   - Watch the first descent; the tip starts 6 mm above the dish.
+6. **Measure the slide (Claude, no motion).**
+   - `apply_slide.py --before <the step 2 calibration>` prints the measured slide (x, y), its
+     rotation and the height change, and moves the safety model by it.
+   - Expect about (0, +2) mm and a rotation under 0.5 deg. If it reports a rotation over 0.5 deg,
+     re-seat the base squarely (Claude says so) and repeat steps 4-6.
+   - Methods keep the pre-slide pixel <-> XY map (`scope_calibration.pinned.json`); the policy is
+     told nothing.
+7. **Preflight (Claude, no motion).** `preflight.py` must end with **GO**.
+8. **Trials (Claude runs them, you watch with a hand on the e-stop).** The height check runs before
+   each session.
+
+   | # | Session | Trials | Time |
+   |---|---|---|---|
+   | a | Scripted + Huanyu's servo (`scripted_asr`) | 10 | ~15 min |
+   | b | Our system (`policy_asr`, the deployed decoyrec ACT) | 10 | ~25 min |
+   | c | Only if time is left: scripted alone (`scripted`); it should miss by about 2 mm | 10 | ~10 min |
+9. **Slide back (you, then Claude).**
+   - Arm at home. You loosen the clamps, slide back to the tape marks and re-clamp.
+   - Claude runs `apply_slide.py --reset`, then the full recalibration as in step 5, then sets
+     `START_ABOVE_DISH_MM` back to 4.0.
+
+`BASE_OFFSET_MM` stays `(0.0, 0.0)`. That is the software slide; it is refused on top of a physical one.
+`eval_auto.py` and `preflight.py` refuse to start if the slide files don't agree with each other.
+
+### Done without the arm for this (2026-11-08)
+- On a copy of the bench files in a synthetic +2 mm post-slide state: all 10 seeds plan
+  collision-free for both methods, and so does the transit from home.
+- At -2 mm the scripted plans also pass, so a slide the wrong way is still safe.
+- `apply_slide.py` measured the synthetic slide correctly.
 
 ## You on the SpaceMouse (not in the current order; only if time is left)
 **Human trials (first time: try 2-3 trials with `NUM_EPISODES = 3` and a hand on the e-stop).** This
