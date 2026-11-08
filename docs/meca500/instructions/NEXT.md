@@ -19,7 +19,17 @@ this is `METHOD = "policy_asr"`. Each trial goes through these stages, all logge
 Everything ran end to end without the arm on 2026-11-07: simulated sessions, plus Huanyu's real
 detector and servo on real frames. **It has not moved the real arm yet.**
 
-## Now: no bench work outstanding (physical slide done 2026-11-08)
+## Now: experienced-operator trials (2026-11-08, Adam on the SpaceMouse)
+Follow "You on the SpaceMouse" below; Claude sets the CONFIG and launches each session.
+1. A height check, then **3 practice trials** on their own targets: `OPERATOR = "practice"`,
+   `SEED_BASE = 5_900_000`, `NUM_EPISODES = 3`. They are not scored.
+2. **20 scored trials** on the test targets: `OPERATOR = "experienced"`, `SEED_BASE = 5_000_000`,
+   `NUM_EPISODES = 20`. That is about 50 min, at up to 120 s per trial plus the moves between them.
+
+The robot's re-seated position (below) doesn't matter here: the operator aims by the image, and
+the guard uses the current calibration.
+
+## Earlier today: physical slide done (2026-11-08)
 The physical slide ran on 2026-11-08 and the base is back in its screw holes. Nothing on the arm is
 outstanding for the ISMR paper (framing A). Still open, no arm needed: Adam's by-eye verdicts on the
 `epNNN/final_overlay.png` of the three physical-slide runs (`verdicts.json`, see score_eval.py).
@@ -54,7 +64,7 @@ outstanding for the ISMR paper (framing A). Still open, no arm needed: Adam's by
   of offset. Re-seat the base and recalibrate, or collect new data (follow-up paper D), before
   comparing a policy with the 0 mm rows.
 
-## You on the SpaceMouse (not in the current order; only if time is left)
+## You on the SpaceMouse
 **Human trials (first time: try 2-3 trials with `NUM_EPISODES = 3` and a hand on the e-stop).** This
 mode has only been tested without the arm.
 - Plug in the SpaceMouse. The arm moves to each start by itself, then a window shows the microscope

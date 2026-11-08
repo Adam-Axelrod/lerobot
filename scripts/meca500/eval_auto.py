@@ -127,7 +127,7 @@ from lerobot.utils.utils import init_logging, log_say
 RIG = "meca500_basler"
 # Which row this session fills: "policy", "policy_asr", "scripted", "scripted_asr", "expert" or "human"
 # (see the docstring).
-METHOD = "scripted"
+METHOD = "human"
 # Pixels to shift every frame by (12.85 um/px), simulating a knocked camera. 0 is a normal run.
 # 16 px (~0.2 mm) is inside the expert's 0.5 mm correction cap; 58 px (~0.75 mm) is beyond it.
 IMAGE_SHIFT_PX = 0
@@ -142,9 +142,9 @@ FIRST_EPISODE = 0
 MODEL = "outputs/train/basler_stage_touch_decoyrec_2026-11_delta/checkpoints/100000/pretrained_model"
 EVAL_NAME = "basler_stage_touch_decoyrec_2026-11_delta_act"  # names the "policy" results folder; see session_name()
 TASK = "move_pipette_to_target"
-NUM_EPISODES = 10  # physical slide (1.3 mm measured) done 2026-11-08: scripted_asr, policy_asr, scripted
+NUM_EPISODES = 3  # human practice first (OPERATOR "practice"), then 20 as "experienced"
 # Training episodes used seeds 1_000_000 + episode index: this range shares none of them.
-SEED_BASE = 5_000_000
+SEED_BASE = 5_900_000  # PRACTICE targets; set back to 5_000_000 for the scored "experienced" trials
 # Longest demonstration in basler_stage_touch_dataset_2026-11 is 36.9 s (median 21.8 s).
 EPISODE_TIME_S = 45.0
 
@@ -246,7 +246,7 @@ ASR_MAX_STEP_MM = 5.0
 ASR_MAX_TRAVEL_MM = 5.0
 
 # --- METHOD = "human" ---
-OPERATOR = "experienced"  # names the results folder: "experienced", "novice1", "embryology", ...
+OPERATOR = "practice"  # names the results folder: "experienced", "novice1", "embryology", ...
 HUMAN_TIME_S = 120.0  # as in record_microscope.py
 # The SpaceMouse gains of teleoperate_microscope.py and record_microscope.py.
 GAIN_TR = 50.0
