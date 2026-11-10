@@ -1,7 +1,7 @@
 """The ISMR submission video: whole eval_auto trials, captioned by stage, sped up where slow.
 
     python scripts/meca500/submission_video.py --out outputs/figures/ismr_video.mp4 \
-        --clip <run>:<episode>:<title> [--clip ...]
+        --clip <run>:<episode>:<title>[#<caption>] [--clip ...]
 
 Each clip is a trial's epNNN/episode.mp4 (the microscope view with the target ring), its stages
 from results.jsonl as captions, and its final frame (epNNN/final_overlay.png) held with the
@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 
 W, H, FPS = 720, 480, 30
-STAGE_SPEED = {"approach": 2.0, "search": 4.0, "handover": 1.0, "lower": 1.0, "servo": 1.0, "touch": 1.0}
+STAGE_SPEED = {"approach": 2.0, "search": 2.0, "handover": 1.0, "lower": 1.0, "servo": 1.0, "touch": 1.0}
 PLAIN_SPEED = 2.0
 CAPTION = {
     "approach": "learned approach (ACT)",
@@ -97,6 +97,7 @@ def clip_frames(run: Path, episode: int, title: str, n0: int = 0) -> list[np.nda
                 cur = s["stage"]
         return cur
 
+    title, _, caption = title.partition("#")
     out = [card(title.split("|"))] * int(TITLE_S * FPS)
     # Caption timeline in output-video seconds: [caption, speed, start, end].
     timeline = [["title card", None, n0 / FPS, (n0 + len(out)) / FPS]]
@@ -107,7 +108,7 @@ def clip_frames(run: Path, episode: int, title: str, n0: int = 0) -> list[np.nda
             i += 1
         st = stage_at(t_video)
         speed = STAGE_SPEED.get(st, PLAIN_SPEED) if stages else PLAIN_SPEED
-        lines = [CAPTION[st] if st else ""] if stages else [title.split("|")[0]]
+        lines = [CAPTION[st] if st else ""] if stages else [caption or title.split("|")[0]]
         if timeline[-1][:2] != [lines[0], speed]:
             timeline.append([lines[0], speed, (n0 + len(out)) / FPS, None])
         lines.append(f"t = {t_video:4.1f} s   ({speed:g}x)")
@@ -129,7 +130,7 @@ def clip_frames(run: Path, episode: int, title: str, n0: int = 0) -> list[np.nda
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--clip", action="append", required=True, help="run:episode:title (| splits title lines)")
+    ap.add_argument("--clip", action="append", required=True, help="run:episode:title (| splits title lines; #caption sets a plain clip's in-clip caption)")
     ap.add_argument("--intro", default="", help="opening card lines, | separated")
     args = ap.parse_args()
     frames = [card(args.intro.split("|"))] * int(TITLE_S * FPS) if args.intro else []
