@@ -105,9 +105,17 @@ Theories 1–3 are about the finish. Theories 4–5 are about the approach.
   target, and records only the correction. That gives thousands a day, unattended.
 - Train the finish policy only on those, with the crop from theory 2.
 
-**Experiment.**
-- Train an ACT or MLP finish policy on the finish frames of
-  the existing 300 episodes alone (the precision phase only).
+**Experiment.** The script is `scripts/meca500/finish_policy_offline.py`, about 1.5–2 h of GPU.
+- Train a finish-only behaviour-cloning policy on the precision phase of the 200 decoy and recovery
+  episodes, held out by episode:
+  - no joint state;
+  - tip motion along the image axes;
+  - ImageNet ResNet18 on a 192 px crop at the target, or on the full frame.
+- At the two correction holds, measure:
+  - the marker gain (ring moved 266 µm on the raw frame);
+  - how well it tracks each episode's own recorded move.
+- One recorded chunk covers about 94% of the remaining path at near, so a ring-follower should show
+  a gain near 0.9 there.
 - Probe it with `probe_marker_shift.py`. The prediction is a pre-touch gain above 0.8, against
   ≤ 0.12 today.
 - If it stays low on the existing data, record one batch of 200 short finish episodes and retrain.
