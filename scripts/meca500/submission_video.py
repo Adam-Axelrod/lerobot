@@ -69,13 +69,26 @@ def read_frames(path: Path) -> list[np.ndarray]:
         frames.append(cv2.cvtColor(f, cv2.COLOR_BGR2RGB))
 
 
-def clip_frames(run: Path, episode: int, title: str) -> list[np.ndarray]:
+def clip_frames(run: Path, episode: int, title: str, n0: int = 0) -> list[np.ndarray]:
     row = next(
         r for r in map(json.loads, (run / "results.jsonl").read_text(encoding="utf-8").splitlines()) if r["episode"] == episode
     )
     ep = run / f"ep{episode:03d}"
     frames, times = read_frames(ep / "episode.mp4"), json.loads((ep / "episode_t.json").read_text(encoding="utf-8"))
-    stages = [s for s in row.get("stages", []) if s["duration_s"] > 0]
+    # eval_auto logs "handover" after a search with the search's own t_s (its clock starts before
+    # the search), so it would caption the whole spiral: a stage that starts with an earlier one
+    # begins at that one's end instead.
+    stages = []
+    for s in row.get("stages", []):
+        t0, t1 = s["t_s"], s["t_s"] + s["duration_s"]
+        for p in stages:
+            if abs(p["t_s0"] - s["t_s"]) < 1e-6:
+                t0 = max(t0, p["t_s1"])
+        if t1 > t0:
+            stages.append({"stage": s["stage"], "t_s": t0, "t_s1": t1, "t_s0": s["t_s"]})
+    for a, b in zip(stages, stages[1:]):
+        if b["t_s"] < a["t_s1"] - 0.02:  # logged to 0.01 s
+            print(f"  WARNING ep {episode}: {b['stage']} starts {a['t_s1'] - b['t_s']:.2f} s before {a['stage']} ends")
 
     def stage_at(t: float):
         cur = None
@@ -85,6 +98,8 @@ def clip_frames(run: Path, episode: int, title: str) -> list[np.ndarray]:
         return cur
 
     out = [card(title.split("|"))] * int(TITLE_S * FPS)
+    # Caption timeline in output-video seconds: [caption, speed, start, end].
+    timeline = [["title card", None, n0 / FPS, (n0 + len(out)) / FPS]]
     # Resample on an output clock that runs at each stage's speed.
     t_video, i, end = times[0], 0, times[min(len(times), len(frames)) - 1]
     while t_video <= end:
@@ -93,13 +108,21 @@ def clip_frames(run: Path, episode: int, title: str) -> list[np.ndarray]:
         st = stage_at(t_video)
         speed = STAGE_SPEED.get(st, PLAIN_SPEED) if stages else PLAIN_SPEED
         lines = [CAPTION[st] if st else ""] if stages else [title.split("|")[0]]
+        if timeline[-1][:2] != [lines[0], speed]:
+            timeline.append([lines[0], speed, (n0 + len(out)) / FPS, None])
         lines.append(f"t = {t_video:4.1f} s   ({speed:g}x)")
         out.append(text(fit(frames[i]), lines))
+        timeline[-1][3] = (n0 + len(out)) / FPS
         t_video += speed / FPS
     final = cv2.cvtColor(cv2.imread(str(ep / "final_overlay.png")), cv2.COLOR_BGR2RGB)
     d = row.get("vision_error_um")
     d = row.get("fk_error_um") if d is None or row.get("fk_error_um") is None or abs(d - row["fk_error_um"]) > 500 else d
+    timeline.append(["final", None, (n0 + len(out)) / FPS, None])
     out += [text(fit(final), ["final", f"tip to target {d:.0f} um" if d is not None else ""])] * int(HOLD_S * FPS)
+    timeline[-1][3] = (n0 + len(out)) / FPS
+    print(f"{run.name} ep {episode}:")
+    for cap, speed, a, b in timeline:
+        print(f"  {a:6.2f}-{b:6.2f} s  {'' if speed is None else f'{speed:g}x':4s}  {cap or '(no stage)'}")
     return out
 
 
@@ -112,7 +135,7 @@ def main() -> None:
     frames = [card(args.intro.split("|"))] * int(TITLE_S * FPS) if args.intro else []
     for c in args.clip:
         run, episode, title = c.split(":", 2) if c.count(":") >= 2 else (*c.split(":", 1), "")  # relative run paths
-        frames += clip_frames(Path(run), int(episode), title)
+        frames += clip_frames(Path(run), int(episode), title, len(frames))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with av.open(str(args.out), "w") as container:
         stream = container.add_stream("libx264", rate=FPS)
