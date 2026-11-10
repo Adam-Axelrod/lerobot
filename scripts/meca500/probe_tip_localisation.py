@@ -1,4 +1,4 @@
-"""Can the policy's image pathway locate the tip relative to the ring at 50 um scale? THEORIES.md, theory 1.
+"""Can the policy's image pathway locate the tip relative to the ring at 50 um scale? THEORIES.md, theory 2.
 Needs a GPU, no robot.
 
     python scripts/meca500/probe_tip_localisation.py [--quick]

@@ -1,6 +1,7 @@
 # Why the learned approach does not reach 50 µm
 
-**Last updated:** 2026-11-10. Evidence is from bench runs on 5–8 Nov at the 0 mm base position.
+**Last updated:** 2026-11-10. Evidence is from bench runs on 5–8 Nov at the 0 mm base position,
+plus the offline perception test of 10 Nov, which swapped theories 1 and 2.
 
 ## What the policy does
 
@@ -77,7 +78,43 @@ Theories 1–3 are about the finish. Theories 4–5 are about the approach.
 
 ## The theories, most likely first
 
-### 1. At 50 µm scale the network cannot see the tip relative to the ring
+### 1. Nothing in training rewards the correction, so the decoder ignores the image
+
+**Theory.**
+- The only steps where the image is needed (the decoy correction and the last ~0.2 mm) are a few
+  percent of the 47k frames.
+- They are also about 20× smaller moves than the coarse steps.
+- The training loss is dominated by the coarse path. Copying the average path costs almost nothing,
+  so the gradient never pushes the decoder to read the image.
+
+**For.**
+- The probe gain is near zero exactly at pre-touch, where the correction happens.
+- A 10× precision weight did not move it.
+- Each decoy episode gives one correction, so there are about 100 distinct correction examples in
+  total.
+
+- **Since 2026-11-10:** the policy's frozen encoder locates the tip relative to the ring to a median
+  of 69 µm at near (theory 2's test). The information reaches the encoder, and the actions ignore it.
+
+**Against.**
+- The 10× precision weight was one setting on the same data. A stronger signal, many more
+  correction examples, has not been tried.
+
+**Solution.**
+- Collect many short finish-only episodes. Each starts with the tip in view, 0.1–1.5 mm from a random
+  target, and records only the correction. That gives thousands a day, unattended.
+- Train the finish policy only on those, with the crop from theory 2.
+
+**Experiment.**
+- Train an ACT or MLP finish policy on the finish frames of
+  the existing 300 episodes alone (the precision phase only).
+- Probe it with `probe_marker_shift.py`. The prediction is a pre-touch gain above 0.8, against
+  ≤ 0.12 today.
+- If it stays low on the existing data, record one batch of 200 short finish episodes and retrain.
+  That is about 1 h of bench time.
+- Bench test: 10 handover trials from the scripted pre-touch point, comparing with A's 420 µm.
+
+### 2. At 50 µm scale the full frame is too coarse (weakened by the 2026-11-10 test)
 
 **Theory.**
 - 50 µm is about 4 px.
@@ -126,41 +163,37 @@ Theories 1–3 are about the finish. Theories 4–5 are about the approach.
 - **How to read it:** compare each variant with the "zero" baseline (predict the tip on the target)
   at the near checkpoint, which is where the 50 µm decision is made.
   - (a) bad, (b) good: the architecture can see it, and the policy never learnt to look. That points
-    to theory 2, not this one.
+    to theory 1, not this one.
   - (b) bad, (c) good: resolution and pooling are the bottleneck, and the crop policy is the fix.
   - All bad: the labels or the detector are the problem. Check `samples.csv`.
 
-### 2. Nothing in training rewards the correction, so the decoder ignores the image
+**Result (2026-11-10, `outputs/probe_tip_localisation/20261110-152102/`).** Held-out error of the
+predicted tip-to-target vector, in µm:
 
-**Theory.**
-- The only steps where the image is needed (the decoy correction and the last ~0.2 mm) are a few
-  percent of the 47k frames.
-- They are also about 20× smaller moves than the coarse steps.
-- The training loss is dominated by the coarse path. Copying the average path costs almost nothing,
-  so the gradient never pushes the decoder to read the image.
+| | Near: median | Near: within 50 µm | Pre-touch: median | All: median |
+|---|---|---|---|---|
+| Zero baseline (tip on the target) | 278 | 11% | 1480 | 273 |
+| (a) the policy's frozen encoder | 69 | 32% | 315 | 70 |
+| (b) ResNet18 tuned on the full frame | 33 | 76% | 179 | 35 |
+| (c) ResNet18 tuned on the 192 px crop | 17 | 94% | 251 | 23 |
 
-**For.**
-- The probe gain is near zero exactly at pre-touch, where the correction happens.
-- A 10× precision weight did not move it.
-- Each decoy episode gives one correction, so there are about 100 distinct correction examples in
-  total.
-
-**Against.**
-- If theory 1 holds, no amount of weighting can help. The correct order is to test 1 first.
-
-**Solution.**
-- Collect many short finish-only episodes. Each starts with the tip in view, 0.1–1.5 mm from a random
-  target, and records only the correction. That gives thousands a day, unattended.
-- Train the finish policy only on those, with the crop from theory 1.
-
-**Experiment.**
-- If theory 1's variant (b) works offline, train an ACT or MLP finish policy on the finish frames of
-  the existing 300 episodes alone (the precision phase only).
-- Probe it with `probe_marker_shift.py`. The prediction is a pre-touch gain above 0.8, against
-  ≤ 0.12 today.
-- If it stays low on the existing data, record one batch of 200 short finish episodes and retrain.
-  That is about 1 h of bench time.
-- Bench test: 10 handover trials from the scripted pre-touch point, comparing with A's 420 µm.
+What it means:
+- **The strong form of this theory is ruled out.** The policy's own encoder already holds the
+  tip-to-target vector to about 70 µm at near: a 4× improvement on the baseline, using a head trained
+  on 1000 frames.
+  - Yet the policy's actions follow the ring with a gain of only 0.015 there.
+  - So the information is in the encoder and the decoder doesn't use it. That is theory 1.
+- **Resolution still matters for the last step.**
+  - The same architecture tuned for the job gets 33 µm at near.
+  - The crop gets 17 µm, with 94% of frames within 50 µm.
+  - So a crop is the better input for a 50 µm finish, but the full frame is not what stops the
+    policy today.
+- **Caveats.**
+  - Labels are our detector's tip, so about 1 px (13 µm) is the floor, and the networks may be
+    learning the detector's quirks.
+  - The frames are raw PNGs, while the policy trained on AV1 video.
+  - The RMS columns (in `summary.txt`) are dominated by a few frames whose labels are far off,
+    including some final frames. The medians are robust to them.
 
 ### 3. The joint state is still a shortcut, so the image is never needed
 
@@ -182,12 +215,12 @@ Theories 1–3 are about the finish. Theories 4–5 are about the approach.
 - So the shortcut is not the whole story. It is a contributor, which is why this is third.
 
 **Solution.**
-- No joint state in the finish policy. Theory 1's design already does this.
+- No joint state in the finish policy. Theory 2's design already does this.
 - If the approach policy keeps the joints, retrain it on data collected at the current base position:
   the base moved 1.5 mm on 2026-11-08.
 
 **Experiment.**
-- With theory 1's crop finish policy, train two versions on the same data and compare their probe
+- With theory 2's crop finish policy, train two versions on the same data and compare their probe
   gains and held-out tip-to-target error:
   - (i) crop only;
   - (ii) crop + joint state.
@@ -279,7 +312,7 @@ Theories 1–3 are about the finish. Theories 4–5 are about the approach.
 - Alternatively, feed only the tip height (one number) as state, not all six joints.
 
 **Experiment.**
-- Run E (or the theory-1 finish policy) with in-image actions only, and a scripted vertical lower
+- Run E (or the crop finish policy) with in-image actions only, and a scripted vertical lower
   and touch, in 10 handover trials.
 - Prediction: 48–88 µm across becomes a real touch at about that distance.
 
@@ -303,9 +336,9 @@ These do not explain a 2 mm miss. But a policy that fixes theories 1–5 will ru
 
 | Step | Covers | Arm needed | Rough time |
 |---|---|---|---|
-| Offline perception test | Theory 1 | No | 1 day |
-| Finish policy on existing finish frames, probed | Theories 2 and 3 | No | 1 day + training |
-| Finish-only data batch, if needed | Theory 2 | Yes, unattended | 1–2 h |
+| Offline perception test (done 2026-11-10) | Theory 2 | No | 30 min |
+| Finish policy on existing finish frames, probed | Theories 1 and 3 | No | 1 day + training |
+| Finish-only data batch, if needed | Theory 1 | Yes, unattended | 1–2 h |
 | Handover bench trials of the finish policy | Theories 1, 2 and 6 | Yes | 1 h |
 | Deterministic-path approach data and retrain | Theory 4 | Yes, unattended | 1.5 h + training |
 | DAgger rounds | Theory 5 | Yes, unattended | 1 day |
