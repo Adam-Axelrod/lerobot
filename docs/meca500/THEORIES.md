@@ -118,6 +118,31 @@ Theories 1–3 are about the finish. Theories 4–5 are about the approach.
   a gain near 0.9 there.
 - Probe it with `probe_marker_shift.py`. The prediction is a pre-touch gain above 0.8, against
   ≤ 0.12 today.
+**Result (2026-11-10, `outputs/finish_policy_offline/20261110-161238/`, held out by episode).**
+
+| At the near hold | Crop finish policy | Full-frame finish policy |
+|---|---|---|
+| Marker gain, ring moved 266 µm (ceiling 0.98) | 0.26 [IQR 0.24, 0.30] | 0.19 [0.14, 0.24] |
+| Tracking of each episode's own move (1 = exact) | 0.60 | 0.19 |
+| Chunk error at the holds (zero baseline 108 µm) | 78 µm | 169 µm |
+
+- **Training on the finish alone did not make it follow the ring.**
+  - The crop policy follows a quarter of a 266 µm ring move.
+  - That is barely more than ACT model A's 0.20 at near.
+  - The full-frame policy matches ACT.
+- **The crop helps.** Tracking is 0.60 against 0.19, and the chunk error is half.
+- **The data never shows a correction that size near the dish.**
+  - The recorded corrections at the near hold are a median of 31 µm, at most 105 µm.
+  - At pre-touch they are a median of 36 µm (p90 76 µm).
+  - So a 266 µm ring move at near asks the policy to extrapolate. The demos contain almost no
+    examples of "the tip is 100–300 µm beside the ring, move onto it".
+- **Pre-touch is not informative.** One recorded chunk covers only 6% of the remaining path there,
+  so the gain ceiling is 0.06.
+- **What it means:** the remaining reason is the data, not only the loss weighting.
+  - The existing demos almost never show the move the finish needs.
+  - That makes the finish-only batch below the next step: tip in view, 0.1–1.5 mm from a random
+    target.
+
 - If it stays low on the existing data, record one batch of 200 short finish episodes and retrain.
   That is about 1 h of bench time.
 - Bench test: 10 handover trials from the scripted pre-touch point, comparing with A's 420 µm.
