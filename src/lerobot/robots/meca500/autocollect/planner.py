@@ -592,3 +592,66 @@ def plan_hover(
     plan.lead_in = np.vstack([base.joints[: k + 1], lead])
     plan.recovery = {"kind": "hover", "height_mm": round(h, 3)}
     return plan
+
+
+def plan_finish(
+    planner: Planner,
+    seed: int,
+    offset_mm: tuple[float, float] = (0.1, 1.5),
+    height_mm: tuple[float, float] = (0.5, 1.5),
+    correction_slack_mm: float = 0.15,
+    tries: int = 50,
+) -> EpisodePlan:
+    """A finish-only episode: the tip starts in view, beside and above the ring, and moves onto it.
+
+    The 2026-11-10/11 offline tests (THEORIES.md theory 1) found a finish-only policy that does not
+    follow a moved ring, even by 40 um: in the existing demos the correction at the near pause is
+    small (median 31 um) and predictable without the ring. Here the tip starts ``offset_mm``
+    sideways (uniform direction) and ``height_mm`` above the touch point, reached unrecorded like
+    plan_hover's, so the recorded move is set by the ring's position alone. The start must be inside
+    the lit field, so the tip is in view from the first recorded frame.
+
+    The plan is the single start frame with ``touch_axis`` vertical, so the recorder's vision
+    correction (checkpoints, approach to the near point straight above the touch, touch) records it.
+    """
+    rng = np.random.default_rng(seed + 8_500_000)
+    true_px = planner.sample_target_px(np.random.default_rng(seed + 9_000_000))
+    base = planner.sample_episode(seed, target_sampler=lambda r: true_px)
+    k = base.pretouch_index
+    p_touch = np.asarray(base.target_xyz, float)
+    for _ in range(tries):
+        r, a, h = rng.uniform(*offset_mm), rng.uniform(0, 2 * np.pi), rng.uniform(*height_mm)
+        start = p_touch + [r * np.cos(a), r * np.sin(a), h]
+        start_px = planner.calib.xy_to_pixel(start[:2])[0]
+        if target_px_allowed(start_px, planner.lim, planner.calib.image_size):
+            break
+    else:
+        raise PlanningError(f"No finish start {offset_mm} mm from target {np.round(true_px)} lies in the lit field.")
+    lead = planner.plan_line(base.joints[k], start, 3 * base.precision_speed_mm_s, "finish lead-in")
+    q_start = lead[-1]
+    s = correction_slack_mm
+    for dx, dy in [(0, 0), (s, 0), (-s, 0), (0, s), (0, -s)]:
+        planner.plan_line(q_start, p_touch + [dx, dy, 0.0], base.precision_speed_mm_s, "finish move")
+    plan = EpisodePlan(
+        joints=np.asarray([q_start]),
+        precision=np.ones(1),
+        fps=base.fps,
+        seed=seed,
+        target_px=(float(true_px[0]), float(true_px[1])),
+        target_xyz=tuple(float(v) for v in p_touch),
+        clearance=planner.checker.check_path(np.vstack([base.joints[: k + 1], lead]), planner.lim.check_step_deg),
+        phase_frames={},
+        touch_axis=(0.0, 0.0, -1.0),
+        pretouch_back_mm=h,
+        precision_speed_mm_s=base.precision_speed_mm_s,
+        dwell_frames=base.dwell_frames,
+    )
+    plan.lead_in = np.vstack([base.joints[: k + 1], lead])
+    plan.recovery = {
+        "kind": "finish",
+        "offset_mm": round(float(r), 3),
+        "offset_angle_deg": round(float(np.degrees(a)), 1),
+        "height_mm": round(float(h), 3),
+        "start_px": [round(float(v), 1) for v in start_px],
+    }
+    return plan

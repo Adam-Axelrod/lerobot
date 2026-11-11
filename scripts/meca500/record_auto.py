@@ -61,6 +61,7 @@ from lerobot.robots.meca500.autocollect.overlay import TargetOverlayStep
 from lerobot.robots.meca500.autocollect.planner import (
     Planner,
     PlanningError,
+    plan_finish,
     plan_hover,
     plan_recovery,
     plan_with_decoy,
@@ -81,9 +82,9 @@ from lerobot.utils.visualization_utils import init_rerun
 # ----------------------------- CONFIG -----------------------------
 RIG = "meca500_basler"
 USER = "AdamAxelrod"
-NAME = "basler_stage_touch_recovery_2026-11"  # one dataset per rig and target style - never mix
+NAME = "basler_stage_touch_finish_2026-11"  # one dataset per rig and target style - never mix
 TASK = "move_pipette_to_target"
-NUM_EPISODES = 50
+NUM_EPISODES = 200
 RESUME = True  # append to an existing local dataset of the same NAME
 PUSH_TO_HUB = False
 DISPLAY_DATA = True
@@ -109,7 +110,7 @@ MAX_REL_TARGET = 1.5
 PRECISION_MAX_REL_TARGET = 0.15
 # Seeds are SEED_BASE + episode index, so a resumed dataset never repeats an episode.
 # basler_stage_touch_dataset_2026-11 used 1_000_000, eval_auto uses 5_000_000.
-SEED_BASE = 3_000_000  # recovery episodes; the decoy dataset used 2_000_000
+SEED_BASE = 4_000_000  # finish episodes; recovery used 3_000_000, the decoy dataset 2_000_000
 # A discarded or unplannable episode is retried with seed + ATTEMPT_SEED_STRIDE * attempt (a fresh
 # target), and the session stops cleanly after this many failures in a row. Before this the same
 # seed was retried forever (2026-11-05), and killing the process lost the unfinalised dataset.
@@ -133,11 +134,17 @@ DECOY_MAX_MM = 1.6
 RECOVERY = True
 RECOVERY_OFFSET_MM = (1.0, 4.0)
 RECOVERY_START_FRAC = (0.5, 1.0)
-# "offcourse" (above) or "hover" (planner.plan_hover): the tip starts RECOVERY_HOVER_MM straight
+# "offcourse" (above), "hover" (planner.plan_hover): the tip starts RECOVERY_HOVER_MM straight
 # above the ring and the recording is a vertical descent to the touch. The 2026-11-06 handover
 # policies stopped with the tip's image on the ring 0.45-1.5 mm up, a state no demo contains.
-RECOVERY_KIND = "hover"
 RECOVERY_HOVER_MM = (0.5, 2.5)
+# "finish" (planner.plan_finish): the tip starts in view, FINISH_OFFSET_MM beside and
+# FINISH_HEIGHT_MM above the touch point, and the recording is the move onto the ring. Offline
+# on 2026-11-10/11 a finish-only policy on the decoy/recovery data did not follow a moved ring
+# even by 40 um: there the near correction is small and predictable without the ring.
+RECOVERY_KIND = "finish"
+FINISH_OFFSET_MM = (0.1, 1.5)
+FINISH_HEIGHT_MM = (0.5, 1.5)
 
 # Vision correction of the final approach (see autocollect/correction.py). Open loop the tip
 # landed 60-120 um off the target on 2026-11-03, against a 50 um success threshold.
@@ -171,6 +178,8 @@ MAX_MAP_MISMATCH_MM = 0.05  # the height map must agree with the scope calibrati
 
 
 def plan_for(planner: Planner, seed: int):
+    if RECOVERY and RECOVERY_KIND == "finish":
+        return plan_finish(planner, seed, FINISH_OFFSET_MM, FINISH_HEIGHT_MM)
     if RECOVERY and RECOVERY_KIND == "hover":
         return plan_hover(planner, seed, RECOVERY_HOVER_MM)
     if RECOVERY:
