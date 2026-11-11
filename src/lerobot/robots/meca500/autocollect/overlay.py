@@ -87,3 +87,37 @@ class TargetOverlayStep(ObservationProcessorStep):
 
     def get_config(self):
         return {"camera_key": self.camera_key, "style": self.style.__dict__}
+
+
+def crop_at(img: np.ndarray, px, size: int) -> np.ndarray:
+    """A ``size`` x ``size`` crop centred on pixel ``px`` (u, v), black outside the frame.
+
+    The finish policies see this crop around the target instead of the whole frame: offline, a
+    crop policy followed a moved ring further than a full-frame one (THEORIES.md theory 1), and
+    at stride 32 a full-frame ResNet18 feature cell is ~425 um wide. crop_dataset.py and
+    TargetCropStep must use this same function, so training and deployment see the same pixels.
+    """
+    h = size // 2
+    pad = cv2.copyMakeBorder(img, h, h, h, h, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+    u, v = int(round(float(px[0]))), int(round(float(px[1])))
+    return pad[v : v + size, u : u + size].copy()
+
+
+@dataclass
+class TargetCropStep(ObservationProcessorStep):
+    """Crops ``camera_key`` around the target that ``overlay`` draws. Put it after the overlay."""
+
+    overlay: TargetOverlayStep
+    size: int = 256
+
+    def observation(self, observation):
+        px = self.overlay.target_px
+        if px is not None and self.overlay.camera_key in observation:
+            observation[self.overlay.camera_key] = crop_at(observation[self.overlay.camera_key], px, self.size)
+        return observation
+
+    def transform_features(self, features):
+        return features
+
+    def get_config(self):
+        return {"size": self.size}

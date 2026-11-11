@@ -61,6 +61,7 @@ import contextlib
 from dataclasses import replace as dc_replace
 import json
 import logging
+import re
 import sys
 import time
 from pathlib import Path
@@ -107,7 +108,7 @@ from lerobot.robots.meca500.autocollect.slide import software_slide_benches, spl
 from lerobot.robots.meca500.autocollect.disturbance import sample_shift, shift_frame
 from lerobot.robots.meca500.autocollect.focus_check import FocusMismatchError, check_focus
 from lerobot.robots.meca500.autocollect.operator_guard import OperatorGuard
-from lerobot.robots.meca500.autocollect.overlay import TargetOverlayStep, draw_target
+from lerobot.robots.meca500.autocollect.overlay import TargetCropStep, TargetOverlayStep, draw_target
 from lerobot.robots.meca500.autocollect.planner import PlanningError
 from lerobot.robots.meca500.autocollect.tip_actions import camera_axes, tip_action_to_joints
 from lerobot.robots.meca500.autocollect.tip_detect import detect_tip
@@ -175,6 +176,21 @@ COARSE_ACTION_STEPS: int | None = None
 # episode until the tip has moved HANDOVER_MIN_MOVE_UM, since the demos hold still on arrival.
 HANDOVER = False
 HANDOVER_MIN_MOVE_UM = 50.0
+# "policy" only: start each episode the way the finish-only demos started (record_auto
+# RECOVERY_KIND "finish", basler_stage_touch_finish_2026-11): the planner brings the tip into view
+# 0.1-1.5 mm beside and 0.5-1.5 mm above the target (planner.plan_finish, an unrecorded lead-in),
+# the arm settles, and the policy takes over. Tests a finish-only policy on its own; timing and the
+# settle rule as HANDOVER. Seeds from FINISH_SEED_BASE (the training batch used 4_000_000 up).
+FINISH_START = False
+FINISH_SEED_BASE = 5_600_000
+# FINISH_START, tip-action policies: "policy" uses the policy's own tip_z; "scripted" uses only its
+# tip_u/v while the tip descends straight to the planned touch height at FINISH_DESCENT_MM_S (an
+# image-only policy cannot see its height: model E hovered 1.1-1.5 mm up, 2026-11-06).
+FINISH_Z = "policy"
+FINISH_DESCENT_MM_S = 0.15
+# ACT chunk mode: re-plan after this many steps instead of the trained n_action_steps (30 = 1.5 s
+# blind), so the image is read more often. None = as trained.
+N_ACTION_STEPS: int | None = None
 
 # Per-step clamps (deg), just above the largest step in the 200 training episodes
 # (coarse max 0.956, precision max 0.0167; p99 0.61 and 0.014): they never touch
@@ -276,6 +292,10 @@ def session_name() -> str:
         name += f"_coarse{COARSE_ACTION_STEPS}"
     if METHOD == "policy" and HANDOVER:
         name += "_handover"
+    if METHOD == "policy" and FINISH_START:
+        name += "_finish" + ("_zscripted" if FINISH_Z == "scripted" else "")
+    if METHOD == "policy" and N_ACTION_STEPS and TEMPORAL_ENSEMBLE_COEFF is None:
+        name += f"_n{N_ACTION_STEPS}"
     if METHOD == "policy_asr":
         name = f"{EVAL_NAME}_asr" + ("" if SEARCH else "_nosearch")
     if METHOD == "scripted_asr":
@@ -352,6 +372,8 @@ def load_policy(model: str):
     if cfg.type == "act" and TEMPORAL_ENSEMBLE_COEFF is not None:
         cfg.temporal_ensemble_coeff = TEMPORAL_ENSEMBLE_COEFF
         cfg.n_action_steps = 1
+    elif cfg.type == "act" and N_ACTION_STEPS:
+        cfg.n_action_steps = N_ACTION_STEPS
     train_cfg = json.loads((path / "train_config.json").read_text(encoding="utf-8"))
     # add_slide_basis.py's copies (_sb) add a training-only column to the same delta dataset.
     dataset = train_cfg["dataset"]["repo_id"].removesuffix("_sb")
@@ -362,6 +384,9 @@ def load_policy(model: str):
     # Image-only policies trained on camera-axis tip motion (convert_to_tip_actions.py); IK turns
     # each action into a joint target in rollout_episode.
     policy.tip_actions = dataset.endswith("_tip_delta")
+    # Trained on crop_dataset.py's crops around the target: the live frame gets the same crop.
+    m = re.search(r"_crop(\d+)_", dataset)
+    policy.crop_px = int(m.group(1)) if m else None
     pre, post = make_pre_post_processors(
         cfg, pretrained_path=str(path), preprocessor_overrides={"device_processor": {"device": DEVICE}}
     )
@@ -371,7 +396,7 @@ def load_policy(model: str):
 
 def rollout_episode(
     robot, policy, pre, post, obs_proc, obs_features, planner, events, live_key: str | None = None,
-    min_move_um: float = 0.0, stop_when=None, slide: VirtualSlide | None = None,
+    min_move_um: float = 0.0, stop_when=None, slide: VirtualSlide | None = None, z_touch: float | None = None,
 ) -> dict:
     """Run the policy until it settles, the time runs out, a check fails or the operator stops it.
 
@@ -379,7 +404,8 @@ def rollout_episode(
     camera frame before the marker overlay, copied in memory (see SAVE_LIVE_FRAMES).
     ``stop_when`` (a threading.Event) ends the episode as soon as it is set: the handover.
     ``slide`` runs the policy on a virtually displaced base: it sees and commands the virtual
-    joints, the arm gets the real ones (BASE_OFFSET_MM)."""
+    joints, the arm gets the real ones (BASE_OFFSET_MM). ``z_touch`` (tip actions, FINISH_Z
+    "scripted"): the policy's tip_z is replaced by a straight descent to this height (mm)."""
     kin, checker, calib = planner.kin, planner.checker, planner.calib
     fps = planner.lim.fps
     policy.reset()
@@ -445,6 +471,9 @@ def rollout_episode(
         normal_clamp = PRECISION_MAX_REL_TARGET if precise else MAX_REL_TARGET
         clamp = MAX_REL_TARGET if IGNORE_PRECISION else normal_clamp
         if tip_mode:
+            if z_touch is not None:
+                a = a.copy()
+                a[2] = -min(FINISH_DESCENT_MM_S / fps, max(float(t_goal[2, 3]) - z_touch, 0.0))
             # Integrate onto the goal tip pose; the joint clamp below still bounds each step.
             t_next, q_ik = tip_action_to_joints(kin, t_goal, q_goal, a[:6], axes)
             if q_ik is None:
@@ -994,6 +1023,11 @@ def main() -> None:
     # The test set is normal episodes, whatever record_auto was last set to collect (its
     # StagePlanner plans through record_auto.plan_for).
     record_auto.RECOVERY = False
+    if FINISH_START:
+        if METHOD != "policy":
+            sys.exit("FINISH_START is for METHOD = 'policy'.")
+        record_auto.RECOVERY, record_auto.RECOVERY_KIND = True, "finish"
+    seed_base = FINISH_SEED_BASE if FINISH_START else SEED_BASE
     if METHOD in ("scripted", "scripted_asr"):
         # Since 2026-11-05 every plan aims at a decoy up to DECOY_MAX_MM off the target (the
         # expert's image correction closes the gap). The scripted controller has no correction, so
@@ -1023,6 +1057,10 @@ def main() -> None:
         sys.exit(f"\nREFUSING TO START: {e}\n")
     print(f"Focus check passed: K-Cube at {pos:.4f} mm, as calibrated.")
     policy, pre, post = load_policy(MODEL) if learned else (None, None, None)
+    if FINISH_START and FINISH_Z == "scripted" and not policy.tip_actions:
+        sys.exit("FINISH_Z 'scripted' needs a tip-action policy (a *_tip_delta dataset).")
+    if FINISH_Z not in ("policy", "scripted"):
+        sys.exit(f"FINISH_Z must be 'policy' or 'scripted', not {FINISH_Z!r}")
 
     planner = build_planner(bench)
     stage, model, hmap = connect_stage(bench, planner.calib)
@@ -1075,7 +1113,9 @@ def main() -> None:
     overlay = TargetOverlayStep(camera_key=bench.camera_key, style=bench.target_style())
     teleop_proc, robot_proc, _ = make_default_processors()
     obs_proc = RobotProcessorPipeline(
-        steps=[overlay], to_transition=observation_to_transition, to_output=transition_to_observation
+        steps=[overlay] + ([TargetCropStep(overlay=overlay, size=policy.crop_px)] if learned and policy.crop_px else []),
+        to_transition=observation_to_transition,
+        to_output=transition_to_observation,
     )
     processors = (teleop_proc, robot_proc, obs_proc)
     obs_features = hw_to_dataset_features(robot.observation_features, OBS_STR, use_video=True)
@@ -1179,8 +1219,8 @@ def main() -> None:
             if events["stop_recording"]:
                 break
             try:
-                new_xy, plan = stager.plan_episode(SEED_BASE + i)
-                start_q = human_start_joints(planner, plan) if human else plan.start_joints
+                new_xy, plan = stager.plan_episode(seed_base + i)
+                start_q = human_start_joints(planner, plan) if human else (plan.lead_in[0] if FINISH_START else plan.start_joints)
                 if slide is not None:
                     # The slid robot starts at the planned joints: the real arm starts where that puts the tip.
                     start_q = slide.to_real(start_q)
@@ -1210,7 +1250,7 @@ def main() -> None:
             surface_z = stager.place(stage_xy)
             target = np.asarray(plan.target_px, dtype=float)
             shift = sample_shift(
-                SEED_BASE + i,
+                seed_base + i,
                 IMAGE_SHIFT_PX,
                 target,
                 target_cfg["field_centre_px"],
@@ -1235,14 +1275,18 @@ def main() -> None:
                 if events["stop_recording"] or view.closed:
                     break
             handover_s = None
-            if METHOD == "policy" and HANDOVER:
+            if METHOD == "policy" and (HANDOVER or FINISH_START):
                 k = plan.pretouch_index
                 t_h = time.perf_counter()
-                run_plan(robot, teleop, plan.joints[: k + 1], plan.precision[: k + 1], fps, events, processors)
+                if FINISH_START:  # the lead-in from the high start into view beside the ring
+                    path, flags = plan.lead_in, np.zeros(len(plan.lead_in))
+                else:
+                    path, flags = plan.joints[: k + 1], plan.precision[: k + 1]
+                run_plan(robot, teleop, path, flags, fps, events, processors)
                 events["exit_early"] = False
                 if events["stop_recording"]:
                     break
-                wait_settled(controller, plan.joints[k], SETTLE_TIMEOUT_S)
+                wait_settled(controller, path[-1], SETTLE_TIMEOUT_S)
                 handover_s = round(time.perf_counter() - t_h, 2)
             log_say(f"{METHOD} episode {i}", False)
             t_drive = time.perf_counter()
@@ -1257,8 +1301,9 @@ def main() -> None:
                 run = rollout_episode(
                     robot, policy, pre, post, obs_proc, obs_features, planner, events,
                     live_key=bench.camera_key if SAVE_LIVE_FRAMES else None,
-                    min_move_um=HANDOVER_MIN_MOVE_UM if HANDOVER else 0.0,
+                    min_move_um=HANDOVER_MIN_MOVE_UM if HANDOVER or FINISH_START else 0.0,
                     slide=slide,
+                    z_touch=plan.target_xyz[2] if FINISH_START and FINISH_Z == "scripted" else None,
                 )
                 if handover_s is not None:
                     run["handover_s"] = handover_s
@@ -1289,7 +1334,7 @@ def main() -> None:
 
             row = {
                 "episode": i,
-                "seed": SEED_BASE + i,
+                "seed": seed_base + i,
                 "method": METHOD,
                 "operator": OPERATOR if human else None,
                 "image_shift_px": list(shift),
