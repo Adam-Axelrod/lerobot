@@ -180,8 +180,8 @@ def predict(model: Policy, x: torch.Tensor, scale: np.ndarray) -> np.ndarray:
 def raw_hold_frame(side: dict, ep: int, which: str) -> np.ndarray | None:
     """The source dataset's raw (no overlay) frame at that hold, found by seed."""
     src = side[ep].get("source")
-    if not src:  # a dataset recorded directly, not merged: its own raw frames
-        p = ROOT / DATASET / f"autocollect/raw/ep{ep:04d}/{which}.png"
+    if not src:  # recorded directly, not merged: the raw frames stay with the recorded dataset
+        p = ROOT / DATASET.removesuffix("_js_tip_delta").removesuffix("_tip_delta") / f"autocollect/raw/ep{ep:04d}/{which}.png"
         return cv2.cvtColor(cv2.imread(str(p)), cv2.COLOR_BGR2RGB) if p.exists() else None
     for line in (ROOT / src / "autocollect_episodes.jsonl").read_text().splitlines():
         r = json.loads(line)

@@ -160,8 +160,38 @@ Theories 1–3 are about the finish. Theories 4–5 are about the approach.
       together.
   - The augmentation can be tried offline on the existing data first.
 
-- If it stays low on the existing data, record one batch of 200 short finish episodes and retrain.
-  That is about 1 h of bench time.
+**Finish-only batch (recorded 2026-11-11, `basler_stage_touch_finish_2026-11`, 200 episodes).**
+- `record_auto.py` with `RECOVERY_KIND = "finish"` (`planner.plan_finish`).
+  - The tip starts in view, 0.1–1.5 mm beside the ring (uniform direction) and 0.5–1.5 mm above
+    the touch.
+  - The recording is the move onto the ring and the touch, about 125 frames each.
+- 3 h of bench time, no discards.
+- Teacher's final error: median 14 µm, p90 28 µm, 194/200 within 50 µm.
+- At the near pause the detected tip was usually 5–7 px from the model (2–3 px in earlier batches).
+  This may be drift since the 2026-11-11 power cycle. Recheck the calibration before the next bench
+  evaluation.
+
+Offline test on it (`outputs/finish_policy_offline/20261111-153242/`, crop, ring moved 266 µm):
+
+| At the near hold (ceiling 0.98) | Old data, crop | New data, crop | New data, crop_aux |
+|---|---|---|---|
+| Marker gain | 0.26 | **0.56** [0.52, 0.60] | **0.61** [0.58, 0.64] |
+| Chunk error at the holds (zero baseline) | 78 µm (108) | 46 µm (62) | 44 µm (62) |
+
+- **The new data more than doubles the ring-following.** In it the whole move is set by the ring.
+- The auxiliary remaining-path head (`crop_aux`) adds a little.
+- At pre-touch the gain is 0.50–0.53 [IQR 0.0–0.7], against ~0.06 on the old data.
+- **Still about 60% of the ceiling.**
+  - Closed loop, a policy that closes 60% of the ring offset per chunk converges if it keeps
+    re-reading the ring, about 0.4ⁿ after n chunks.
+  - It will not converge if it touches down first.
+  - So the bench is the real test.
+- **Next.**
+  - Train an ACT finish policy (crop input, chunk 30) on this batch, with and without the
+    auxiliary head.
+  - Run 10 handover trials from the scripted pre-touch point, comparing with A's 420 µm and
+    the teacher's 14 µm.
+
 - Bench test: 10 handover trials from the scripted pre-touch point, comparing with A's 420 µm.
 
 ### 2. At 50 µm scale the full frame is too coarse (weakened by the 2026-11-10 test)
