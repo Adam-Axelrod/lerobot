@@ -1,6 +1,6 @@
 """Does a finish-only policy read the ring? THEORIES.md, theory 1, offline. Needs a GPU, no robot.
 
-    python scripts/meca500/finish_policy_offline.py [--variants crop full] [--quick]
+    python scripts/meca500/finish_policy_offline.py [--variants crop full] [--quick] [--shift-px N]
 
 Trains a behaviour-cloning finish policy on the precision phase only (precision.state on) of
 DATASET (decoys + recovery, actions as per-step tip motion along the image axes,
@@ -180,6 +180,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--variants", nargs="+", default=VARIANTS, choices=VARIANTS)
     ap.add_argument("--quick", action="store_true")
+    ap.add_argument("--shift-px", type=int, default=SHIFT_PX, help="marker shift for the gain test (3 px = 40 um is inside the recorded corrections)")
     args = ap.parse_args()
     folds, epochs = (1, 1) if args.quick else (FOLDS, EPOCHS)
 
@@ -188,7 +189,7 @@ def main() -> None:
     root = ROOT / DATASET
     fps = json.loads((root / "meta/info.json").read_text())["fps"]
     data, side, meta = load_episodes(root, 24 if args.quick else None)
-    out_dir = Path("outputs/finish_policy_offline") / (time.strftime("%Y%m%d-%H%M%S") + ("_quick" if args.quick else ""))
+    out_dir = Path("outputs/finish_policy_offline") / (time.strftime("%Y%m%d-%H%M%S") + ("_quick" if args.quick else "") + (f"_shift{args.shift_px}" if args.shift_px != SHIFT_PX else ""))
     out_dir.mkdir(parents=True, exist_ok=True)
 
     lab = {ep: episode_labels(g) for ep, g in data.groupby("episode_index", sort=True)}
@@ -199,7 +200,7 @@ def main() -> None:
     print(f"{len(eps)} episodes, {sum(len(lab[e]['prec']) for e in eps)} precision frames, step std {np.round(scale * 1000, 2)} um")
 
     lines = [f"finish_policy_offline {time.strftime('%Y-%m-%d %H:%M')}  {DATASET}",
-             f"{len(eps)} episodes, {folds} folds by episode, {epochs} epochs, chunk {CHUNK}, crop {CROP_PX} px, shift {SHIFT_PX} px = {SHIFT_PX * mm_per_px * 1000:.0f} um"]
+             f"{len(eps)} episodes, {folds} folds by episode, {epochs} epochs, chunk {CHUNK}, crop {CROP_PX} px, shift {args.shift_px} px = {args.shift_px * mm_per_px * 1000:.0f} um"]
     frame_rows, hold_rows = [], []
     for variant in args.variants:
         t0 = time.time()
@@ -246,7 +247,7 @@ def main() -> None:
                             im = draw_target(raw, tuple(px), style)
                             return crop(im, *px) if variant == "crop" else im
 
-                        shifts = [np.array(s, float) for s in ((SHIFT_PX, 0), (-SHIFT_PX, 0), (0, SHIFT_PX), (0, -SHIFT_PX))]
+                        shifts = [np.array(s, float) for s in ((args.shift_px, 0), (-args.shift_px, 0), (0, args.shift_px), (0, -args.shift_px))]
                         batch = torch.from_numpy(np.stack([view(t)] + [view(t + s) for s in shifts])).permute(0, 3, 1, 2).contiguous()
                         d = predict(model, batch, scale)[:, :, :2].sum(1)
                         sm = [sh * mm_per_px for sh in shifts]

@@ -143,6 +143,23 @@ Theories 1–3 are about the finish. Theories 4–5 are about the approach.
   - That makes the finish-only batch below the next step: tip in view, 0.1–1.5 mm from a random
     target.
 
+**Follow-up (2026-11-11, `outputs/finish_policy_offline/20261111-080937_shift3/`, crop only).**
+- Same test with the ring moved 40 µm (3 px), which is inside the recorded corrections.
+- Marker gain at near: **−0.01 [IQR −0.57, 0.16]**. Tracking 0.61 and chunk error 82 µm are as
+  before.
+- So the crop policy does not follow the ring even within the range the demos cover.
+- It predicts each episode's own move fairly well (tracking 0.61), but moving the ring does not change
+  the prediction. It reads the move from something else in the crop: the tip's phase or motion, the
+  dish texture. It does not read the tip-to-ring offset.
+- **What it means:**
+  - More data of the same kind is unlikely to be enough on its own.
+  - The finish-only batch should come with a training change that forces the offset in:
+    - an auxiliary loss predicting the tip-to-ring offset (the probe shows the encoder can, 17 µm);
+    - or the offset as an explicit input;
+    - or ring-position augmentation on recorded frames, shifting the ring and the action label
+      together.
+  - The augmentation can be tried offline on the existing data first.
+
 - If it stays low on the existing data, record one batch of 200 short finish episodes and retrain.
   That is about 1 h of bench time.
 - Bench test: 10 handover trials from the scripted pre-touch point, comparing with A's 420 µm.
