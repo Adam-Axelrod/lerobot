@@ -1,6 +1,7 @@
 """Does a finish-only policy read the ring? THEORIES.md, theory 1, offline. Needs a GPU, no robot.
 
-    python scripts/meca500/finish_policy_offline.py [--variants crop full] [--quick] [--shift-px N]
+    python scripts/meca500/finish_policy_offline.py [--variants crop full crop_aux] [--quick] [--shift-px N]
+        [--dataset NAME]
 
 Trains a behaviour-cloning finish policy on the precision phase only (precision.state on) of
 DATASET (decoys + recovery, actions as per-step tip motion along the image axes,
@@ -9,6 +10,9 @@ convert_to_tip_actions.py), with no joint state:
             full  the whole 640x427 frame (ACT's input), every FULL_STRIDE-th precision frame
     output  the next CHUNK steps of tip motion [du, dv, dz] (mm), as ACT's chunk; L1 on actions
             scaled by their per-dimension std over the precision frames
+            crop_aux  the crop, plus a second head predicting the remaining XY path to the touch
+                      (the tip-to-target offset) at every frame, weighted AUX_WEIGHT; at pretouch the
+                      chunk covers ~6% of that path, so the chunk loss alone never asks for it
     model   ImageNet ResNet18 + MLP head, fine-tuned end to end
 FOLDS folds grouped by episode. Every number below is on held-out episodes:
     chunk error       |predicted - recorded| XY tip displacement summed over the chunk (um), on all
@@ -50,7 +54,7 @@ RIG = "meca500_basler"
 ROOT = Path.home() / ".cache/huggingface/lerobot/AdamAxelrod"
 DATASET = "basler_stage_touch_decoyrec_2026-11_js_tip_delta"
 CAM = "observation.images.microscope_cam"
-VARIANTS = ["crop", "full"]
+VARIANTS = ["crop", "full", "crop_aux"]
 CROP_PX = 192
 FULL_STRIDE = 3  # full frames are 0.8 MB each in RAM
 CHUNK = 30  # ACT's chunk_size for these models: 1.5 s at 20 fps
@@ -59,6 +63,7 @@ STILL_MM = 1e-4
 SHIFT_PX = 20  # 0.27 mm: inside what one chunk covers at both holds
 FOLDS, EPOCHS, BATCH, SEED = 5, 10, 32, 0
 LR_HEAD, LR_BACKBONE, WEIGHT_DECAY = 1e-3, 1e-4, 1e-4
+AUX_WEIGHT = 1.0
 IMAGENET_MEAN, IMAGENET_STD = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
 DEVICE = "cuda"
 
@@ -93,7 +98,8 @@ def episode_labels(g: pd.DataFrame) -> dict:
             i = j
         else:
             i += 1
-    return {"prec": np.where(prec)[0], "chunks": chunks, "holds": holds}
+    remaining = np.cumsum(move[::-1, :2], axis=0)[::-1]  # XY tip path from each frame to the end
+    return {"prec": np.where(prec)[0], "chunks": chunks, "holds": holds, "remaining": remaining}
 
 
 def decode(root: Path, meta: pd.DataFrame, want: dict[int, set[int]], fps: int, fn) -> dict[tuple[int, int], np.ndarray]:
@@ -121,36 +127,44 @@ def crop(img: np.ndarray, u: float, v: float) -> np.ndarray:
 
 
 class Policy(nn.Module):
-    def __init__(self, feat_hw):
+    def __init__(self, feat_hw, aux: bool = False):
         super().__init__()
+        self.aux = aux
         m = torchvision.models.resnet18(weights=torchvision.models.ResNet18_Weights.IMAGENET1K_V1)
         self.backbone = nn.Sequential(*list(m.children())[:-2])
         self.head = nn.Sequential(
             nn.Conv2d(512, 32, 1), nn.ReLU(), nn.Flatten(),
-            nn.Linear(32 * feat_hw[0] * feat_hw[1], 512), nn.ReLU(), nn.Linear(512, CHUNK * 3),
+            nn.Linear(32 * feat_hw[0] * feat_hw[1], 512), nn.ReLU(), nn.Linear(512, CHUNK * 3 + 2 * aux),
         )
         self.register_buffer("mean", torch.tensor(IMAGENET_MEAN).view(1, 3, 1, 1))
         self.register_buffer("std", torch.tensor(IMAGENET_STD).view(1, 3, 1, 1))
 
     def forward(self, x_uint8):
+        """(chunk (N, CHUNK, 3), remaining XY (N, 2) or None), both scaled."""
         x = (x_uint8.float() / 255.0 - self.mean) / self.std
-        return self.head(self.backbone(x)).view(-1, CHUNK, 3)
+        out = self.head(self.backbone(x))
+        return out[:, : CHUNK * 3].view(-1, CHUNK, 3), (out[:, CHUNK * 3 :] if self.aux else None)
 
 
-def train(x: torch.Tensor, y: np.ndarray, scale: np.ndarray, tr: np.ndarray, epochs: int) -> Policy:
+def train(x: torch.Tensor, y: np.ndarray, scale: np.ndarray, tr: np.ndarray, epochs: int, rem=None, rem_scale=None) -> Policy:
+    """rem: the remaining XY path per frame, for the aux head (None: no aux head)."""
     torch.manual_seed(SEED)
     h, w = x.shape[2:]
-    model = Policy(((h + 31) // 32, (w + 31) // 32)).to(DEVICE)
+    model = Policy(((h + 31) // 32, (w + 31) // 32), aux=rem is not None).to(DEVICE)
     opt = torch.optim.AdamW(
         [{"params": model.head.parameters(), "lr": LR_HEAD}, {"params": model.backbone.parameters(), "lr": LR_BACKBONE}],
         weight_decay=WEIGHT_DECAY,
     )
     yt = torch.from_numpy(y / scale).float()
+    rt = None if rem is None else torch.from_numpy(rem / rem_scale).float()
     rng = np.random.default_rng(SEED)
     for _ in range(epochs):
         model.train()
         for b in np.array_split(rng.permutation(tr), max(1, len(tr) // BATCH)):
-            loss = nn.functional.l1_loss(model(x[b].to(DEVICE)), yt[b].to(DEVICE))
+            chunk, aux = model(x[b].to(DEVICE))
+            loss = nn.functional.l1_loss(chunk, yt[b].to(DEVICE))
+            if aux is not None:
+                loss = loss + AUX_WEIGHT * nn.functional.l1_loss(aux, rt[b].to(DEVICE))
             opt.zero_grad()
             loss.backward()
             opt.step()
@@ -160,14 +174,15 @@ def train(x: torch.Tensor, y: np.ndarray, scale: np.ndarray, tr: np.ndarray, epo
 @torch.inference_mode()
 def predict(model: Policy, x: torch.Tensor, scale: np.ndarray) -> np.ndarray:
     """Predicted chunks (N, CHUNK, 3) in mm."""
-    return np.concatenate([model(x[i : i + 64].to(DEVICE)).float().cpu().numpy() for i in range(0, len(x), 64)]) * scale
+    return np.concatenate([model(x[i : i + 64].to(DEVICE))[0].float().cpu().numpy() for i in range(0, len(x), 64)]) * scale
 
 
 def raw_hold_frame(side: dict, ep: int, which: str) -> np.ndarray | None:
     """The source dataset's raw (no overlay) frame at that hold, found by seed."""
     src = side[ep].get("source")
-    if not src:
-        return None
+    if not src:  # a dataset recorded directly, not merged: its own raw frames
+        p = ROOT / DATASET / f"autocollect/raw/ep{ep:04d}/{which}.png"
+        return cv2.cvtColor(cv2.imread(str(p)), cv2.COLOR_BGR2RGB) if p.exists() else None
     for line in (ROOT / src / "autocollect_episodes.jsonl").read_text().splitlines():
         r = json.loads(line)
         if r["seed"] == side[ep]["seed"]:
@@ -177,11 +192,14 @@ def raw_hold_frame(side: dict, ep: int, which: str) -> np.ndarray | None:
 
 
 def main() -> None:
+    global DATASET  # raw_hold_frame reads it
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--variants", nargs="+", default=VARIANTS, choices=VARIANTS)
     ap.add_argument("--quick", action="store_true")
+    ap.add_argument("--dataset", default=DATASET, help="a *_js_tip_delta dataset (convert_to_tip_actions.py)")
     ap.add_argument("--shift-px", type=int, default=SHIFT_PX, help="marker shift for the gain test (3 px = 40 um is inside the recorded corrections)")
     args = ap.parse_args()
+    DATASET = args.dataset
     folds, epochs = (1, 1) if args.quick else (FOLDS, EPOCHS)
 
     bench = BenchConfig.load(RIG)
@@ -206,12 +224,13 @@ def main() -> None:
         t0 = time.time()
         stride = FULL_STRIDE if variant == "full" else 1
         sel = {e: set(lab[e]["prec"][::stride].tolist()) | set(lab[e]["holds"]) for e in eps}
-        frames = decode(root, meta, sel, fps, lambda ep, im: crop(im, *side[ep]["target_px"]) if variant == "crop" else im)
+        frames = decode(root, meta, sel, fps, lambda ep, im: crop(im, *side[ep]["target_px"]) if variant != "full" else im)
         keys = sorted(frames)
         x = torch.empty((len(keys), 3, *frames[keys[0]].shape[:2]), dtype=torch.uint8)
         for n, key in enumerate(keys):
             x[n] = torch.from_numpy(frames.pop(key)).permute(2, 0, 1)
         y = np.stack([lab[e]["chunks"][i] for e, i in keys])
+        rem = np.stack([lab[e]["remaining"][i] for e, i in keys]) if variant == "crop_aux" else None
         ep_of = np.array([k[0] for k in keys])
         is_hold = np.array([i in lab[e]["holds"] for e, i in keys])
         print(f"{variant}: {len(keys)} frames decoded ({time.time() - t0:.0f} s)")
@@ -219,7 +238,7 @@ def main() -> None:
             te_eps = [e for e in eps if fold_of[e] == k]
             tr = np.where([fold_of[e] != k for e in ep_of])[0]
             te = np.where(np.isin(ep_of, te_eps))[0]
-            model = train(x, y, scale, tr, epochs)
+            model = train(x, y, scale, tr, epochs, rem, None if rem is None else rem[tr].std(0) + 1e-6)
             pred = predict(model, x[te], scale)
             mean_chunk = y[tr].mean(0)
             for i, j in enumerate(te):
@@ -245,7 +264,7 @@ def main() -> None:
 
                         def view(px, raw=raw):
                             im = draw_target(raw, tuple(px), style)
-                            return crop(im, *px) if variant == "crop" else im
+                            return crop(im, *px) if variant != "full" else im
 
                         shifts = [np.array(s, float) for s in ((args.shift_px, 0), (-args.shift_px, 0), (0, args.shift_px), (0, -args.shift_px))]
                         batch = torch.from_numpy(np.stack([view(t)] + [view(t + s) for s in shifts])).permute(0, 3, 1, 2).contiguous()
@@ -263,7 +282,7 @@ def main() -> None:
     hr.to_csv(out_dir / "holds.csv", index=False)
     lines.append("chunk XY displacement error, held out (um): median [policy | zero | mean chunk], over the true displacement")
     for (variant, hold), g in fr.groupby(["variant", "hold"]):
-        lines.append(f"  {variant:5s} {'holds' if hold else 'other':5s} n {len(g):6d}  policy {g.err_um.median():6.0f}  zero {g.zero_um.median():6.0f}  mean {g.mean_um.median():6.0f}")
+        lines.append(f"  {variant:8s} {'holds' if hold else 'other':5s} n {len(g):6d}  policy {g.err_um.median():6.0f}  zero {g.zero_um.median():6.0f}  mean {g.mean_um.median():6.0f}")
     lines.append("at the holds: tracking slope, gain ceiling and marker gain")
     for (variant, which), g in hr.groupby(["variant", "hold"]):
         t, pol, rem = (np.array(g[c].tolist()).reshape(-1, 2) for c in ("teacher_mm", "policy_mm", "remaining_mm"))
@@ -271,7 +290,7 @@ def main() -> None:
         track = float((dp * dt).sum() / (dt * dt).sum())
         ceiling = float(np.median(np.linalg.norm(t, axis=1) / np.maximum(np.linalg.norm(rem, axis=1), 1e-6)))
         gains = g.gain.dropna()
-        lines.append(f"  {variant:5s} {which:8s} n {len(g):4d}  tracking slope {track:5.2f}  gain ceiling {ceiling:4.2f}"
+        lines.append(f"  {variant:8s} {which:8s} n {len(g):4d}  tracking slope {track:5.2f}  gain ceiling {ceiling:4.2f}"
                      f"  | marker gain median {gains.median():5.2f} [IQR {gains.quantile(0.25):.2f}, {gains.quantile(0.75):.2f}] (n {len(gains)})")
     text = "\n".join(lines) + "\n"
     (out_dir / "summary.txt").write_text(text, encoding="utf-8")
