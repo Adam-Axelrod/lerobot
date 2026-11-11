@@ -573,7 +573,7 @@ def main() -> None:
         ),
     )
     root = HF_LEROBOT_HOME / repo_id
-    if RESUME:
+    if RESUME and (root / "meta" / "info.json").exists():  # nothing to resume: create it
         dataset = LeRobotDataset.resume(repo_id, root=root, image_writer_threads=4)
         sanity_check_dataset_robot_compatibility(dataset, robot, fps, features)
     else:
