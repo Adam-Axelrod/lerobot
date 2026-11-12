@@ -140,8 +140,8 @@ FIRST_EPISODE = 0
 # A local pretrained_model folder or a Hub model repo (downloaded once into the HF cache).
 # Must be trained on a DELTA dataset recorded on this rig with the digital target.
 # Local copies come from CREATE by scp: the lab PC downloads from the Hub at ~100 KB/s.
-MODEL = "outputs/train/finish_2026-11_crop256_img/checkpoints/last/pretrained_model"
-EVAL_NAME = "finish_2026-11_crop256_img_act"  # names the "policy" results folder; see session_name()
+MODEL = "outputs/train/finish_2026-11_crop256_js/checkpoints/last/pretrained_model"
+EVAL_NAME = "finish_2026-11_crop256_js_act"  # names the "policy" results folder; see session_name()
 TASK = "move_pipette_to_target"
 NUM_EPISODES = 10  # finish-policy bench trials, 2026-11 (docs/meca500/instructions/NEXT.md)
 # Training episodes used seeds 1_000_000 + episode index: this range shares none of them.
@@ -174,14 +174,14 @@ COARSE_ACTION_STEPS: int | None = None
 # the no-decoy model reached precision entry aimed 2.1-2.7 mm off, the demos 0.18-0.67 mm).
 # Time, the trajectory log and the scores count from the handover. The settle rule cannot end an
 # episode until the tip has moved HANDOVER_MIN_MOVE_UM, since the demos hold still on arrival.
-HANDOVER = False
+HANDOVER = True
 HANDOVER_MIN_MOVE_UM = 50.0
 # "policy" only: start each episode the way the finish-only demos started (record_auto
 # RECOVERY_KIND "finish", basler_stage_touch_finish_2026-11): the planner brings the tip into view
 # 0.1-1.5 mm beside and 0.5-1.5 mm above the target (planner.plan_finish, an unrecorded lead-in),
 # the arm settles, and the policy takes over. Tests a finish-only policy on its own; timing and the
 # settle rule as HANDOVER. Seeds from FINISH_SEED_BASE (the training batch used 4_000_000 up).
-FINISH_START = True
+FINISH_START = False
 FINISH_SEED_BASE = 5_600_000
 # FINISH_START or HANDOVER, tip-action policies: "policy" uses the policy's own tip_z; "scripted"
 # uses only its tip_u/v while the tip descends straight to the planned touch height at

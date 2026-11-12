@@ -3,7 +3,8 @@
 **Last updated:** 2026-11-12. Evidence comes from three sources:
 - bench runs on 5–8 Nov at the 0 mm base position;
 - the offline perception test of 10 Nov, which swapped theories 1 and 2;
-- the finish-only batch and the first finish-policy bench trials, on 11 Nov (theory 1).
+- the finish-only batch and the first finish-policy bench trials, on 11 Nov (theory 1);
+- the full finish-policy bench session after a recalibration, on 12 Nov.
 
 ## What the policy does
 
@@ -228,18 +229,72 @@ Offline test on it (`outputs/finish_policy_offline/20261111-153242/`, crop, ring
   tip, consistent with the 5–7 px seen while recording the batch. The vision column is therefore
   the more trustworthy one. A full recalibration comes first in the next session.
 
-**Next (bench session in `docs/meca500/instructions/NEXT.md`).**
-- Full recalibration first.
-- Then 10 trials each, all with scripted descent:
-  - (a) crop only, in-view start;
-  - (b) crop + joints, in-view start;
-  - (c) crop only, from the scripted pre-touch point;
-  - (d) crop + joints, from the scripted pre-touch point.
-- Runs (a) and (b) test theory 3 on the bench: does the joint state help or hurt?
-- Runs (c) and (d) give the comparison with A's 420 µm (same first 5 targets). The pre-touch point
-  is up to about 3 mm off and higher than any finish demo, so these test how far the finish policy
-  generalises.
-- The auxiliary-head ACT variant has not been trained yet.
+**Bench session (2026-11-12, after a full recalibration).**
+- **Recalibration.** Pivot 0.045 mm rms; scope fit 2.11 px rms over 13 points; verify median
+  2.0 px, max 2.4 px; height map 12 µm rms, tilt 0.29°. The dish now reads 28.395 mm, 68 µm lower
+  than the 8 Nov map. The tip model (`bench.yaml`, `tool.stl`) was refitted. Since then FK and
+  vision agree to a few px.
+- **Setup.** All four runs used scripted descent (`FINISH_Z = "scripted"`), the 20 µm lateral lock
+  and a re-plan every 15 steps, with 10 trials each.
+- **Errors** are from `results.jsonl`; `score_eval` and by-eye checks have not been run.
+
+| Run | Start | Vision: median, ≤ 50 µm | FK: median, ≤ 50 µm | Folder (`outputs/eval_auto/`) |
+|---|---|---|---|---|
+| (a) crop only | in view (finish seeds) | 51 µm, 5/10 | 54 µm, 5/10 | `finish_2026-11_crop256_img_act_finish_zscripted_n15_20261112-161347` |
+| (b) crop + joints | in view (finish seeds) | 38 µm, 7/10 | 41 µm, 6/10 | `..._js_act_finish_zscripted_n15_20261112-162348` |
+| (c) crop only | scripted pre-touch | 2.0 mm, 1/10 | 1.9 mm, 1/10 | `..._img_act_handover_zscripted_n15_20261112-163349` (ep0–3) and `-170439` (ep4–9) |
+| (d) crop + joints | scripted pre-touch | 2.1 mm, 0/10 | 2.0 mm, 0/10 | `..._js_act_handover_zscripted_n15_20261112-171139` |
+| For reference: A | scripted pre-touch, 5 trials | | 420 µm | 6 Nov |
+| For reference: (b)'s model, own height (old calibration) | in view | 30 µm, 9/10 | 45 µm, 6/10 | 11 Nov, 7/10 pressed into the dish |
+
+**What the in-view runs (a, b) show.**
+- From an in-range start, the finish policy lands at a median of 40–50 µm, with every trial
+  touching at the surface.
+  - That is 8–10× better than A's handover, but still 3× the teacher's 14 µm.
+- **The misses are the policy settling in the wrong place, not the harness.**
+  - In 9 of the 10 trials of (a), and all of (b) but one, the lateral motion had already stopped
+    (≤ 0.5 µm/step) before the lock engaged.
+  - The exception is (b) trial 4. The lock cut a correction still moving at 32 µm/step, and it
+    ended at 159 µm.
+  - Targets 3 and 9 were missed by both models (54–99 µm).
+- **The joint state helped slightly here:** 7/10 against 5/10, a median of 38 against 51 µm. That
+  is the opposite of theory 3's prediction, but 10 trials each cannot separate them.
+- **Scripted height costs little or nothing.** (b)'s model with its own height scored 9/10 by
+  vision on the same targets, but it pressed 80–100 µm into the dish in 7 of those, under the old
+  calibration. That is not a clean comparison.
+
+**What the handover runs (c, d) show.**
+- **The pre-touch point is outside the finish policy's range in 8 of 10 trials.**
+  - The tip starts 1.7–4.2 mm from the target, against at most 1.5 mm in the demos. The crop
+    reaches only 1.7 mm either side of the target.
+  - It also starts 1.2–2.8 mm up, against at most 1.5 mm.
+  - The cause is geometric: the pre-touch point sits 1–4 mm back along the tilted pipette, plus
+    the decoy offset, and the scripted descent is vertical.
+- **From those 8 starts neither model makes progress.** The crop-only model wanders 80–800 µm and
+  ends where it started. The joint-state model barely moves (24–150 µm).
+- **The two in-range starts worked:**
+  - trial 4, 1.46 mm off: crop only 28 µm; crop + joints 1.2 mm;
+  - trial 8, 0.71 mm off: 82 µm and 89 µm.
+- **Comparing with A's 420 µm is therefore not meaningful.** A drove along the pipette with its
+  joint state. The finish policy only works once something has put the tip within about 1.5 mm of
+  the ring and inside the crop.
+
+**Incident.** Run (c) hung in trial 4, at a CUDA sync point inside `ACT.forward`, for 19 minutes.
+The arm held still above the dish. The process was killed, CUDA tested fine, and the run resumed
+from trial 4 with `FIRST_EPISODE = 4`. This has not been seen before.
+
+**Next.**
+- **Make the handover land inside the finish range.** Options:
+  - descend along the pipette axis to about 1 mm up, so the lateral offset is only the decoy's;
+  - or let ASR's servo, or the approach policy with the tip watcher, stop once the tip is within
+    about 1 mm of the ring, and hand over to the finish policy there.
+- **Or widen the finish policy's range:** a finish batch with starts up to 3–4 mm off and 3 mm up,
+  with a larger crop (384 px) or the full frame for the far part.
+- **Improve the last 50 µm in range** (median 40–50 µm against the teacher's 14 µm):
+  - train the auxiliary-head ACT variant (`crop_aux`), which is still untrained;
+  - re-plan more often than every 15 steps;
+  - hold the descent about 50 µm up until the lateral motion has settled, instead of locking it at
+    20 µm. That would have saved (b) trial 4.
 
 ### 2. At 50 µm scale the full frame is too coarse (weakened by the 2026-11-10 test)
 
@@ -469,8 +524,9 @@ These do not explain a 2 mm miss. But a policy that fixes theories 1–5 will ru
 | Offline perception test (done 2026-11-10) | Theory 2 | No | 30 min |
 | Finish policy on existing finish frames, probed (done 2026-11-10/11) | Theories 1 and 3 | No | 1 day + training |
 | Finish-only data batch (done 2026-11-11, 200 eps) | Theory 1 | Yes, unattended | 3 h |
-| Finish-policy bench trials, in-view start (first run 2026-11-11; full set next) | Theories 1, 3 and 6 | Yes | 1.5 h |
-| Handover bench trials of the finish policy, from pre-touch (next) | Theories 1, 2 and 6 | Yes | included above |
+| Finish-policy bench trials, in-view start (done 2026-11-12: median 38–51 µm) | Theories 1, 3 and 6 | Yes | 1.5 h |
+| Handover bench trials of the finish policy, from pre-touch (done 2026-11-12: pre-touch is out of range) | Theories 1, 2 and 6 | Yes | included above |
+| Handover that lands within 1.5 mm, or a wider finish batch (next) | Theory 1 | Yes | 1–3 h |
 | Deterministic-path approach data and retrain | Theory 4 | Yes, unattended | 1.5 h + training |
 | DAgger rounds | Theory 5 | Yes, unattended | 1 day |
 

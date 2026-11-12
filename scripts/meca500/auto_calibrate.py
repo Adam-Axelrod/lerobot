@@ -94,7 +94,7 @@ HEIGHT_MAP = True
 # reference three times, compares with dish_height_map.json. A drift beyond HEIGHT_CHECK_TOL_UM shifts the
 # map and the scope calibration's height by it (backups kept); beyond HEIGHT_CHECK_MAX_MM it asks
 # for a full calibration instead.
-HEIGHT_CHECK_ONLY = False
+HEIGHT_CHECK_ONLY = True
 HEIGHT_CHECK_TOUCHES = 3  # real touches scatter ~15 um (C1 grid), so one or two would chase noise
 HEIGHT_CHECK_TOL_UM = 25.0
 HEIGHT_CHECK_MAX_MM = 0.2
