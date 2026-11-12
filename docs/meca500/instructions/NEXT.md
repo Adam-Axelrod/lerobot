@@ -1,7 +1,56 @@
 # Next at the bench
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
-**Last updated:** 2026-11-08 (physical slide and experienced-operator trials done)
+**Last updated:** 2026-11-12 (finish-policy bench session added)
+
+## Now: finish-policy bench session (about 1.5 h)
+Why: the ACT finish policies trained on the finish-only batch went on the bench on 11 Nov
+(`docs/meca500/THEORIES.md`, theory 1). The crop + joint-state model put the tip within 50 um of the
+ring in 9/10 by the detector, but ran 82-99 um into the dish in 7/10. The crop-only model got one
+trial. This session gets 10 trials of each with a scripted descent, after a fresh calibration.
+
+**Before you start:** close Kinesis, microscope lamp on, hand near the e-stop. Do not move the focus
+K-Cube.
+
+**1. Full calibration (about 20-30 min).** `HEIGHT_CHECK_ONLY = False` is already set.
+```powershell
+.venv\Scripts\python.exe scripts\meca500\auto_calibrate.py
+```
+Watch the first descent stop at contact. Send Claude the terminal output. On 11 Nov the detected tip
+sat 3.5 px (45 um) to one side of the calibrated model, against 2-3 px before. The verify errors
+tell us whether that was drift. Afterwards set `HEIGHT_CHECK_ONLY = True` again.
+
+**2. Four eval runs.** Each run is 10 trials, about 15 min, unattended once started:
+```powershell
+.venv\Scripts\python.exe scripts\meca500\eval_auto.py
+```
+`eval_auto.py` is already set for run (a). For each later run, change only these constants in its
+CONFIG block:
+
+| Run | `MODEL` (under `outputs/train/`) | `EVAL_NAME` | `FINISH_START` | `HANDOVER` |
+|---|---|---|---|---|
+| (a) crop only, in-view start | `finish_2026-11_crop256_img/checkpoints/last/pretrained_model` | `finish_2026-11_crop256_img_act` | `True` | `False` |
+| (b) crop + joints, in-view start | `finish_2026-11_crop256_js/checkpoints/last/pretrained_model` | `finish_2026-11_crop256_js_act` | `True` | `False` |
+| (c) crop only, from the pre-touch point | as (a) | as (a) | `False` | `True` |
+| (d) crop + joints, from the pre-touch point | as (b) | as (b) | `False` | `True` |
+
+Every run keeps `METHOD = "policy"`, `FINISH_Z = "scripted"`, `N_ACTION_STEPS = 15` and
+`NUM_EPISODES = 10`.
+- **In all four runs, the policy steers only across the image.** The tip descends straight down at
+  0.15 mm/s to the dish height and stops there. Within 20 um of the dish the policy can no longer
+  move the tip sideways, so it cannot drag along the dish.
+- **Runs (c) and (d) are new.** The scripted path takes the tip to its pre-touch point, which can
+  be up to about 3 mm off the ring and higher than any finish demo. Then the policy takes over.
+  Watch the first trial with a hand on the e-stop. If the tip slides along the dish or the pipette
+  bends, press **Esc** and tell Claude.
+- Runs (a) and (b) use the same 10 targets as the 11 Nov runs. The first 5 targets of (c) and (d)
+  are those of model A's 5-trial handover run (6 Nov). The results are directly comparable.
+- Results go to `outputs/eval_auto/finish_2026-11_crop256_*_zscripted_n15_<time>/`. Tell Claude when
+  they are done.
+
+**Afterwards:** set `eval_auto.py` back however you like; nothing else depends on it.
+
+## Done: operator trials (2026-11-08)
 
 ## The plan (since 2026-11-06)
 The paper's system is now a **learned policy that brings the pipette under the microscope, then hands
@@ -19,7 +68,6 @@ this is `METHOD = "policy_asr"`. Each trial goes through these stages, all logge
 Everything ran end to end without the arm on 2026-11-07: simulated sessions, plus Huanyu's real
 detector and servo on real frames. **It has not moved the real arm yet.**
 
-## Now: no bench work outstanding (operator trials done 2026-11-08)
 **Experienced operator (Adam), 20 trials:**
 - 12/20 within 50 um, 16/20 within 100 um, median 40 um, 29 s per trial.
 - 2 collisions: guard stops by the illuminator in the first 5 s, both from starts with about 5 mm

@@ -128,7 +128,7 @@ from lerobot.utils.utils import init_logging, log_say
 RIG = "meca500_basler"
 # Which row this session fills: "policy", "policy_asr", "scripted", "scripted_asr", "expert" or "human"
 # (see the docstring).
-METHOD = "human"
+METHOD = "policy"
 # Pixels to shift every frame by (12.85 um/px), simulating a knocked camera. 0 is a normal run.
 # 16 px (~0.2 mm) is inside the expert's 0.5 mm correction cap; 58 px (~0.75 mm) is beyond it.
 IMAGE_SHIFT_PX = 0
@@ -140,10 +140,10 @@ FIRST_EPISODE = 0
 # A local pretrained_model folder or a Hub model repo (downloaded once into the HF cache).
 # Must be trained on a DELTA dataset recorded on this rig with the digital target.
 # Local copies come from CREATE by scp: the lab PC downloads from the Hub at ~100 KB/s.
-MODEL = "outputs/train/basler_stage_touch_decoyrec_2026-11_delta/checkpoints/100000/pretrained_model"
-EVAL_NAME = "basler_stage_touch_decoyrec_2026-11_delta_act"  # names the "policy" results folder; see session_name()
+MODEL = "outputs/train/finish_2026-11_crop256_img/checkpoints/last/pretrained_model"
+EVAL_NAME = "finish_2026-11_crop256_img_act"  # names the "policy" results folder; see session_name()
 TASK = "move_pipette_to_target"
-NUM_EPISODES = 20  # experienced operator (Adam), 2026-11-08; practice ran as OPERATOR "practice" on SEED_BASE 5_900_000
+NUM_EPISODES = 10  # finish-policy bench trials, 2026-11 (docs/meca500/instructions/NEXT.md)
 # Training episodes used seeds 1_000_000 + episode index: this range shares none of them.
 SEED_BASE = 5_000_000
 # Longest demonstration in basler_stage_touch_dataset_2026-11 is 36.9 s (median 21.8 s).
@@ -181,16 +181,21 @@ HANDOVER_MIN_MOVE_UM = 50.0
 # 0.1-1.5 mm beside and 0.5-1.5 mm above the target (planner.plan_finish, an unrecorded lead-in),
 # the arm settles, and the policy takes over. Tests a finish-only policy on its own; timing and the
 # settle rule as HANDOVER. Seeds from FINISH_SEED_BASE (the training batch used 4_000_000 up).
-FINISH_START = False
+FINISH_START = True
 FINISH_SEED_BASE = 5_600_000
-# FINISH_START, tip-action policies: "policy" uses the policy's own tip_z; "scripted" uses only its
-# tip_u/v while the tip descends straight to the planned touch height at FINISH_DESCENT_MM_S (an
-# image-only policy cannot see its height: model E hovered 1.1-1.5 mm up, 2026-11-06).
-FINISH_Z = "policy"
+# FINISH_START or HANDOVER, tip-action policies: "policy" uses the policy's own tip_z; "scripted"
+# uses only its tip_u/v while the tip descends straight to the planned touch height at
+# FINISH_DESCENT_MM_S (an image-only policy cannot see its height: model E hovered 1.1-1.5 mm up,
+# 2026-11-06; the crop + joint-state finish policy ran 82-99 um into the dish in 7/10, 2026-11-11).
+FINISH_Z = "scripted"
 FINISH_DESCENT_MM_S = 0.15
+# FINISH_Z "scripted": within this height of the touch the policy's tip_u/v are dropped, so the tip
+# cannot drag along the dish. From an in-view start the 2026-11-11 trial moved 19 um after
+# touchdown; from the pre-touch point (HANDOVER, up to ~3 mm off) it could still be far off.
+FINISH_LATERAL_LOCK_MM = 0.02
 # ACT chunk mode: re-plan after this many steps instead of the trained n_action_steps (30 = 1.5 s
 # blind), so the image is read more often. None = as trained.
-N_ACTION_STEPS: int | None = None
+N_ACTION_STEPS: int | None = 15
 
 # Per-step clamps (deg), just above the largest step in the 200 training episodes
 # (coarse max 0.956, precision max 0.0167; p99 0.61 and 0.014): they never touch
@@ -293,7 +298,9 @@ def session_name() -> str:
     if METHOD == "policy" and HANDOVER:
         name += "_handover"
     if METHOD == "policy" and FINISH_START:
-        name += "_finish" + ("_zscripted" if FINISH_Z == "scripted" else "")
+        name += "_finish"
+    if METHOD == "policy" and (HANDOVER or FINISH_START) and FINISH_Z == "scripted":
+        name += "_zscripted"
     if METHOD == "policy" and N_ACTION_STEPS and TEMPORAL_ENSEMBLE_COEFF is None:
         name += f"_n{N_ACTION_STEPS}"
     if METHOD == "policy_asr":
@@ -474,6 +481,8 @@ def rollout_episode(
             if z_touch is not None:
                 a = a.copy()
                 a[2] = -min(FINISH_DESCENT_MM_S / fps, max(float(t_goal[2, 3]) - z_touch, 0.0))
+                if float(t_goal[2, 3]) - z_touch < FINISH_LATERAL_LOCK_MM:
+                    a[:2] = 0.0
             # Integrate onto the goal tip pose; the joint clamp below still bounds each step.
             t_next, q_ik = tip_action_to_joints(kin, t_goal, q_goal, a[:6], axes)
             if q_ik is None:
@@ -1057,7 +1066,9 @@ def main() -> None:
         sys.exit(f"\nREFUSING TO START: {e}\n")
     print(f"Focus check passed: K-Cube at {pos:.4f} mm, as calibrated.")
     policy, pre, post = load_policy(MODEL) if learned else (None, None, None)
-    if FINISH_START and FINISH_Z == "scripted" and not policy.tip_actions:
+    if FINISH_START and HANDOVER:
+        sys.exit("FINISH_START and HANDOVER are two different starts: set one.")
+    if (FINISH_START or HANDOVER) and FINISH_Z == "scripted" and not policy.tip_actions:
         sys.exit("FINISH_Z 'scripted' needs a tip-action policy (a *_tip_delta dataset).")
     if FINISH_Z not in ("policy", "scripted"):
         sys.exit(f"FINISH_Z must be 'policy' or 'scripted', not {FINISH_Z!r}")
@@ -1303,7 +1314,7 @@ def main() -> None:
                     live_key=bench.camera_key if SAVE_LIVE_FRAMES else None,
                     min_move_um=HANDOVER_MIN_MOVE_UM if HANDOVER or FINISH_START else 0.0,
                     slide=slide,
-                    z_touch=plan.target_xyz[2] if FINISH_START and FINISH_Z == "scripted" else None,
+                    z_touch=plan.target_xyz[2] if (FINISH_START or HANDOVER) and FINISH_Z == "scripted" else None,
                 )
                 if handover_s is not None:
                     run["handover_s"] = handover_s

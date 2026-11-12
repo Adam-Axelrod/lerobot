@@ -1,7 +1,9 @@
 # Why the learned approach does not reach 50 µm
 
-**Last updated:** 2026-11-10. Evidence is from bench runs on 5–8 Nov at the 0 mm base position,
-plus the offline perception test of 10 Nov, which swapped theories 1 and 2.
+**Last updated:** 2026-11-12. Evidence comes from three sources:
+- bench runs on 5–8 Nov at the 0 mm base position;
+- the offline perception test of 10 Nov, which swapped theories 1 and 2;
+- the finish-only batch and the first finish-policy bench trials, on 11 Nov (theory 1).
 
 ## What the policy does
 
@@ -186,13 +188,58 @@ Offline test on it (`outputs/finish_policy_offline/20261111-153242/`, crop, ring
     re-reading the ring, about 0.4ⁿ after n chunks.
   - It will not converge if it touches down first.
   - So the bench is the real test.
-- **Next.**
-  - Train an ACT finish policy (crop input, chunk 30) on this batch, with and without the
-    auxiliary head.
-  - Run 10 handover trials from the scripted pre-touch point, comparing with A's 420 µm and
-    the teacher's 14 µm.
+**First bench trials (2026-11-11 evening, in-view start, `outputs/eval_auto/finish_2026-11_crop256_*`).**
+- **Models.** Two ACT finish policies were trained on the finish batch (crop 256 px, tip actions,
+  chunk 30, 40k steps; no auxiliary head):
+  - `finish_2026-11_crop256_js`: crop + joint state;
+  - `finish_2026-11_crop256_img`: crop only.
+- **How each trial ran** (`eval_auto` `FINISH_START`):
+  - it starts like the finish demos: tip in view, 0.1–1.5 mm beside the ring, 0.5–1.5 mm up
+    (seeds 5,600,000 up);
+  - the chunk is re-planned every 15 steps.
+- **Not scored with `score_eval`.** The errors below come from `results.jsonl`:
+  - vision is the detected tip against the target pixel;
+  - FK is the kinematic tip projected through the calibration of 8 Nov.
 
-- Bench test: 10 handover trials from the scripted pre-touch point, comparing with A's 420 µm.
+| Run | Trials | Vision: median, ≤ 50 µm | FK: median, ≤ 50 µm | How the trials ended |
+|---|---|---|---|---|
+| crop + joints, policy height (`_js_act_finish_n15_*-184455` ep0, `-184654` ep1–9) | 10 | 30 µm, 9/10 | 45 µm, 6/10 | 7 stopped by the press limit (tip 82–99 µm into the dish), 2 settled 31 and 58 µm up, 1 time limit |
+| crop only, scripted descent (`_img_act_finish_zscripted_n15_*-185701`) | 1 | 45 µm | 69 µm | settled at the surface |
+
+- **Across the image, the finish policy works.** 9/10 trials ended within 50 µm by the detector,
+  against A's 420 µm.
+  - This start is easier than A's: these trials start in view and inside the training range, while
+    A started from the scripted pre-touch point.
+  - The pre-touch comparison is still to run (bench session in `NEXT.md`, runs c and d).
+- **Height is the weak axis, even with the joint state.** The demos end exactly at the dish:
+  - The demos' summed `tip_z` matches each start height to within about 1 µm (median 0.4 µm).
+  - They slow down from about 30 µm per step to zero over the last 8 steps, then hold still.
+  - The policy instead reaches the surface still descending at 6–26 µm per step and keeps going,
+    until the 100 µm press limit stops it.
+  - Its stopping height is wrong by about ±100 µm either way: 7 too low, 2 too high.
+- **Likely reason.** 10 µm of height is about 0.003° of joint motion, a tiny fraction of the
+  joints' normalised range. The policy cannot place the stop to that precision from the joints, and
+  the top-down image barely shows height (theory 6).
+  - **Consequence:** height should come from the kinematics and the dish height map (`FINISH_Z =
+    "scripted"`), and the policy should control only the move across the image.
+  - `eval_auto` now also locks the move across the image within `FINISH_LATERAL_LOCK_MM` (20 µm) of
+    the touch, so a late correction cannot drag the tip along the dish.
+- **Calibration drift.** The detected tip sits on average (+3.5, +0.2) px (about 45 µm) from the FK
+  tip, consistent with the 5–7 px seen while recording the batch. The vision column is therefore
+  the more trustworthy one. A full recalibration comes first in the next session.
+
+**Next (bench session in `docs/meca500/instructions/NEXT.md`).**
+- Full recalibration first.
+- Then 10 trials each, all with scripted descent:
+  - (a) crop only, in-view start;
+  - (b) crop + joints, in-view start;
+  - (c) crop only, from the scripted pre-touch point;
+  - (d) crop + joints, from the scripted pre-touch point.
+- Runs (a) and (b) test theory 3 on the bench: does the joint state help or hurt?
+- Runs (c) and (d) give the comparison with A's 420 µm (same first 5 targets). The pre-touch point
+  is up to about 3 mm off and higher than any finish demo, so these test how far the finish policy
+  generalises.
+- The auxiliary-head ACT variant has not been trained yet.
 
 ### 2. At 50 µm scale the full frame is too coarse (weakened by the 2026-11-10 test)
 
@@ -382,9 +429,12 @@ What it means:
 **For.**
 - E centred the tip but hovered 1.1–1.5 mm up.
 - In its own approach, E descended 12–24 mm short.
+- **Since 2026-11-11:** the crop + joint-state finish policy also misjudged its stopping height by
+  about ±100 µm. It ran 82–99 µm into the dish in 7/10 and stopped 31–58 µm up in 2. So at this
+  scale the joint state does not fix it either (theory 1's bench trials).
 
 **Against.**
-- This doesn't apply to the joint-state models.
+- This doesn't apply to the coarse joint-state approach, which only needs millimetres.
 
 **Solution.**
 - Split the axes. The finish policy controls the tip's position across the image, and the height
@@ -417,9 +467,10 @@ These do not explain a 2 mm miss. But a policy that fixes theories 1–5 will ru
 | Step | Covers | Arm needed | Rough time |
 |---|---|---|---|
 | Offline perception test (done 2026-11-10) | Theory 2 | No | 30 min |
-| Finish policy on existing finish frames, probed | Theories 1 and 3 | No | 1 day + training |
-| Finish-only data batch, if needed | Theory 1 | Yes, unattended | 1–2 h |
-| Handover bench trials of the finish policy | Theories 1, 2 and 6 | Yes | 1 h |
+| Finish policy on existing finish frames, probed (done 2026-11-10/11) | Theories 1 and 3 | No | 1 day + training |
+| Finish-only data batch (done 2026-11-11, 200 eps) | Theory 1 | Yes, unattended | 3 h |
+| Finish-policy bench trials, in-view start (first run 2026-11-11; full set next) | Theories 1, 3 and 6 | Yes | 1.5 h |
+| Handover bench trials of the finish policy, from pre-touch (next) | Theories 1, 2 and 6 | Yes | included above |
 | Deterministic-path approach data and retrain | Theory 4 | Yes, unattended | 1.5 h + training |
 | DAgger rounds | Theory 5 | Yes, unattended | 1 day |
 
