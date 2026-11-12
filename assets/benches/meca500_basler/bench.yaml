@@ -146,6 +146,11 @@ target:
   # left the tip +15 um in y of the target, in both B5 (2026-11-03) and C3 (2026-11-04): mean final
   # correction (2, -15) um, std ~15, 19 episodes.
   touch_bias_xy_mm: [0.0, -0.015]
+  # "The tip" is the centre of the pipette OPENING (Adam, 2026-11-12), not the end of the glass that
+  # touches. Opening minus glass end in the image, px: median of 232 final frames (finish batch +
+  # 12 Nov bench), IQR u -0.83..-0.49, v 4.31..6.48; drifts ~+-2 px across the field. Remeasure after a
+  # pipette change (scripts/meca500/rescore_opening.py prints it).
+  opening_offset_px: [-0.66, 5.48]
   style: {radius_px: 14, thickness_px: 2, cross_px: 6, color: [0, 255, 0], outline_color: [0, 0, 0]}
 
 approach:

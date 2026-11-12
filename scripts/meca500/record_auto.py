@@ -438,7 +438,7 @@ def run_corrected_episode(
     record(np.vstack([seg, np.repeat(seg[-1][None], dwell, axis=0)]), np.ones(len(seg) + dwell))
     frame = grab(robot, key)
     save_raw(raw_dir, "final", frame)
-    final = measure(frame, background, plan.target_px, planner.calib)
+    final = measure(frame, background, plan.target_px, planner.calib, opening=True)  # "the tip" = the opening
     um = 1000 * float(np.linalg.norm(np.asarray(planner.calib.px_to_xy)[:, 0]))
     final_um = None if final.error_px is None else final.error_px * um
     logging.info("  final: " + ("tip not detected" if final_um is None else f"{final.error_px:.1f} px = {final_um:.0f} um"))

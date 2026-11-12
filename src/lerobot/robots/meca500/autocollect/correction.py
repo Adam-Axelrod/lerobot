@@ -18,7 +18,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .calibration import ScopeCalibration
-from .tip_detect import detect_tip
+from .tip_detect import detect_tip, find_opening
 
 # Weaker detections are ignored. Lower than the slide detector's 0.3: real in-focus touches
 # scored 0.25-0.62 (2026-11-03), and here a false detection is caught by MAX_CORRECTION_MM, since
@@ -48,18 +48,24 @@ def px_shift_to_mm(calib: ScopeCalibration, d_px) -> np.ndarray:
     return np.asarray(calib.px_to_xy, float)[:, :2] @ np.asarray(d_px, float)
 
 
-def measure(frame, background, expected_px, calib: ScopeCalibration, gain: float = 1.0) -> Correction:
+def measure(frame, background, expected_px, calib: ScopeCalibration, gain: float = 1.0, opening: bool = False) -> Correction:
     """Detect the tip in ``frame``; return the dish-plane shift that moves it onto ``expected_px``.
 
     ``expected_px`` is where the model puts the tip NOW (the calibration applied to the model tip),
     not the target: at a checkpoint the tip is still 1-4 mm back along the approach, 50-200 px
     from the target. The difference is the model error, and shifting the rest of the approach by
     it lands the touch on the target. For the final error, pass the target itself.
+
+    ``opening``: measure the pipette opening ("the tip" since 2026-11-12) instead of the glass end.
+    Use it for the final error against the target; the checkpoints compare the glass end with the
+    model's glass end, which is what the calibration predicts.
     """
     det = detect_tip(frame, background)
     if det is None or det.score < MIN_SCORE:
         note = "tip not detected" if det is None else f"weak detection (score {det.score:.2f})"
         return Correction(None if det is None else det.px, None, (0.0, 0.0), note)
+    point = find_opening(frame, det)[0] if opening else det.px
+    det.px = point
     d_px = np.asarray(expected_px, float) - np.asarray(det.px, float)
     shift = gain * px_shift_to_mm(calib, d_px)
     err = float(np.linalg.norm(d_px))

@@ -265,10 +265,12 @@ class Planner:
         return sample_target_px(rng, self.lim, self.calib.image_size)
 
     def touch_point(self, target_px) -> np.ndarray:
-        """Where the tip touches for a target pixel: the calibration's dish-plane point plus the
-        bench's touch bias, at the surface plus the touch offset."""
+        """Where the glass end touches for a target pixel: the calibration's dish-plane point for the
+        pixel opening_offset_px before the target (so the pipette OPENING lands on the target), plus
+        the bench's touch bias, at the surface plus the touch offset."""
         lim = self.lim
-        xy = self.calib.pixel_to_xy(np.asarray(target_px, dtype=float))[0]
+        aim_px = np.asarray(target_px, dtype=float) - np.asarray(lim.opening_offset_px, dtype=float)
+        xy = self.calib.pixel_to_xy(aim_px)[0]
         return np.array(
             [xy[0] + lim.touch_bias_xy_mm[0], xy[1] + lim.touch_bias_xy_mm[1], self.calib.surface_z_mm + lim.touch_offset_mm]
         )

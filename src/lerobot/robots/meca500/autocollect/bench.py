@@ -195,6 +195,10 @@ class PlannerLimits:
     target_field_radius_frac: float = 0.9
     touch_offset_mm: float = 0.0  # +ve stops above the measured surface
     touch_bias_xy_mm: tuple[float, float] = (0.0, 0.0)  # added to every touch point, base frame
+    # The pipette opening's centre minus the glass end (detect_tip's point), image px. "The tip" that
+    # aims at a target is the opening (tip_detect.find_opening); the plan puts the glass end here
+    # behind the target so the opening lands on it. (0, 0) aims the glass end, as before 2026-11-12.
+    opening_offset_px: tuple[float, float] = (0.0, 0.0)
     touch_nominal_joints: list[float] | None = None  # sets the approach orientation
     touch_rot_jitter_deg: float = 2.0
     # path
@@ -239,6 +243,7 @@ class PlannerLimits:
             target_field_radius_frac=get(t, "field_radius_frac", d.target_field_radius_frac, float),
             touch_offset_mm=get(t, "touch_offset_mm", d.touch_offset_mm, float),
             touch_bias_xy_mm=get(t, "touch_bias_xy_mm", d.touch_bias_xy_mm, tuple),
+            opening_offset_px=get(t, "opening_offset_px", d.opening_offset_px, tuple),
             touch_nominal_joints=get(a, "touch_nominal_joints", None, list),
             touch_rot_jitter_deg=get(a, "touch_rot_jitter_deg", d.touch_rot_jitter_deg, float),
             gate_back_mm=get(a, "gate_back_mm", d.gate_back_mm, _range),

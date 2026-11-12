@@ -37,13 +37,39 @@ import probe_tip_localisation as ptl  # noqa: E402
 
 from lerobot.robots.meca500.autocollect.bench import BenchConfig  # noqa: E402
 from lerobot.robots.meca500.autocollect.overlay import draw_target  # noqa: E402
+from lerobot.robots.meca500.autocollect.tip_detect import detect_tip, find_opening  # noqa: E402
 
 DATASETS = ptl.DATASETS + ["basler_stage_touch_finish_2026-11"]
 CROP_PX = 192
 SHIFTS, SHIFT_MAX_PX = 3, 20.0
 HOLDOUT, EPOCHS, BATCH, SEED = 0.1, 30, 32, 0
+# The label is the pipette OPENING ("the tip" since 2026-11-12), found in each frame from the
+# recorded glass-end detection (tip_detect.find_opening). A re-detection must agree with the
+# recorded one to this many px, else the frame is dropped (background moved, other blob).
+MAX_REDETECT_PX = 2.0
 # Only frames where the tip is inside the crop can be localised; farther ones only teach "far".
 MAX_OFFSET_PX = 80.0
+
+
+def to_opening(df: pd.DataFrame) -> pd.DataFrame:
+    """Replace each frame's glass-end label (tip_u/v) with the opening found in that frame."""
+    keep, u, v = [], [], []
+    for r in df.itertuples():
+        frame = cv2.cvtColor(cv2.imread(r.png), cv2.COLOR_BGR2RGB)
+        bg_path = str(Path(r.png).with_name("background.png"))
+        bg = cv2.imread(bg_path)
+        det = None if bg is None else detect_tip(frame, cv2.cvtColor(bg, cv2.COLOR_BGR2RGB))
+        ok = det is not None and np.hypot(det.px[0] - r.tip_u, det.px[1] - r.tip_v) <= MAX_REDETECT_PX
+        keep.append(ok)
+        if ok:
+            op, _ = find_opening(frame, det)
+            u.append(op[0]); v.append(op[1])
+        else:
+            u.append(np.nan); v.append(np.nan)
+    out = df.assign(tip_u=u, tip_v=v)[keep].reset_index(drop=True)
+    out["du"], out["dv"] = out.tip_u - out.target_u, out.tip_v - out.target_v
+    print(f"opening labels: kept {len(out)} of {len(df)} frames (re-detection within {MAX_REDETECT_PX} px)")
+    return out
 
 
 def build(df: pd.DataFrame, style, shifts: int, rng) -> tuple[torch.Tensor, np.ndarray, np.ndarray]:
@@ -98,7 +124,7 @@ def main() -> None:
     ptl.DATASETS = DATASETS
     style = BenchConfig.load(ptl.RIG).target_style()
     um_per_px = BenchConfig.load(ptl.RIG).calibration().mm_per_px * 1000
-    df = ptl.load_samples()
+    df = to_opening(ptl.load_samples())
     rng = np.random.default_rng(SEED)
     epochs = 2 if args.quick else EPOCHS
     if args.quick:
@@ -131,7 +157,7 @@ def main() -> None:
     (out / "config.json").write_text(json.dumps({
         "crop_px": CROP_PX, "label_scale_px": ptl.LABEL_SCALE_PX, "feat_hw": [(CROP_PX + 31) // 32] * 2,
         "datasets": DATASETS, "shifts": SHIFTS, "shift_max_px": SHIFT_MAX_PX, "epochs": epochs,
-        "target_style": style.__dict__,
+        "target_style": style.__dict__, "label": "opening",
     }, indent=1, default=list))
     lines.append(f"refitted on all {len(y_all)} crops; {time.time() - t0:.0f} s")
     (out / "summary.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")

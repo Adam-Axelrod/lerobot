@@ -134,6 +134,55 @@ def detect_tip(
     )
 
 
+# "The tip" for aiming and scoring is the centre of the pipette OPENING, not the end of the glass
+# (Adam, 2026-11-12: blind by-eye verdicts on 53 final frames followed the target sitting on the
+# opening; the detected glass end did not predict them, AUC 0.56). In the frame the opening is the
+# bright spot just behind the dark end wall, about 6-8 px (80-100 um) back along the pipette from
+# detect_tip's point. That point stays the physical end of the glass, which is what touches the dish
+# (contact detection, calibration touches, the tool model).
+OPENING_SEARCH_PX = 14.0  # look this far back from the glass end
+OPENING_MIN_CONTRAST = 20.0  # grey levels between the end wall and the opening, else fall back
+OPENING_FALLBACK_PX = 7.0  # median offset when the opening cannot be seen (blur, glare)
+OPENING_PEAK_PX = 4.0  # the opening's peak lies within this of its half-height rise
+
+
+def find_opening(frame: np.ndarray, det: TipDetection) -> tuple[tuple[float, float], bool]:
+    """Centre of the pipette opening behind ``det.px``, and whether it was seen (else the fallback).
+
+    Brightness is sampled along the pipette axis from the glass end backwards, averaged over 3 px
+    across. The end wall is a dark minimum within 5 px of the end; the opening is the bright spot
+    after it. Its centre is the brightest point within OPENING_PEAK_PX of where the brightness
+    first rises halfway from the wall to the maximum (behind it the lumen can stay bright, so the
+    whole bright run is not the opening)."""
+    g = cv2.GaussianBlur(cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY).astype(np.float32), (3, 3), 0)
+    a = np.asarray(det.axis, float)
+    n = np.array([-a[1], a[0]])
+    tip = np.asarray(det.px, float)
+    step = 0.25
+    ts = np.arange(0.0, OPENING_SEARCH_PX + 1e-9, step)
+    prof = np.array([
+        np.mean([cv2.getRectSubPix(g, (1, 1), tuple((tip - t * a + w * n).astype(np.float32)))[0, 0] for w in (-1.5, 0.0, 1.5)])
+        for t in ts
+    ])
+    fallback = (tuple(tip - OPENING_FALLBACK_PX * a), False)
+    i_wall = int(np.argmin(prof[ts <= 5.0]))
+    lo, hi = prof[i_wall], prof[i_wall:].max()
+    if hi - lo < OPENING_MIN_CONTRAST:
+        return fallback
+    i_up = i_wall + int(np.argmax(prof[i_wall:] >= lo + 0.5 * (hi - lo)))
+    win = prof[i_up : i_up + int(OPENING_PEAK_PX / step) + 1]
+    i_pk = i_up + int(np.argmax(win))
+    t_c = ts[i_pk]
+    if 0 < i_pk < len(prof) - 1:  # parabolic sub-sample peak
+        y0, y1, y2 = prof[i_pk - 1], prof[i_pk], prof[i_pk + 1]
+        den = y0 - 2 * y1 + y2
+        if den < 0:
+            t_c += step * 0.5 * (y0 - y2) / den
+    if not 2.0 <= t_c <= OPENING_SEARCH_PX - 1.0:
+        return fallback
+    return tuple(tip - t_c * a), True
+
+
 def draw_detection(frame: np.ndarray, det: TipDetection | None) -> np.ndarray:
     """Copy of ``frame`` with the detected tip (magenta cross) and pipette axis drawn."""
     out = frame.copy()

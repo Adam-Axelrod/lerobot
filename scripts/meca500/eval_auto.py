@@ -111,7 +111,7 @@ from lerobot.robots.meca500.autocollect.operator_guard import OperatorGuard
 from lerobot.robots.meca500.autocollect.overlay import TargetCropStep, TargetOverlayStep, draw_target
 from lerobot.robots.meca500.autocollect.planner import PlanningError
 from lerobot.robots.meca500.autocollect.tip_actions import camera_axes, tip_action_to_joints
-from lerobot.robots.meca500.autocollect.tip_detect import detect_tip
+from lerobot.robots.meca500.autocollect.tip_detect import detect_tip, find_opening
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.teleoperators.meca500_scripted.config_meca500_scripted import Meca500ScriptedConfig
 from lerobot.teleoperators.meca500_scripted.meca500_scripted import Meca500Scripted
@@ -200,7 +200,7 @@ FINISH_LATERAL_LOCK_MM = 0.02
 # the tip descends with the lateral motion locked. The policy's own lateral actions are dropped
 # from the hover on. Why: the ACT finish policy settles where its implicit tip estimate is zero,
 # 1-8 px off (probe_finish_fixed_point.py, 2026-11-12). None = off.
-REFINE_MODEL: str | None = "outputs/tip_localiser/20261112-184056"
+REFINE_MODEL: str | None = "outputs/tip_localiser/20261112-200102"
 REFINE_HOVER_MM = 0.05
 REFINE_FRAMES = 8
 REFINE_ITERS = 4
@@ -692,9 +692,17 @@ def measure_final(robot, arm, planner, bench, background, target_px, shift=(0, 0
         "final_joints_deg": np.round(q, 4).tolist(),
     }
     if det is not None:
-        out["vision_tip_px"] = [round(det.px[0], 2), round(det.px[1], 2)]
-        out["vision_error_um"] = round(float(np.linalg.norm(np.asarray(det.px) - target_px)) * um_per_px, 1)
+        # "The tip" is the centre of the pipette opening (2026-11-12); the glass end is kept as
+        # vision_apex_*. Runs before 2026-11-12 recorded the glass end as vision_tip_px
+        # (rescore_opening.py recomputes them).
+        opening, seen = find_opening(final, det)
+        out["vision_tip_px"] = [round(opening[0], 2), round(opening[1], 2)]
+        out["vision_error_um"] = round(float(np.linalg.norm(np.asarray(opening) - target_px)) * um_per_px, 1)
+        out["vision_opening_seen"] = bool(seen)
+        out["vision_apex_px"] = [round(det.px[0], 2), round(det.px[1], 2)]
+        out["vision_apex_error_um"] = round(float(np.linalg.norm(np.asarray(det.px) - target_px)) * um_per_px, 1)
         out["vision_score"] = round(det.score, 2)
+        out["tip_definition"] = "opening"
     return out, final
 
 
@@ -941,8 +949,13 @@ def finish_with_asr(
             out["failure_stage"] = "servo"
             out["reason"] = f"ASR anchor failed: {why}"
             return out
-        # ASR servos ITS tip point: aim it ASR_TIP_OFFSET_PX from the ring so the free end lands on it.
-        asr_target = np.asarray(target, dtype=float) + np.asarray(ASR_TIP_OFFSET_PX, dtype=float)
+        # ASR servos ITS tip point: aim it ASR_TIP_OFFSET_PX from the glass end, and the glass end
+        # opening_offset_px before the ring, so the pipette opening ("the tip") lands on the ring.
+        asr_target = (
+            np.asarray(target, dtype=float)
+            + np.asarray(ASR_TIP_OFFSET_PX, dtype=float)
+            - np.asarray(planner.lim.opening_offset_px, dtype=float)
+        )
         handle = service.submit_task(
             ExecuteTaskGoal(target_kind=TargetKind.PIXEL, target_px=tuple(float(v) for v in asr_target), routine=RoutineKind.POSITION)
         )

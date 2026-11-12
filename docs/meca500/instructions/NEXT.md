@@ -1,13 +1,18 @@
 # Next at the bench
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
-**Last updated:** 2026-11-12 (refinement test done; by-eye review open)
+**Last updated:** 2026-11-12 (tip redefined as the opening; refinement 10/10)
 
-## Now: your by-eye verdicts (no arm needed, about 20 min)
-Open the review page https://claude.ai/artifact/1M4UQXEG5zhKnsKKb2uHge and mark each of the 54 final
-frames Success, Borderline or Fail by your own standard. Leave "Reveal measured distance" off until
-you have finished. Verdicts save as you click; tell Claude when you are done, and every run gets
-re-scored against your standard.
+## Now: no bench work outstanding
+**"The tip" is now the centre of the pipette opening** (your call, 2026-11-12), not the end of the
+glass. Scores, the correction step, the teacher's aim and ASR's aim all use it; the contact
+detection and the calibration still use the glass end, which is what touches. FK errors therefore
+read about 75 um higher than vision by design. After a pipette change, rerun
+`scripts\meca500escore_opening.py` on a fresh run and put the printed offset into
+`bench.yaml` `target.opening_offset_px`.
+
+Your by-eye verdicts are in: success meant the target on the opening, up to about 60 um from it.
+The finish policy + correction step, aiming the opening: 10/10 within 50 um of it, median 29 um.
 
 ## Done today (2026-11-12), by Claude with your permission
 Details and numbers are in `docs/meca500/THEORIES.md` ("Where we are").

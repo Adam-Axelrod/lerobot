@@ -16,7 +16,8 @@ on the same 10 targets; vision is the detected tip against the target pixel, 13.
 | End-to-end ACT model A, from the pre-touch point | 0/5 | 420 µm (FK) | 6 Nov |
 | ACT finish policy, crop only, scripted descent | 5/10 | 51 µm | run (a) |
 | ACT finish policy, crop + joints, scripted descent | 7/10 | 38 µm | run (b) |
-| **ACT finish policy + learned tip localiser at a 50 µm hover** | **10/10** | **22 µm** (max 39) | the theory 1 test below |
+| ACT finish policy + learned tip localiser at a 50 µm hover | 10/10 | 22 µm (max 39) | the theory 1 test below; aimed the glass end |
+| **The same, aiming the pipette opening ("the tip" since 12 Nov)** | **10/10** | **29 µm** (max 45), measured to the opening | glass-end runs above score 0–1/10 against the opening |
 | Scripted teacher (finish batch) | 194/200 | 14 µm | 11 Nov |
 
 **The two failures, and where each stands.**
@@ -66,6 +67,30 @@ on the same 10 targets; vision is the detected tip against the target pixel, 13.
     0 fail. Everything so far (teacher labels, policy, localiser, scoring) aims the wrong point.
   - **Consequence:** redefine the aim point as the lumen opening, about 75 µm behind the apex, in
     the teacher, the localiser's target and the scoring; then 50 µm from the opening is the bar.
+- **"The tip" is now the centre of the pipette opening (Adam, 12 Nov).**
+  - **Found in each frame** by `tip_detect.find_opening`: along the pipette axis behind the glass
+    end, the end wall is a dark minimum and the opening the bright peak after it. Seen in 224/232
+    test frames, else a fixed 7 px fallback. Against the verdicts, opening-to-target distance gives
+    AUC 1.00 success vs fail and 0.91 vs borderline; every frame within 61 µm was judged success,
+    the first borderline is at 63 µm and the first fail at 97 µm.
+  - **Where it applies:** `eval_auto` scoring (`vision_tip_px` / `vision_error_um` are the opening;
+    the glass end is kept as `vision_apex_*`), the teacher's final error (`record_auto`), the
+    localiser's labels (`train_tip_localiser.py`), and the aim of every plan and of ASR through
+    `bench.yaml` `target.opening_offset_px` = (−0.66, +5.48) px, opening minus glass end.
+  - **Where it does not:** contact detection, the calibration touches, the tool model and the
+    teacher's checkpoint corrections keep the glass end, which is what touches and what the
+    calibration predicts. So FK error now reads about 75 µm higher by design.
+  - **Old runs re-scored** with `scripts/meca500/rescore_opening.py` (`results_opening.jsonl` per
+    run). Opening medians: run (a) 85 µm (0/10), run (b) 93 µm (1/10), the first refinement run
+    68 µm (1/10). Every earlier system aimed the glass end.
+  - **Bench, refinement aiming the opening** (localiser `outputs/tip_localiser/20261112-200102`,
+    retrained on opening labels: 13 µm held out; same 10 targets;
+    `outputs/eval_auto/finish_2026-11_crop256_img_act_finish_zscripted_refine_n15_20261112-200658`):
+    **10/10 within 50 µm of the opening, median 29 µm, max 45 µm**; opening found in 10/10 frames.
+    Every result is inside Adam's by-eye success zone (≤ 61 µm).
+  - **What is left is the touchdown slide:** from the last hover estimate to the final frame the
+    opening moves (+0.5, −2.0) px on average, sd about 1 px, forward along the pipette (27 µm).
+    Aiming the hover correction 2 px behind the target should take the median to about 15 µm.
 
 ## Background: what the end-to-end policies did (5–8 Nov)
 
