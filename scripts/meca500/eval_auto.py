@@ -140,8 +140,8 @@ FIRST_EPISODE = 0
 # A local pretrained_model folder or a Hub model repo (downloaded once into the HF cache).
 # Must be trained on a DELTA dataset recorded on this rig with the digital target.
 # Local copies come from CREATE by scp: the lab PC downloads from the Hub at ~100 KB/s.
-MODEL = "outputs/train/finish_2026-11_crop256_js/checkpoints/last/pretrained_model"
-EVAL_NAME = "finish_2026-11_crop256_js_act"  # names the "policy" results folder; see session_name()
+MODEL = "outputs/train/finish_2026-11_crop256_img/checkpoints/last/pretrained_model"
+EVAL_NAME = "finish_2026-11_crop256_img_act"  # names the "policy" results folder; see session_name()
 TASK = "move_pipette_to_target"
 NUM_EPISODES = 10  # finish-policy bench trials, 2026-11 (docs/meca500/instructions/NEXT.md)
 # Training episodes used seeds 1_000_000 + episode index: this range shares none of them.
@@ -174,14 +174,14 @@ COARSE_ACTION_STEPS: int | None = None
 # the no-decoy model reached precision entry aimed 2.1-2.7 mm off, the demos 0.18-0.67 mm).
 # Time, the trajectory log and the scores count from the handover. The settle rule cannot end an
 # episode until the tip has moved HANDOVER_MIN_MOVE_UM, since the demos hold still on arrival.
-HANDOVER = True
+HANDOVER = False
 HANDOVER_MIN_MOVE_UM = 50.0
 # "policy" only: start each episode the way the finish-only demos started (record_auto
 # RECOVERY_KIND "finish", basler_stage_touch_finish_2026-11): the planner brings the tip into view
 # 0.1-1.5 mm beside and 0.5-1.5 mm above the target (planner.plan_finish, an unrecorded lead-in),
 # the arm settles, and the policy takes over. Tests a finish-only policy on its own; timing and the
 # settle rule as HANDOVER. Seeds from FINISH_SEED_BASE (the training batch used 4_000_000 up).
-FINISH_START = False
+FINISH_START = True
 FINISH_SEED_BASE = 5_600_000
 # FINISH_START or HANDOVER, tip-action policies: "policy" uses the policy's own tip_z; "scripted"
 # uses only its tip_u/v while the tip descends straight to the planned touch height at
@@ -193,6 +193,21 @@ FINISH_DESCENT_MM_S = 0.15
 # cannot drag along the dish. From an in-view start the 2026-11-11 trial moved 19 um after
 # touchdown; from the pre-touch point (HANDOVER, up to ~3 mm off) it could still be far off.
 FINISH_LATERAL_LOCK_MM = 0.02
+# FINISH_Z "scripted" only: the learned tip localiser (train_tip_localiser.py; a folder with
+# model.pt) takes the last lateral correction. The descent stops REFINE_HOVER_MM above the touch;
+# with the arm still the localiser's estimate of tip - ring (median of REFINE_FRAMES frames) is
+# corrected by a straight move, up to REFINE_ITERS times or until it is below REFINE_TOL_PX; then
+# the tip descends with the lateral motion locked. The policy's own lateral actions are dropped
+# from the hover on. Why: the ACT finish policy settles where its implicit tip estimate is zero,
+# 1-8 px off (probe_finish_fixed_point.py, 2026-11-12). None = off.
+REFINE_MODEL: str | None = "outputs/tip_localiser/20261112-184056"
+REFINE_HOVER_MM = 0.05
+REFINE_FRAMES = 8
+REFINE_ITERS = 4
+REFINE_TOL_PX = 1.0
+REFINE_STEP_UM = 5.0  # lateral speed of each correction move, um per step (0.1 mm/s)
+REFINE_WAIT_STEPS = 10  # still steps after a move before measuring again
+REFINE_MAX_MM = 0.3  # total lateral travel cap for the refinement
 # ACT chunk mode: re-plan after this many steps instead of the trained n_action_steps (30 = 1.5 s
 # blind), so the image is read more often. None = as trained.
 N_ACTION_STEPS: int | None = 15
@@ -301,6 +316,8 @@ def session_name() -> str:
         name += "_finish"
     if METHOD == "policy" and (HANDOVER or FINISH_START) and FINISH_Z == "scripted":
         name += "_zscripted"
+    if METHOD == "policy" and REFINE_MODEL:
+        name += "_refine"
     if METHOD == "policy" and N_ACTION_STEPS and TEMPORAL_ENSEMBLE_COEFF is None:
         name += f"_n{N_ACTION_STEPS}"
     if METHOD == "policy_asr":
@@ -404,6 +421,7 @@ def load_policy(model: str):
 def rollout_episode(
     robot, policy, pre, post, obs_proc, obs_features, planner, events, live_key: str | None = None,
     min_move_um: float = 0.0, stop_when=None, slide: VirtualSlide | None = None, z_touch: float | None = None,
+    refine=None,
 ) -> dict:
     """Run the policy until it settles, the time runs out, a check fails or the operator stops it.
 
@@ -412,7 +430,8 @@ def rollout_episode(
     ``stop_when`` (a threading.Event) ends the episode as soon as it is set: the handover.
     ``slide`` runs the policy on a virtually displaced base: it sees and commands the virtual
     joints, the arm gets the real ones (BASE_OFFSET_MM). ``z_touch`` (tip actions, FINISH_Z
-    "scripted"): the policy's tip_z is replaced by a straight descent to this height (mm)."""
+    "scripted"): the policy's tip_z is replaced by a straight descent to this height (mm).
+    ``refine`` = (TipLocaliser, target_px, camera key) with z_touch: the REFINE step."""
     kin, checker, calib = planner.kin, planner.checker, planner.calib
     fps = planner.lim.fps
     policy.reset()
@@ -439,6 +458,10 @@ def rollout_episode(
     tip_mode = getattr(policy, "tip_actions", False)
     axes = camera_axes(calib) if tip_mode else None
     t_goal = kin.tip(q_goal) if tip_mode else None
+    rs = None
+    if refine is not None and z_touch is not None and tip_mode:
+        mm_per_px = np.asarray(calib.px_to_xy, dtype=float)[:, :2]
+        rs = {"phase": "approach", "est": [], "iters": [], "moved_mm": 0.0}
     t_start = time.perf_counter()
     while time.perf_counter() - t_start < EPISODE_TIME_S:
         t0 = time.perf_counter()
@@ -480,8 +503,44 @@ def rollout_episode(
         if tip_mode:
             if z_touch is not None:
                 a = a.copy()
-                a[2] = -min(FINISH_DESCENT_MM_S / fps, max(float(t_goal[2, 3]) - z_touch, 0.0))
-                if float(t_goal[2, 3]) - z_touch < FINISH_LATERAL_LOCK_MM:
+                h = float(t_goal[2, 3]) - z_touch
+                z_stop = 0.0
+                if rs is not None and rs["phase"] != "done":
+                    z_stop = REFINE_HOVER_MM
+                    if rs["phase"] == "approach" and h <= REFINE_HOVER_MM + 1e-3:
+                        rs.update(phase="wait", left=REFINE_WAIT_STEPS)  # let the arm settle first
+                    if rs["phase"] == "measure":
+                        a[:2] = 0.0
+                        rs["est"].append(refine[0].offset_px(raw[refine[2]], refine[1]))
+                        if len(rs["est"]) >= REFINE_FRAMES:
+                            off = np.median(np.asarray(rs["est"]), axis=0)
+                            rs["iters"].append([round(float(off[0]), 2), round(float(off[1]), 2)])
+                            d_uv = axes @ (mm_per_px @ -off)  # camera-axis mm that cancel the offset
+                            room = REFINE_MAX_MM - rs["moved_mm"]
+                            if np.linalg.norm(d_uv) > room:
+                                d_uv *= max(room, 0.0) / max(np.linalg.norm(d_uv), 1e-12)
+                            if (
+                                np.linalg.norm(off) < REFINE_TOL_PX
+                                or len(rs["iters"]) > REFINE_ITERS
+                                or np.linalg.norm(d_uv) < 1e-4
+                            ):
+                                rs["phase"] = "done"
+                            else:
+                                n = int(np.ceil(np.linalg.norm(d_uv) * 1000 / REFINE_STEP_UM))
+                                rs.update(phase="move", per=d_uv / n, left=n)
+                                rs["moved_mm"] += float(np.linalg.norm(d_uv))
+                    elif rs["phase"] == "move":
+                        a[:2] = rs["per"]
+                        rs["left"] -= 1
+                        if rs["left"] <= 0:
+                            rs.update(phase="wait", left=REFINE_WAIT_STEPS)
+                    elif rs["phase"] == "wait":
+                        a[:2] = 0.0
+                        rs["left"] -= 1
+                        if rs["left"] <= 0:
+                            rs.update(phase="measure", est=[])
+                a[2] = -min(FINISH_DESCENT_MM_S / fps, max(h - z_stop, 0.0))
+                if h < FINISH_LATERAL_LOCK_MM or (rs is not None and rs["phase"] == "done"):
                     a[:2] = 0.0
             # Integrate onto the goal tip pose; the joint clamp below still bounds each step.
             t_next, q_ik = tip_action_to_joints(kin, t_goal, q_goal, a[:6], axes)
@@ -543,7 +602,8 @@ def rollout_episode(
         prev_tip = tip
         first_tip = tip if first_tip is None else first_tip
         moved = float(np.linalg.norm(tip - first_tip)) * 1000 >= min_move_um
-        settled = settled + 1 if (ever_precise and moved and step_um < SETTLED_UM_PER_STEP) else 0
+        refining = rs is not None and rs["phase"] != "done"
+        settled = settled + 1 if (ever_precise and moved and step_um < SETTLED_UM_PER_STEP and not refining) else 0
         if settled >= SETTLED_S * fps:
             reason = "settled"
             break
@@ -559,6 +619,7 @@ def rollout_episode(
         "loop_hz": round(hz, 1),
         "log": log,
         "live": live,
+        **({"refine_px": rs["iters"], "refine_moved_um": round(rs["moved_mm"] * 1000, 1)} if rs is not None else {}),
     }
 
 
@@ -1066,6 +1127,14 @@ def main() -> None:
         sys.exit(f"\nREFUSING TO START: {e}\n")
     print(f"Focus check passed: K-Cube at {pos:.4f} mm, as calibrated.")
     policy, pre, post = load_policy(MODEL) if learned else (None, None, None)
+    refiner = None
+    if REFINE_MODEL:
+        if not (METHOD == "policy" and (FINISH_START or HANDOVER) and FINISH_Z == "scripted"):
+            sys.exit("REFINE_MODEL needs METHOD 'policy', FINISH_START or HANDOVER, and FINISH_Z 'scripted'.")
+        from tip_localiser import TipLocaliser
+
+        refiner = TipLocaliser(REFINE_MODEL, DEVICE)
+        logging.info(f"Refinement by the tip localiser in {REFINE_MODEL}")
     if FINISH_START and HANDOVER:
         sys.exit("FINISH_START and HANDOVER are two different starts: set one.")
     if (FINISH_START or HANDOVER) and FINISH_Z == "scripted" and not policy.tip_actions:
@@ -1315,6 +1384,7 @@ def main() -> None:
                     min_move_um=HANDOVER_MIN_MOVE_UM if HANDOVER or FINISH_START else 0.0,
                     slide=slide,
                     z_touch=plan.target_xyz[2] if (FINISH_START or HANDOVER) and FINISH_Z == "scripted" else None,
+                    refine=(refiner, target, bench.camera_key) if refiner is not None else None,
                 )
                 if handover_s is not None:
                     run["handover_s"] = handover_s

@@ -1,12 +1,60 @@
 # Why the learned approach does not reach 50 µm
 
-**Last updated:** 2026-11-12. Evidence comes from three sources:
+**Last updated:** 2026-11-12, evening. Evidence comes from four sources:
 - bench runs on 5–8 Nov at the 0 mm base position;
 - the offline perception test of 10 Nov, which swapped theories 1 and 2;
 - the finish-only batch and the first finish-policy bench trials, on 11 Nov (theory 1);
-- the full finish-policy bench session after a recalibration, on 12 Nov.
+- the finish-policy bench session, the fixed-point probe and the learned refinement test, on 12 Nov.
 
-## What the policy does
+## Where we are (12 Nov)
+
+**Results so far.** All finish results below are from an in-view start, 0.1–1.5 mm beside the ring,
+on the same 10 targets; vision is the detected tip against the target pixel, 13.4 µm/px.
+
+| System | Within 50 µm (vision) | Median | Notes |
+|---|---|---|---|
+| End-to-end ACT model A, from the pre-touch point | 0/5 | 420 µm (FK) | 6 Nov |
+| ACT finish policy, crop only, scripted descent | 5/10 | 51 µm | run (a) |
+| ACT finish policy, crop + joints, scripted descent | 7/10 | 38 µm | run (b) |
+| **ACT finish policy + learned tip localiser at a 50 µm hover** | **10/10** | **22 µm** (max 39) | the theory 1 test below |
+| Scripted teacher (finish batch) | 194/200 | 14 µm | 11 Nov |
+
+**The two failures, and where each stands.**
+- **The finish, from in view, is close to solved.** The ACT finish policy gets the tip onto the ring
+  but settles where its own implicit tip estimate is zero, which is 1–8 px off. A separate learned
+  regressor of the tip-to-ring offset reads the same frames to about 1 px, and using it for the last
+  correction gives 10/10 within 50 µm (theory 1, "Fixed-point probe" and "Refinement test").
+- **Getting into the finish's range is unsolved.** From the scripted pre-touch point the tip starts
+  1.7–4.2 mm off in 8/10 trials, outside the crop and the demos, and the finish policy does not
+  recover (runs c and d). The end-to-end approach still arrives 2–3 mm off (theory 4).
+
+**Status of each theory.**
+
+| Theory | Status after 12 Nov |
+|---|---|
+| 1. Training never rewards the correction | **Supported, refined.** Finish-only data raised ring-following; the residual is an imprecise implicit tip estimate, fixed by an explicit one |
+| 2. The full frame is too coarse | Weakened. The crop helps; the frames are 8.6× downsampled from the sensor, and the optics resolve about 2× finer than our pixels |
+| 3. The joint state is a shortcut | Not supported in range (joints 7/10 vs 5/10 without); out of range the joint model barely moves |
+| 4. The approach is open-loop and random | Open. Now the main obstacle for the full system |
+| 5. Compounding error off the demos | Open; waits on 4 |
+| 6. Images cannot show height | **Supported.** Policy-driven height pressed up to 99 µm into the dish; scripted height touches every time |
+
+**Is 50 µm a fair bar at this magnification?** (analysis 12 Nov)
+- In the frames everything uses, 50 µm is **3.7 px**. The pipette end is about 30 px (400 µm) across,
+  so 50 µm is an eighth of its width, and "on target" depends on which point of the blunt end counts.
+- The detector repeats to about 1 px (13 µm); the teacher ends a median 1.07 px from the target; the
+  learned localiser reaches 13 µm held out. So 3.7 px is **measurable** in the image.
+- It is **not measurable from the kinematics**: the scope calibration's residual is 2.1 px rms
+  (28 µm), so FK errors below about 50 µm are mostly calibration scatter. Score in the image.
+- The camera has headroom. The sensor is 5496×3672 at 1.6 µm/px, binned 2× and then downscaled to
+  427×640, 8.6× in all. A native-resolution frame shows the optics resolve features of about
+  10–20 µm, so a crop at about 6–7 µm/px would keep nearly all the optical detail and put 50 µm at
+  7–8 px.
+- What counts as success by eye is being settled: 54 final frames (teacher, both policies, the
+  refinement, 11 Nov presses) are in the review page `https://claude.ai/artifact/1M4UQXEG5zhKnsKKb2uHge`,
+  blind and shuffled, with the key in `outputs/finish_review/review_key_20261112.json`.
+
+## Background: what the end-to-end policies did (5–8 Nov)
 
 Every learned policy we trained on the scripted demos ends **millimetres** from the target, not tens
 of micrometres. It gets there only when ASR's visual servo does the finish.
@@ -82,6 +130,11 @@ Theories 1–3 are about the finish. Theories 4–5 are about the approach.
 ## The theories, most likely first
 
 ### 1. Nothing in training rewards the correction, so the decoder ignores the image
+
+**Status (12 Nov): supported, and narrowed.** Finish-only data made the policy follow the ring; what
+is left is that its implicit estimate of the tip-to-ring offset is only good to 1–8 px, and the
+policy stops where that estimate is zero. An explicit learned estimate fixes it on the bench
+(10/10 within 50 µm). The sections below are in the order the evidence came in.
 
 **Theory.**
 - The only steps where the image is needed (the decoy correction and the last ~0.2 mm) are a few
@@ -283,20 +336,84 @@ Offline test on it (`outputs/finish_policy_offline/20261111-153242/`, crop, ring
 The arm held still above the dish. The process was killed, CUDA tested fine, and the run resumed
 from trial 4 with `FIRST_EPISODE = 4`. This has not been seen before.
 
+**Fixed-point probe (12 Nov, `scripts/meca500/probe_finish_fixed_point.py`, offline).**
+- **Question.** In runs (a) and (b) the misses had stopped moving sideways (≤ 0.5 µm/step) while
+  still 4–9 px off, though the policy re-read the image every 15 steps. Two explanations:
+  - *bias*: the policy follows a moved ring, but its own "on target" is a few px from the real one;
+  - *deadband*: it does not respond to offsets below several px at all.
+- **Method.** On the last frame each bench trial's policy saw, and on 50 near-hold frames from the
+  finish batch, draw the ring at the target and moved by 2, 4, 8 and 16 px, crop as live, and
+  measure how the predicted chunk changes. Also measure how much of the needed correction (the
+  detector's tip-to-target vector) the unshifted chunk makes.
+- **Result** (`outputs/train/finish_2026-11_crop256_img/checkpoints/last/probe_finish_fixed_point.csv`):
+
+  | | Correction made toward the true target | Slope, ring moved 2–4 px | Slope, 16 px |
+  |---|---|---|---|
+  | Bench settled frames, both models | 3% (median) | 0.2–0.3 | about 0.5 |
+  | Finish-batch near frames | 54–86% | 0.3 | 0.5–0.56 |
+
+- **What it means.** Not a deadband: the policy responds to a ring moved by a few px, weakly. But at
+  the frame where it settled its chunk is about zero while the tip is 1–8 px off, in a different
+  direction each trial. So its implicit tip-to-ring estimate is wrong by a few px, frame by frame,
+  and the low slope means it never notices. The same frames give the explicit regressor of theory 2
+  (crop_tuned) about 1 px.
+
+**Refinement test (12 Nov, bench).**
+- **Hypothesis.** The residual error is the policy's imprecise implicit tip estimate. An explicit
+  learned estimate, used for the last lateral correction, should bring run (a)'s 51 µm median to
+  about 15–25 µm on the same targets.
+- **Localiser.** `scripts/meca500/train_tip_localiser.py`: ResNet18 on a 192 px crop with the ring
+  drawn, regressing the detector's tip minus the ring centre, trained on 1818 detection frames from
+  600 episodes (all four datasets, finish batch included) with ring-shift augmentation.
+  - Held out by episode: median 13 µm, p90 30 µm; at near 7–14 µm.
+  - On the final frames of runs (a) and (b), it matched the detector to a median of 1.0 px (p90
+    2.0 px), including the 5–9 px misses the policy ignored.
+  - Model: `outputs/tip_localiser/20261112-184056/`.
+- **Harness** (`eval_auto` `REFINE_MODEL`, code in `scripts/meca500/tip_localiser.py`). The scripted
+  descent stops 50 µm above the touch. With the arm still, the localiser's estimate (median of
+  8 frames) is corrected by a straight move at 5 µm/step, up to 4 times, until it is below 1 px.
+  Then the tip descends with the lateral motion locked. The policy's own lateral actions are dropped
+  from the hover on.
+- **Result** (`outputs/eval_auto/finish_2026-11_crop256_img_act_finish_zscripted_refine_n15_20261112-184940`,
+  crop-only model, same 10 targets as run a):
+
+  | Target (seed 5,600,000 +) | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | Run (a), vision µm | 23 | 15 | 43 | 74 | 60 | 104 | 42 | 115 | 19 | 96 |
+  | With refinement, vision µm | 39 | 14 | 30 | 26 | 22 | 36 | 22 | 22 | 10 | 22 |
+  | Localiser's first estimate at the hover, px | 1.0 | 0.7 | 3.5 | 5.6 | 4.1 | 6.7 | 0.4 | 7.1 | 0.8 | 6.2 |
+
+  - **10/10 within 50 µm, median 22 µm, worst 39 µm**, against 5/10 and 51 µm. All five misses of
+    run (a) were fixed. FK error is 7/10 within 50 µm, median 39 µm, which is calibration scatter
+    (see "Is 50 µm a fair bar").
+  - The prediction held. Theory 1, in its narrowed form, is the best explanation of the finish
+    residual.
+- **Touchdown shift.** Between the last estimate at the hover (all under 1 px) and the final frame,
+  the tip moved (+0.7, −1.0) px on average (sd about 1 px), mostly forward along the pipette. That is
+  the tip sliding on contact, about 16 µm, and it is most of the remaining 22 µm.
+- **Caveat.** The localiser learned the detector's idea of "the tip", and the vision score uses the
+  same detector. The by-eye review is the independent check.
+
 **Next.**
-- **Make the handover land inside the finish range.** Options:
+- **Get the by-eye verdicts** from the review page and score every run against them.
+- **Correct the touchdown slide:** aim the hover correction about 1 px behind the target along the
+  pipette, or measure once more after contact. Prediction: median under 15 µm.
+- **Make the handover land inside the finish range** (theory 4):
   - descend along the pipette axis to about 1 mm up, so the lateral offset is only the decoy's;
-  - or let ASR's servo, or the approach policy with the tip watcher, stop once the tip is within
-    about 1 mm of the ring, and hand over to the finish policy there.
+  - or let the approach policy with the tip watcher stop once the tip is within about 1 mm.
 - **Or widen the finish policy's range:** a finish batch with starts up to 3–4 mm off and 3 mm up,
-  with a larger crop (384 px) or the full frame for the far part.
-- **Improve the last 50 µm in range** (median 40–50 µm against the teacher's 14 µm):
-  - train the auxiliary-head ACT variant (`crop_aux`), which is still untrained;
-  - re-plan more often than every 15 steps;
-  - hold the descent about 50 µm up until the lateral motion has settled, instead of locking it at
-    20 µm. That would have saved (b) trial 4.
+  with a larger crop or the full frame for the far part.
+- **Fold the localiser into the policy**, so the system is one network: the ACT finish policy with
+  the localiser's offset as an input, or the `crop_aux` auxiliary head trained to the same 1 px.
+- **Use more of the camera:** a 192 px crop taken from the binned 2748×1836 image and downscaled 2×
+  (about 6.7 µm/px) instead of from the 427×640 frame.
 
 ### 2. At 50 µm scale the full frame is too coarse (weakened by the 2026-11-10 test)
+
+**Status (12 Nov): weakened, with headroom left.** An explicit regressor on a 192 px crop of our
+427×640 frames localises the tip to about 1 px (13 µm), which was enough for 10/10 within 50 µm.
+The frames are 8.6× downsampled from the sensor and the optics resolve about 2× finer than our
+pixels, so a higher-resolution crop is available if 1 px stops being enough.
 
 **Theory.**
 - 50 µm is about 4 px.
@@ -379,6 +496,12 @@ What it means:
 
 ### 3. The joint state is still a shortcut, so the image is never needed
 
+**Status (12 Nov): not supported for the finish.** On the bench, the crop + joint-state finish policy
+scored 7/10 within 50 µm against 5/10 for crop only (10 trials each, not separable). Out of range,
+from the pre-touch point, the joint-state model barely moved (24–150 µm) where the crop-only one
+wandered, consistent with joints anchoring it to the demos' states. The offline (i)/(ii) comparison
+below was replaced by this bench test.
+
 **Theory.**
 - With decoys up to 1.6 mm from the target, the pre-touch joint state still predicts the target to
   835 µm RMS.
@@ -409,6 +532,11 @@ What it means:
 - Prediction: (ii) is worse, with lower gain. This needs no bench time.
 
 ### 4. The approach is open-loop and inherently random, so it arrives 2–3 mm off
+
+**Status (12 Nov): open, and now the main obstacle.** With the finish in range solved, the system
+fails only where the tip starts outside the finish policy's 1.5 mm range. Even the scripted
+pre-touch point is outside it in 8/10 trials (1.7–4.2 mm off), so the approach has to aim for
+"tip within about 1 mm of the ring", not for the pre-touch point.
 
 **Theory.**
 - The teacher picks 1–2 random via-points and a random speed in each episode. None of that is
@@ -477,6 +605,10 @@ What it means:
 
 ### 6. Image-only models cannot tell the tip's height
 
+**Status (12 Nov): supported, and worked around.** With height from the kinematics and the dish map
+(`FINISH_Z = "scripted"`), all 30 in-range finish trials of 12 Nov touched within 2 µm of the
+mapped surface. Their errors are lateral only.
+
 **Theory.**
 - A top-down microscope image barely changes with the tip's height near focus.
 - Without the joint state, the policy cannot tell 0.15 mm from 1.5 mm above the dish.
@@ -516,6 +648,12 @@ These do not explain a 2 mm miss. But a policy that fixes theories 1–5 will ru
   Any joint-state policy run now sees that offset, so retrain or re-seat first.
 - **Scoring drift.** `score_eval.py` projects through the current calibration. Re-scoring old runs
   today changes their view and without-search numbers.
+- **Pixel scale (12 Nov).** 13.4 µm/px in our frames, so 50 µm is 3.7 px; FK cannot resolve it
+  (calibration residual 28 µm rms) and the image can (detector about 1 px). See "Is 50 µm a fair
+  bar" at the top.
+- **Touchdown slide (12 Nov).** The tip moves about 1.2 px (16 µm), mostly forward along the
+  pipette, during the last 50 µm and the contact. It is now the largest error left in the refined
+  finish.
 
 ## Suggested order
 
@@ -526,7 +664,10 @@ These do not explain a 2 mm miss. But a policy that fixes theories 1–5 will ru
 | Finish-only data batch (done 2026-11-11, 200 eps) | Theory 1 | Yes, unattended | 3 h |
 | Finish-policy bench trials, in-view start (done 2026-11-12: median 38–51 µm) | Theories 1, 3 and 6 | Yes | 1.5 h |
 | Handover bench trials of the finish policy, from pre-touch (done 2026-11-12: pre-touch is out of range) | Theories 1, 2 and 6 | Yes | included above |
-| Handover that lands within 1.5 mm, or a wider finish batch (next) | Theory 1 | Yes | 1–3 h |
+| Fixed-point probe and learned refinement (done 2026-11-12: 10/10, median 22 µm) | Theories 1 and 2 | Yes | 2 h |
+| By-eye verdicts on the review page, re-score every run (next) | Scoring | No | 20 min |
+| Touchdown-slide correction (next) | Finish residual | Yes | 30 min |
+| Handover that lands within 1.5 mm, or a wider finish batch (next) | Theory 4 | Yes | 1–3 h |
 | Deterministic-path approach data and retrain | Theory 4 | Yes, unattended | 1.5 h + training |
 | DAgger rounds | Theory 5 | Yes, unattended | 1 day |
 

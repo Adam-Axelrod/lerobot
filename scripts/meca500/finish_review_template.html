@@ -1,0 +1,243 @@
+<title>Pipette Finish Review</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a light-table of microscope crops; a slim control strip above, a fact sheet beside the title. */
+:root {
+  --bg: #f3f4f1; --surface: #ffffff; --fg: #1d2420; --muted: #5d6a63; --line: #d5dad4;
+  --accent: #b7791f; --accent-fg: #ffffff;
+  --ok: #2f7d4f; --ok-bg: #e2f1e7; --mid: #9a6a00; --mid-bg: #fbf0d6; --bad: #b23a3a; --bad-bg: #f8e1e0;
+  --mark: #34d399; --tipmark: #ff4d6d; --circle: #22d3ee;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121614; --surface: #1b201d; --fg: #e4e9e5; --muted: #98a59d; --line: #2e3631;
+  --accent: #e0a64a; --accent-fg: #1b1408;
+  --ok: #6fcf97; --ok-bg: #173323; --mid: #e8c06a; --mid-bg: #3a2e12; --bad: #f08a8a; --bad-bg: #3d1b1b;
+  color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #121614; --surface: #1b201d; --fg: #e4e9e5; --muted: #98a59d; --line: #2e3631;
+  --accent: #e0a64a; --accent-fg: #1b1408;
+  --ok: #6fcf97; --ok-bg: #173323; --mid: #e8c06a; --mid-bg: #3a2e12; --bad: #f08a8a; --bad-bg: #3d1b1b;
+  color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 28px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 24px; }
+h1 { font-size: 1.75rem; font-weight: 600; margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+h2 { font-size: 1rem; font-weight: 600; margin: 0; }
+p { margin: 0; max-width: 68ch; }
+.intro { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.intro > div { display: grid; gap: 10px; min-width: 0; }
+.facts { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: grid; gap: 6px; }
+.facts dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 0.875rem; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.eyebrow { font-family: var(--mono); font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.controls { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line);
+  padding-block: 10px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.controls label { display: inline-flex; gap: 6px; align-items: center; font-size: 0.875rem; cursor: pointer; }
+.controls select { font: inherit; font-size: 0.875rem; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); }
+.progress { margin-left: auto; font-family: var(--mono); font-size: 0.8125rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.status { font-size: 0.8125rem; color: var(--muted); }
+.status.warn { color: var(--bad); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 262px), 1fr)); gap: 16px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: grid; }
+.card[data-v="success"] { border-color: var(--ok); }
+.card[data-v="borderline"] { border-color: var(--mid); }
+.card[data-v="fail"] { border-color: var(--bad); }
+.frame { position: relative; aspect-ratio: 1; max-width: 100%; background: #000; }
+.frame img { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
+.smooth .frame img { image-rendering: auto; }
+.frame svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.body { padding: 10px 12px 12px; display: grid; gap: 8px; }
+.row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.id { font-family: var(--mono); font-weight: 500; }
+.meta { font-size: 0.75rem; color: var(--muted); text-align: right; min-width: 0; }
+.meta b { font-family: var(--mono); font-weight: 500; color: var(--fg); font-variant-numeric: tabular-nums; }
+.btns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.btns button { font: inherit; font-size: 0.8125rem; padding: 6px 4px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--fg); cursor: pointer; }
+.btns button:hover { border-color: var(--muted); }
+.btns button:focus-visible, .controls input:focus-visible, .copy:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btns button[aria-pressed="true"][data-v="success"] { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); font-weight: 600; }
+.btns button[aria-pressed="true"][data-v="borderline"] { background: var(--mid-bg); border-color: var(--mid); color: var(--mid); font-weight: 600; }
+.btns button[aria-pressed="true"][data-v="fail"] { background: var(--bad-bg); border-color: var(--bad); color: var(--bad); font-weight: 600; }
+textarea { font: inherit; font-size: 0.8125rem; width: 100%; box-sizing: border-box; min-height: 32px; resize: vertical; border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; background: transparent; color: var(--fg); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.8125rem; color: var(--muted); }
+.legend span { display: inline-flex; gap: 6px; align-items: center; }
+.sw { width: 14px; height: 14px; border-radius: 50%; border: 2px solid; box-sizing: border-box; }
+.footer { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.copy { font: inherit; font-size: 0.875rem; padding: 7px 14px; border-radius: 6px; border: none; background: var(--accent); color: var(--accent-fg); font-weight: 500; cursor: pointer; }
+#summary { font-family: var(--mono); font-size: 0.75rem; width: 100%; min-height: 80px; }
+@media (max-width: 760px) { .intro { grid-template-columns: minmax(0, 1fr); } .progress { margin-left: 0; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <section class="intro">
+    <div>
+      <span class="eyebrow">Meca500 · Basler microscope · by-eye scoring</span>
+      <h1>Where does a finish count as on target?</h1>
+      <p>Each tile is the final microscope frame of one trial, cropped to 1.29 mm around the target and enlarged without smoothing, so every block is one camera pixel. Mark each one <b>Success</b>, <b>Borderline</b> or <b>Fail</b> by your own standard. Trials are shuffled and labelled with neutral IDs; the measured distance stays hidden until you reveal it, so it cannot steer the call.</p>
+      <p>The tiles mix scripted teacher demos, the two finish policies, the learned refinement, and the 11 Nov runs that pressed into the dish. Verdicts save as you click.</p>
+    </div>
+    <div class="facts">
+      <h2>Pixel scale in these frames</h2>
+      <dl>
+        <dt>Scale</dt><dd>13.4 µm per pixel</dd>
+        <dt>50 µm</dt><dd>3.7 px (radius of the cyan circle)</dd>
+        <dt>Pipette end</dt><dd>≈ 30 px ≈ 400 µm across</dd>
+        <dt>Drawn ring</dt><dd>radius 14 px ≈ 190 µm</dd>
+        <dt>Detector</dt><dd>repeatable to ≈ 1 px (13 µm)</dd>
+        <dt>Camera</dt><dd>1.6 µm/px native; frames are 8.6× downsampled</dd>
+      </dl>
+    </div>
+  </section>
+
+  <div class="controls" role="group" aria-label="Display options">
+    <label><input type="checkbox" id="opt-target" checked> Target marker</label>
+    <label><input type="checkbox" id="opt-circle"> 50 µm circle</label>
+    <label><input type="checkbox" id="opt-tip"> Detector's tip</label>
+    <label><input type="checkbox" id="opt-smooth"> Smooth pixels</label>
+    <label><input type="checkbox" id="opt-reveal"> Reveal measured distance</label>
+    <label>Show <select id="opt-filter"><option value="all">all tiles</option><option value="open">unjudged only</option><option value="judged">judged only</option></select></label>
+    <span class="progress" id="progress">0 / 0 judged</span>
+  </div>
+
+  <div class="legend">
+    <span><i class="sw" style="border-color: var(--mark)"></i>Target: the ring the policy sees, with its centre cross</span>
+    <span><i class="sw" style="border-color: var(--circle)"></i>50 µm around the target</span>
+    <span><i class="sw" style="border-color: var(--tipmark); border-radius: 2px"></i>Where the detector puts the tip</span>
+  </div>
+  <p class="status" id="status">Connecting to the verdict store…</p>
+
+  <div class="grid" id="grid"></div>
+
+  <section class="footer">
+    <h2 style="width:100%">Verdict summary</h2>
+    <p class="status">Your verdicts are stored with the page, so Claude can read them. If saving is unavailable here, copy this summary into the chat instead.</p>
+    <button class="copy" id="copy" type="button">Copy summary</button>
+    <textarea id="summary" readonly aria-label="Verdict summary"></textarea>
+  </section>
+</div>
+
+<script id="data" type="application/json">__DATA__</script>
+<script>
+(() => {
+  const DATA = JSON.parse(document.getElementById("data").textContent);
+  const N = DATA.half_px * 2, R50 = 50 / DATA.um_per_px;
+  const verdicts = {};  // id -> {verdict, note}
+  let db = null;
+  const $ = (id) => document.getElementById(id);
+  const grid = $("grid");
+  const cards = {};
+
+  function svg(it) {
+    const [tx, ty] = it.target;
+    const tip = it.tip ? `<g class="o-tip"><path d="M${it.tip[0]-2.2} ${it.tip[1]-2.2}L${it.tip[0]+2.2} ${it.tip[1]+2.2}M${it.tip[0]+2.2} ${it.tip[1]-2.2}L${it.tip[0]-2.2} ${it.tip[1]+2.2}" stroke="var(--tipmark)" stroke-width="0.7" fill="none"/></g>` : "";
+    return `<svg viewBox="0 0 ${N} ${N}" aria-hidden="true">
+      <g class="o-target"><circle cx="${tx}" cy="${ty}" r="14" fill="none" stroke="var(--mark)" stroke-width="0.6"/>
+        <path d="M${tx-4} ${ty}H${tx+4}M${tx} ${ty-4}V${ty+4}" stroke="var(--mark)" stroke-width="0.5" fill="none"/></g>
+      <g class="o-circle"><circle cx="${tx}" cy="${ty}" r="${R50}" fill="none" stroke="var(--circle)" stroke-width="0.5"/></g>
+      ${tip}
+      <g transform="translate(${N-4-100/DATA.um_per_px} ${N-5})"><rect width="${100/DATA.um_per_px}" height="1.4" fill="#fff"/><text x="0" y="-2" font-size="4" fill="#fff" font-family="IBM Plex Mono, monospace">100 µm</text></g>
+    </svg>`;
+  }
+
+  function render() {
+    for (const it of DATA.items) {
+      const c = document.createElement("article");
+      c.className = "card"; c.id = "tile-" + it.id;
+      c.innerHTML = `<div class="frame"><img alt="Final microscope frame ${it.id}" src="${it.img}">${svg(it)}</div>
+        <div class="body"><div class="row"><span class="id">${it.id}</span><span class="meta reveal" hidden></span></div>
+        <div class="btns" role="group" aria-label="Verdict for ${it.id}">
+          <button type="button" data-v="success" aria-pressed="false">Success</button>
+          <button type="button" data-v="borderline" aria-pressed="false">Borderline</button>
+          <button type="button" data-v="fail" aria-pressed="false">Fail</button></div>
+        <textarea id="note-${it.id}" rows="1" placeholder="Note (optional)" aria-label="Note for ${it.id}"></textarea></div>`;
+      const meta = c.querySelector(".meta");
+      meta.innerHTML = `<b>${it.err_um == null ? "–" : Math.round(it.err_um) + " µm"}</b>${it.err_um == null ? "" : " (" + (it.err_um / DATA.um_per_px).toFixed(1) + " px)"}<br>${it.group}`;
+      c.querySelectorAll(".btns button").forEach((b) => b.addEventListener("click", () => setVerdict(it.id, b.dataset.v)));
+      const note = c.querySelector("textarea");
+      note.addEventListener("change", () => setNote(it.id, note.value));
+      grid.appendChild(c); cards[it.id] = c;
+    }
+    applyOptions();
+  }
+
+  function paint(id) {
+    const v = verdicts[id] || {};
+    const c = cards[id]; if (!c) return;
+    c.dataset.v = v.verdict || "";
+    c.querySelectorAll(".btns button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === v.verdict)));
+    const note = c.querySelector("textarea");
+    if (document.activeElement !== note) note.value = v.note || "";
+  }
+
+  function applyOptions() {
+    const show = (cls, on) => document.querySelectorAll(cls).forEach((e) => e.style.display = on ? "" : "none");
+    show(".o-target", $("opt-target").checked);
+    show(".o-circle", $("opt-circle").checked);
+    show(".o-tip", $("opt-tip").checked);
+    document.body.classList.toggle("smooth", $("opt-smooth").checked);
+    document.querySelectorAll(".reveal").forEach((e) => e.hidden = !$("opt-reveal").checked);
+    const f = $("opt-filter").value;
+    for (const [id, c] of Object.entries(cards)) {
+      const judged = !!(verdicts[id] && verdicts[id].verdict);
+      c.hidden = (f === "open" && judged) || (f === "judged" && !judged);
+    }
+    summarise();
+  }
+
+  function summarise() {
+    const ids = DATA.items.map((i) => i.id);
+    const n = ids.filter((id) => verdicts[id] && verdicts[id].verdict).length;
+    $("progress").textContent = `${n} / ${ids.length} judged`;
+    $("summary").value = ids.filter((id) => verdicts[id] && verdicts[id].verdict)
+      .map((id) => `${id} ${verdicts[id].verdict}${verdicts[id].note ? " - " + verdicts[id].note : ""}`).join("\n");
+  }
+
+  const chains = {};  // one write at a time per document
+  function save(id) {
+    if (!db) return;
+    chains[id] = (chains[id] || Promise.resolve()).then(async () => {
+      try { await db.doc("verdicts/" + id).set({ verdict: verdicts[id].verdict || null, note: verdicts[id].note || "", at: Date.now() }); }
+      catch (e) { status(`Could not save ${id} (${e && e.code || "error"}). Your choice is kept on screen; use Copy summary.`, true); }
+    });
+  }
+  function setVerdict(id, v) {
+    verdicts[id] = { ...(verdicts[id] || {}), verdict: verdicts[id] && verdicts[id].verdict === v ? null : v };
+    paint(id); applyOptions(); save(id);
+  }
+  function setNote(id, note) { verdicts[id] = { ...(verdicts[id] || {}), note }; summarise(); save(id); }
+  function status(msg, warn) { const s = $("status"); s.textContent = msg; s.classList.toggle("warn", !!warn); }
+
+  ["opt-target", "opt-circle", "opt-tip", "opt-smooth", "opt-reveal", "opt-filter"].forEach((id) => $(id).addEventListener("change", applyOptions));
+  $("copy").addEventListener("click", () => {
+    const t = $("summary").value;
+    navigator.clipboard.writeText(t).then(() => status("Summary copied."), () => { $("summary").select(); status("Select-all done: press Ctrl+C to copy."); });
+  });
+
+  render();
+  const timer = setTimeout(() => status("The verdict store did not answer. Verdicts stay on screen; use Copy summary at the bottom.", true), 10000);
+  (async () => {
+    const api = window.claude && window.claude.use ? await window.claude.use("db") : null;
+    if (!api) { clearTimeout(timer); status("Saving is not available in this view. Verdicts stay on screen; use Copy summary at the bottom.", true); return; }
+    db = api;
+    db.collection("verdicts").onSnapshot((snap) => {
+      clearTimeout(timer);
+      const docs = snap.docs || snap;
+      for (const d of docs) {
+        const id = d.id, val = typeof d.data === "function" ? d.data() : d.data;
+        if (!cards[id] || !val) continue;
+        verdicts[id] = { verdict: val.verdict || null, note: val.note || "" };
+        paint(id);
+      }
+      applyOptions();
+      status("Verdicts save automatically.");
+    }, (err) => { clearTimeout(timer); status(`The verdict store refused access (${err && err.code || "error"}). Use Copy summary at the bottom.`, true); });
+  })();
+})();
+</script>

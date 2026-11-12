@@ -1,23 +1,29 @@
 # Next at the bench
 
 **Bench:** Huanyu's setup (rig `meca500_basler`)
-**Last updated:** 2026-11-12 (finish-policy bench session done)
+**Last updated:** 2026-11-12 (refinement test done; by-eye review open)
 
-## Now: no bench work outstanding
-The finish-policy bench session ran on 2026-11-12, by Claude with your permission. Results and
-next steps are in `docs/meca500/THEORIES.md` (theory 1, "Bench session").
+## Now: your by-eye verdicts (no arm needed, about 20 min)
+Open the review page https://claude.ai/artifact/1M4UQXEG5zhKnsKKb2uHge and mark each of the 54 final
+frames Success, Borderline or Fail by your own standard. Leave "Reveal measured distance" off until
+you have finished. Verdicts save as you click; tell Claude when you are done, and every run gets
+re-scored against your standard.
+
+## Done today (2026-11-12), by Claude with your permission
+Details and numbers are in `docs/meca500/THEORIES.md` ("Where we are").
 - **Full recalibration:** good. Verify median 2.0 px; dish 68 um lower than on 8 Nov; the tip model
-  was refitted.
-  - The new `scope_calibration.json`, `dish_height_map.json`, `bench.yaml` and `tool.stl` are in
-    the working tree, uncommitted, like the earlier calibrations.
-- **In-view start:** crop only 5/10 within 50 um (median 51 um); crop + joints 7/10 (38 um).
+  was refitted. The new `scope_calibration.json`, `dish_height_map.json`, `bench.yaml` and `tool.stl`
+  are in the working tree, uncommitted, like the earlier calibrations.
+- **Finish policy, in-view start:** crop only 5/10 within 50 um (median 51 um); crop + joints 7/10 (38 um).
 - **From the scripted pre-touch point:** 1/10 and 0/10. The pre-touch point is 1.7-4 mm off in 8 of
   10 trials, outside the finish policy's range.
-- **Incident:** run (c) hung once inside the policy's GPU call for 19 min, with the arm holding still
-  above the dish. It was killed and resumed from trial 4. If an eval ever freezes with the arm
-  still: Esc does not reach a hung process, so stop it from Task Manager (python.exe), then rerun
-  with `FIRST_EPISODE` set to the trial it froze in.
-- `eval_auto.py` is still set for run (d) and `auto_calibrate.py` is back to `HEIGHT_CHECK_ONLY = True`.
+- **Finish policy + learned tip localiser** (theory 1 test): 10/10 within 50 um, median 22 um.
+- **Incident:** one run hung inside the policy's GPU call for 19 min, with the arm holding still
+  above the dish. It was killed and resumed. If an eval ever freezes with the arm still: Esc does not
+  reach a hung process, so stop it from Task Manager (python.exe), then rerun with `FIRST_EPISODE`
+  set to the trial it froze in.
+- `eval_auto.py` is left set for the refinement run (`REFINE_MODEL` set); `auto_calibrate.py` is back
+  to `HEIGHT_CHECK_ONLY = True`.
 
 ## The plan (since 2026-11-06)
 The paper's system is now a **learned policy that brings the pipette under the microscope, then hands
