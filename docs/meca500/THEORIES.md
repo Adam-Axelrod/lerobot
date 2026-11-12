@@ -50,9 +50,22 @@ on the same 10 targets; vision is the detected tip against the target pixel, 13.
   427×640, 8.6× in all. A native-resolution frame shows the optics resolve features of about
   10–20 µm, so a crop at about 6–7 µm/px would keep nearly all the optical detail and put 50 µm at
   7–8 px.
-- What counts as success by eye is being settled: 54 final frames (teacher, both policies, the
-  refinement, 11 Nov presses) are in the review page `https://claude.ai/artifact/1M4UQXEG5zhKnsKKb2uHge`,
-  blind and shuffled, with the key in `outputs/finish_review/review_key_20261112.json`.
+- **By-eye standard (Adam, 12 Nov).** 53 of 54 blind final frames judged on the review page
+  `https://claude.ai/artifact/1M4UQXEG5zhKnsKKb2uHge` (key `outputs/finish_review/review_key_20261112.json`,
+  verdicts `outputs/finish_review/verdicts_20261112.csv`): 24 success, 22 borderline, 7 fail.
+  - **The detector's apex distance does not predict the verdicts** (AUC success vs fail 0.56,
+    success vs borderline 0.39). Successes include 74–115 µm by the detector; fails include 22–43 µm.
+  - **What does: whether the pipette end covers the target.** All 7 fails have the apex short of
+    the target along the pipette (−0.6 to −8.3 px); successes mostly have it past (median +1.9 px).
+  - Distance from a point **5–6 px (70–80 µm) behind the apex along the pipette** separates success
+    from fail with AUC 0.99 (0.85 against borderline); the fit is flat from 5 to 8 px. On the
+    frames that point is the bright lumen opening at the end of the pipette; the detector's apex is
+    the outer edge of the glass.
+  - By this standard the scripted teacher is 4/9 success, 5 borderline: it puts the outer apex on
+    the target, which reads as borderline. The refinement run is the same, 5 success, 5 borderline,
+    0 fail. Everything so far (teacher labels, policy, localiser, scoring) aims the wrong point.
+  - **Consequence:** redefine the aim point as the lumen opening, about 75 µm behind the apex, in
+    the teacher, the localiser's target and the scoring; then 50 µm from the opening is the bar.
 
 ## Background: what the end-to-end policies did (5–8 Nov)
 
