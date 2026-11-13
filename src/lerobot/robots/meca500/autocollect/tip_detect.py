@@ -144,27 +144,49 @@ OPENING_SEARCH_PX = 14.0  # look this far back from the glass end
 OPENING_MIN_CONTRAST = 20.0  # grey levels between the end wall and the opening, else fall back
 OPENING_FALLBACK_PX = 7.0  # median offset when the opening cannot be seen (blur, glare)
 OPENING_PEAK_PX = 4.0  # the opening's peak lies within this of its half-height rise
+OPENING_ACROSS_PX = 12.0  # search this far either side of the glass end's line for the lumen (pipette ~30 px wide)
 
 
 def find_opening(frame: np.ndarray, det: TipDetection) -> tuple[tuple[float, float], bool]:
     """Centre of the pipette opening behind ``det.px``, and whether it was seen (else the fallback).
 
-    Brightness is sampled along the pipette axis from the glass end backwards, averaged over 3 px
-    across. The end wall is a dark minimum within 5 px of the end; the opening is the bright spot
-    after it. Its centre is the brightest point within OPENING_PEAK_PX of where the brightness
-    first rises halfway from the wall to the maximum (behind it the lumen can stay bright, so the
-    whole bright run is not the opening)."""
+    The lumen is a bright stripe inside the dark glass, and it need not lie on the line through the
+    glass end (2-3 px to one side on bench 2). So first find the stripe across the pipette: the
+    brightness peak across, averaged 4-12 px behind the end. Then sample along the stripe from the
+    glass end backwards, averaged over 3 px across: the end wall is a dark minimum within 5 px of the
+    end, and the opening's centre is the brightest point within OPENING_PEAK_PX of where the
+    brightness first rises halfway from the wall to the maximum (behind it the lumen can stay bright,
+    so the whole bright run is not the opening)."""
     g = cv2.GaussianBlur(cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY).astype(np.float32), (3, 3), 0)
     a = np.asarray(det.axis, float)
     n = np.array([-a[1], a[0]])
     tip = np.asarray(det.px, float)
+    sample = lambda pts: np.array([cv2.getRectSubPix(g, (1, 1), tuple(q.astype(np.float32)))[0, 0] for q in pts])
     step = 0.25
+    # across: where is the lumen stripe?
+    ws = np.arange(-OPENING_ACROSS_PX, OPENING_ACROSS_PX + 1e-9, step)
+    across = np.array([sample([tip - t * a + w * n for t in np.arange(4.0, 12.01, 1.0)]).mean() for w in ws])
+    # The lumen is a RIDGE: brighter than the glass on both sides within 4 px. A maximum at the
+    # window's edge is the bright dish beyond the pipette, not the lumen.
+    k4 = int(4.0 / step)
+    best, w_c = 0.0, 0.0
+    for i in range(k4, len(ws) - k4):
+        if across[i] < across[i - 1] or across[i] < across[i + 1]:
+            continue
+        prom = across[i] - max(across[i - k4 : i].min(), across[i + 1 : i + k4 + 1].min())
+        if prom > best:
+            best, w_c = prom, float(ws[i])
+            y0, y1, y2 = across[i - 1], across[i], across[i + 1]
+            den = y0 - 2 * y1 + y2
+            if den < 0:
+                w_c += step * 0.5 * (y0 - y2) / den
+    if best < OPENING_MIN_CONTRAST * 0.5:
+        w_c = 0.0
+    base = tip + w_c * n
+    # along the stripe
     ts = np.arange(0.0, OPENING_SEARCH_PX + 1e-9, step)
-    prof = np.array([
-        np.mean([cv2.getRectSubPix(g, (1, 1), tuple((tip - t * a + w * n).astype(np.float32)))[0, 0] for w in (-1.5, 0.0, 1.5)])
-        for t in ts
-    ])
-    fallback = (tuple(tip - OPENING_FALLBACK_PX * a), False)
+    prof = np.array([sample([base - t * a + w * n for w in (-1.5, 0.0, 1.5)]).mean() for t in ts])
+    fallback = (tuple(base - OPENING_FALLBACK_PX * a), False)
     i_wall = int(np.argmin(prof[ts <= 5.0]))
     lo, hi = prof[i_wall], prof[i_wall:].max()
     if hi - lo < OPENING_MIN_CONTRAST:
@@ -180,7 +202,7 @@ def find_opening(frame: np.ndarray, det: TipDetection) -> tuple[tuple[float, flo
             t_c += step * 0.5 * (y0 - y2) / den
     if not 2.0 <= t_c <= OPENING_SEARCH_PX - 1.0:
         return fallback
-    return tuple(tip - t_c * a), True
+    return tuple(base - t_c * a), True
 
 
 def draw_detection(frame: np.ndarray, det: TipDetection | None) -> np.ndarray:

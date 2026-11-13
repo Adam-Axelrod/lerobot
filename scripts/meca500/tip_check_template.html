@@ -1,0 +1,226 @@
+<title>Pipette Tip Check</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a light-table of enlarged microscope crops, each centred on the detected opening. */
+:root {
+  --bg: #f3f4f1; --surface: #ffffff; --fg: #1d2420; --muted: #5d6a63; --line: #d5dad4;
+  --accent: #0e7490; --accent-fg: #ffffff;
+  --ok: #2f7d4f; --ok-bg: #e2f1e7; --mid: #9a6a00; --mid-bg: #fbf0d6; --bad: #b23a3a; --bad-bg: #f8e1e0;
+  --open: #22d3ee; --apex: #ff4d6d;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121614; --surface: #1b201d; --fg: #e4e9e5; --muted: #98a59d; --line: #2e3631;
+  --accent: #5ec8dd; --accent-fg: #06181c;
+  --ok: #6fcf97; --ok-bg: #173323; --mid: #e8c06a; --mid-bg: #3a2e12; --bad: #f08a8a; --bad-bg: #3d1b1b;
+  color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #121614; --surface: #1b201d; --fg: #e4e9e5; --muted: #98a59d; --line: #2e3631;
+  --accent: #5ec8dd; --accent-fg: #06181c;
+  --ok: #6fcf97; --ok-bg: #173323; --mid: #e8c06a; --mid-bg: #3a2e12; --bad: #f08a8a; --bad-bg: #3d1b1b;
+  color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 28px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 22px; }
+h1 { font-size: 1.75rem; font-weight: 600; margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+h2 { font-size: 1rem; font-weight: 600; margin: 0; }
+p { margin: 0; max-width: 70ch; }
+.eyebrow { font-family: var(--mono); font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.intro { display: grid; gap: 10px; }
+.key { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 8px 20px; font-size: 0.875rem; }
+.key div { display: grid; gap: 2px; }
+.key b { font-weight: 600; }
+.key span { color: var(--muted); }
+.controls { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line);
+  padding-block: 10px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.controls label { display: inline-flex; gap: 6px; align-items: center; font-size: 0.875rem; cursor: pointer; }
+.controls select { font: inherit; font-size: 0.875rem; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); }
+.progress { margin-left: auto; font-family: var(--mono); font-size: 0.8125rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.status { font-size: 0.8125rem; color: var(--muted); }
+.status.warn { color: var(--bad); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 16px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: grid; }
+.card[data-v="correct"] { border-color: var(--ok); }
+.card[data-v="back"], .card[data-v="forward"], .card[data-v="side"] { border-color: var(--bad); }
+.card[data-v="unclear"] { border-color: var(--mid); }
+.frame { position: relative; aspect-ratio: 1; max-width: 100%; background: #000; cursor: pointer; }
+.frame img { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
+.smooth .frame img { image-rendering: auto; }
+.frame svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.frame.peek svg .o-open, .frame.peek svg .o-apex { display: none; }
+.body { padding: 10px 12px 12px; display: grid; gap: 8px; }
+.row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.id { font-family: var(--mono); font-weight: 500; }
+.meta { font-size: 0.75rem; color: var(--muted); text-align: right; min-width: 0; }
+.btns { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.btns button { font: inherit; font-size: 0.8125rem; padding: 6px 4px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--fg); cursor: pointer; }
+.btns button[data-v="correct"] { grid-column: 1 / -1; }
+.btns button:hover { border-color: var(--muted); }
+.btns button:focus-visible, .controls input:focus-visible, .copy:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btns button[aria-pressed="true"][data-v="correct"] { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); font-weight: 600; }
+.btns button[aria-pressed="true"][data-v="back"], .btns button[aria-pressed="true"][data-v="forward"], .btns button[aria-pressed="true"][data-v="side"] { background: var(--bad-bg); border-color: var(--bad); color: var(--bad); font-weight: 600; }
+.btns button[aria-pressed="true"][data-v="unclear"] { background: var(--mid-bg); border-color: var(--mid); color: var(--mid); font-weight: 600; }
+textarea { font: inherit; font-size: 0.8125rem; width: 100%; box-sizing: border-box; min-height: 32px; resize: vertical; border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; background: transparent; color: var(--fg); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.8125rem; color: var(--muted); }
+.legend span { display: inline-flex; gap: 6px; align-items: center; }
+.sw { width: 14px; height: 14px; border-radius: 50%; border: 2px solid; box-sizing: border-box; }
+.footer { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.copy { font: inherit; font-size: 0.875rem; padding: 7px 14px; border-radius: 6px; border: none; background: var(--accent); color: var(--accent-fg); font-weight: 500; cursor: pointer; }
+#summary { font-family: var(--mono); font-size: 0.75rem; width: 100%; min-height: 80px; }
+@media (max-width: 760px) { .progress { margin-left: 0; } }
+</style>
+
+<div class="wrap">
+  <section class="intro">
+    <span class="eyebrow">Meca500 · Basler microscope · tip detector check</span>
+    <h1>Is the cyan cross on the centre of the opening?</h1>
+    <p>The tip is now defined as the centre of the pipette opening. Each tile is a 1.07 mm crop centred on the point the detector picked, enlarged so each block is one camera pixel (13.4 µm). Mark whether the cross sits on the centre of the opening. Press and hold a tile to hide the marks and see the pixels underneath.</p>
+    <div class="key">
+      <div><b>Correct</b><span>On the centre of the opening, within about a pixel.</span></div>
+      <div><b>Too far back</b><span>Behind the opening, up the pipette.</span></div>
+      <div><b>Too far forward</b><span>In front of the opening, on the end wall or past the glass.</span></div>
+      <div><b>Off to the side</b><span>Right distance along the pipette, but not on its centre line.</span></div>
+      <div><b>Can't tell</b><span>Too blurred or dark to say where the opening is.</span></div>
+    </div>
+  </section>
+
+  <div class="controls" role="group" aria-label="Display options">
+    <label><input type="checkbox" id="opt-open" checked> Opening mark</label>
+    <label><input type="checkbox" id="opt-apex"> Old glass-end mark</label>
+    <label><input type="checkbox" id="opt-smooth"> Smooth pixels</label>
+    <label><input type="checkbox" id="opt-reveal"> Show frame type</label>
+    <label>Show <select id="opt-filter"><option value="all">all tiles</option><option value="open">unjudged only</option><option value="judged">judged only</option></select></label>
+    <span class="progress" id="progress">0 / 0 judged</span>
+  </div>
+
+  <div class="legend">
+    <span><i class="sw" style="border-color: var(--open)"></i>Detected opening centre (the new tip)</span>
+    <span><i class="sw" style="border-color: var(--apex); border-radius: 2px"></i>Old tip: the end of the glass</span>
+  </div>
+  <p class="status" id="status">Connecting to the store…</p>
+
+  <div class="grid" id="grid"></div>
+
+  <section class="footer">
+    <h2 style="width:100%">Summary</h2>
+    <p class="status">Your marks are stored with the page, so Claude can read them. If saving is unavailable here, copy this summary into the chat instead.</p>
+    <button class="copy" id="copy" type="button">Copy summary</button>
+    <textarea id="summary" readonly aria-label="Summary of marks"></textarea>
+  </section>
+</div>
+
+<script id="data" type="application/json">__DATA__</script>
+<script>
+(() => {
+  const DATA = JSON.parse(document.getElementById("data").textContent);
+  const N = DATA.half_px * 2;
+  const LABELS = { correct: "Correct", back: "Too far back", forward: "Too far forward", side: "Off to the side", unclear: "Can't tell" };
+  const marks = {};
+  let db = null;
+  const $ = (id) => document.getElementById(id);
+  const cards = {};
+
+  function svg(it) {
+    const [ox, oy] = it.opening, [ax, ay] = it.apex;
+    return `<svg viewBox="0 0 ${N} ${N}" aria-hidden="true">
+      <g class="o-open"><circle cx="${ox}" cy="${oy}" r="1.6" fill="none" stroke="var(--open)" stroke-width="0.35"/>
+        <path d="M${ox-4} ${oy}H${ox-2}M${ox+2} ${oy}H${ox+4}M${ox} ${oy-4}V${oy-2}M${ox} ${oy+2}V${oy+4}" stroke="var(--open)" stroke-width="0.45" fill="none"/></g>
+      <g class="o-apex"><path d="M${ax-1.6} ${ay-1.6}L${ax+1.6} ${ay+1.6}M${ax+1.6} ${ay-1.6}L${ax-1.6} ${ay+1.6}" stroke="var(--apex)" stroke-width="0.45" fill="none"/></g>
+      <g transform="translate(${N-3-100/DATA.um_per_px} ${N-4})"><rect width="${100/DATA.um_per_px}" height="1.1" fill="#fff"/><text x="0" y="-1.6" font-size="3.2" fill="#fff" font-family="IBM Plex Mono, monospace">100 µm</text></g>
+    </svg>`;
+  }
+
+  function render() {
+    const grid = $("grid");
+    for (const it of DATA.items) {
+      const c = document.createElement("article");
+      c.className = "card";
+      const btns = Object.entries(LABELS).map(([v, t]) => `<button type="button" data-v="${v}" aria-pressed="false">${t}</button>`).join("");
+      c.innerHTML = `<div class="frame" title="Press and hold to hide the marks"><img alt="Microscope crop ${it.id}" src="${it.img}">${svg(it)}</div>
+        <div class="body"><div class="row"><span class="id">${it.id}</span><span class="meta reveal" hidden>${it.kind}${it.seen ? "" : " · opening not seen, fixed offset"}</span></div>
+        <div class="btns" role="group" aria-label="Verdict for ${it.id}">${btns}</div>
+        <textarea id="note-${it.id}" rows="1" placeholder="Note (optional)" aria-label="Note for ${it.id}"></textarea></div>`;
+      const fr = c.querySelector(".frame");
+      const peek = (on) => fr.classList.toggle("peek", on);
+      fr.addEventListener("pointerdown", () => peek(true));
+      ["pointerup", "pointerleave", "pointercancel"].forEach((e) => fr.addEventListener(e, () => peek(false)));
+      c.querySelectorAll(".btns button").forEach((b) => b.addEventListener("click", () => setMark(it.id, b.dataset.v)));
+      const note = c.querySelector("textarea");
+      note.addEventListener("change", () => setNote(it.id, note.value));
+      grid.appendChild(c); cards[it.id] = c;
+    }
+    applyOptions();
+  }
+
+  function paint(id) {
+    const m = marks[id] || {}, c = cards[id]; if (!c) return;
+    c.dataset.v = m.verdict || "";
+    c.querySelectorAll(".btns button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === m.verdict)));
+    const note = c.querySelector("textarea");
+    if (document.activeElement !== note) note.value = m.note || "";
+  }
+
+  function applyOptions() {
+    document.querySelectorAll(".o-open").forEach((e) => e.style.display = $("opt-open").checked ? "" : "none");
+    document.querySelectorAll(".o-apex").forEach((e) => e.style.display = $("opt-apex").checked ? "" : "none");
+    document.body.classList.toggle("smooth", $("opt-smooth").checked);
+    document.querySelectorAll(".reveal").forEach((e) => e.hidden = !$("opt-reveal").checked);
+    const f = $("opt-filter").value;
+    for (const [id, c] of Object.entries(cards)) {
+      const judged = !!(marks[id] && marks[id].verdict);
+      c.hidden = (f === "open" && judged) || (f === "judged" && !judged);
+    }
+    summarise();
+  }
+
+  function summarise() {
+    const ids = DATA.items.map((i) => i.id);
+    const done = ids.filter((id) => marks[id] && marks[id].verdict);
+    $("progress").textContent = `${done.length} / ${ids.length} judged`;
+    $("summary").value = done.map((id) => `${id} ${marks[id].verdict}${marks[id].note ? " - " + marks[id].note : ""}`).join("\n");
+  }
+
+  const chains = {};
+  function save(id) {
+    if (!db) return;
+    chains[id] = (chains[id] || Promise.resolve()).then(async () => {
+      try { await db.doc("tip_checks/" + id).set({ verdict: marks[id].verdict || null, note: marks[id].note || "", at: Date.now() }); }
+      catch (e) { status(`Could not save ${id} (${e && e.code || "error"}). Your mark is kept on screen; use Copy summary.`, true); }
+    });
+  }
+  function setMark(id, v) {
+    marks[id] = { ...(marks[id] || {}), verdict: marks[id] && marks[id].verdict === v ? null : v };
+    paint(id); applyOptions(); save(id);
+  }
+  function setNote(id, note) { marks[id] = { ...(marks[id] || {}), note }; summarise(); save(id); }
+  function status(msg, warn) { const s = $("status"); s.textContent = msg; s.classList.toggle("warn", !!warn); }
+
+  ["opt-open", "opt-apex", "opt-smooth", "opt-reveal", "opt-filter"].forEach((id) => $(id).addEventListener("change", applyOptions));
+  $("copy").addEventListener("click", () => {
+    navigator.clipboard.writeText($("summary").value).then(() => status("Summary copied."), () => { $("summary").select(); status("Selected: press Ctrl+C to copy."); });
+  });
+
+  render();
+  const timer = setTimeout(() => status("The store did not answer. Marks stay on screen; use Copy summary at the bottom.", true), 10000);
+  (async () => {
+    const api = window.claude && window.claude.use ? await window.claude.use("db") : null;
+    if (!api) { clearTimeout(timer); status("Saving is not available in this view. Marks stay on screen; use Copy summary at the bottom.", true); return; }
+    db = api;
+    db.collection("tip_checks").onSnapshot((snap) => {
+      clearTimeout(timer);
+      for (const d of snap.docs) {
+        const val = d.data();
+        if (!cards[d.id] || !val) continue;
+        marks[d.id] = { verdict: val.verdict || null, note: val.note || "" };
+        paint(d.id);
+      }
+      applyOptions();
+      status("Marks save automatically.");
+    }, (err) => { clearTimeout(timer); status(`The store refused access (${err && err.code || "error"}). Use Copy summary at the bottom.`, true); });
+  })();
+})();
+</script>
